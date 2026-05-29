@@ -5,14 +5,7 @@ set -x
 local_version_file="${WINEPREFIX}dosdevices/c:/ProgramData/Backblaze/bzdata/bzreports/bzserv_version.txt"
 install_exe_path="${WINEPREFIX}dosdevices/c:/"
 log_file="${STARTUP_LOGFILE:-${WINEPREFIX}dosdevices/c:/backblaze-wine-startapp.log}"
-custom_user_agent="backblaze-personal-wine (JonathanTreffler, +https://github.com/JonathanTreffler/backblaze-personal-wine-container), CFNetwork"
 
-# Extracting variables from the PINNED_VERSION file
-pinned_bz_version_file="/PINNED_BZ_VERSION"
-pinned_bz_version=$(sed -n '1p' "$pinned_bz_version_file")
-pinned_bz_version_url=$(sed -n '2p' "$pinned_bz_version_file")
-
-export FORCE_LATEST_UPDATE="true" #disable pinned version since URL is excluded from archive.org
 export WINEARCH="win64"
 export WINEDLLOVERRIDES="mscoree=" # Disable Mono installation
 
@@ -102,7 +95,7 @@ else
     if [ "$FORCE_LATEST_UPDATE" = "true" ]; then
         echo "FORCE_LATEST_UPDATE is enabled which may brick your installation."
     else
-        echo "FORCE_LATEST_UPDATE is disabled. Using known-good version of Backblaze."
+        echo "FORCE_LATEST_UPDATE is disabled. Keeping the installed version without checking for updates."
     fi
 fi
 
@@ -232,24 +225,9 @@ if [ -f "${WINEPREFIX}drive_c/Program Files/Backblaze/bzbui.exe" ]; then
             handle_error "Local version file not found. Exiting."
         fi
     else
-        # Update process for force_latest_update set to false or anything else
-        if [ -f "$local_version_file" ]; then
-            local_version=$(cat "$local_version_file") || handle_error "UPDATER: Failed to read local version file"
-            log_message "UPDATER: FORCE_LATEST_UPDATE=false"
-            log_message "UPDATER: Installed Version=$local_version"
-            log_message "UPDATER: Pinned Version=$pinned_bz_version"
-
-            if compare_versions "$local_version" "$pinned_bz_version"; then
-                log_message "UPDATER: Newer version found - downloading and installing the newer version..."
-                fetch_and_install
-                start_app # Exit after successful download+installation and start app
-            else
-                log_message "UPDATER: Installed version is up to date. There may be a newer version available when using FORCE_LATEST_UPDATE=true"
-                start_app # Exit autoupdate and start app
-            fi
-        else
-            handle_error "UPDATER: Local version file does not exist. Exiting updater."
-        fi
+        # FORCE_LATEST_UPDATE=false: keep the installed client, skip the update check.
+        log_message "UPDATER: FORCE_LATEST_UPDATE=false, keeping the installed version without checking for updates"
+        start_app
     fi
 else # Client currently not installed
     fetch_and_install &&
