@@ -28,13 +28,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        dockerfile: [ubuntu22]
+        dockerfile: [ubuntu24]
         include:
-          - dockerfile: ubuntu22
+          - dockerfile: ubuntu24
             tags: |
               main
               latest
-              ubuntu22
+              ubuntu24
               ${{ github.ref_name }}
 
     steps:
