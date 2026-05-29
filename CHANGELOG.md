@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Re-engineered for Backblaze 10.x, which is 64-bit only and requires Windows 10.
+  - 64-bit WineHQ install (`winehq-stable`) via the modern deb822 `.sources`
+    repository method, replacing the brittle `apt-key` / `add-apt-repository`
+    setup that silently fell back to Ubuntu's old system Wine.
+  - The Wine prefix is forced to report Windows 10 on every start (via the
+    registry), fixing the installer's "unsupported operating system / Windows XP"
+    error.
+  - Install/run path moved to the 64-bit `C:\Program Files\Backblaze`.
+  - Legacy 32-bit prefixes are detected and rebuilt as `win64` automatically.
+  - The v10 MSI wrapper's WiX OS-version check rejects Wine (`GetVersionEx`
+    reports Windows 8 to unmanifested processes), so installation now bypasses
+    it: the installer's CAB payload is extracted, the program binaries are
+    copied into place, and Backblaze's native `bzdoinstall.exe` is run directly
+    (its only OS gate rejects server editions, which a workstation prefix passes).
+- CI now builds only the `ubuntu22` image; the `ubuntu20` and `ubuntu18`
+  variants are retired (their Wine is too old for a 64-bit Windows 10 client).
+
 ## 1.11
 
 ### Changed

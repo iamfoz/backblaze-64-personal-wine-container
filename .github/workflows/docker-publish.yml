@@ -15,16 +15,20 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 env:
-  REGISTRY: docker.io
-  IMAGE_NAME: ${{ secrets.DOCKERHUB_USER }}/backblaze-personal-wine
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/backblaze-personal-wine
 
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        dockerfile: [ubuntu22, ubuntu20, ubuntu18]
+        dockerfile: [ubuntu22]
         include:
           - dockerfile: ubuntu22
             tags: |
@@ -32,10 +36,6 @@ jobs:
               latest
               ubuntu22
               ${{ github.ref_name }}
-          - dockerfile: ubuntu20
-            tags: ubuntu20
-          - dockerfile: ubuntu18
-            tags: ubuntu18
 
     steps:
       - name: Checkout repository
@@ -54,8 +54,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.DOCKERHUB_USER }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       # Extract metadata (tags, labels) for Docker
       # https://github.com/docker/metadata-action

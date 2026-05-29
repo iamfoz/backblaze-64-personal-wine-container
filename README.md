@@ -1,12 +1,10 @@
-![Github License](https://img.shields.io/github/license/JonathanTreffler/backblaze-personal-wine-container?style=flat-square)
-![Docker Pulls](https://img.shields.io/docker/pulls/tessypowder/backblaze-personal-wine?style=flat-square)
-![Docker Image Size](https://img.shields.io/docker/image-size/tessypowder/backblaze-personal-wine/latest?style=flat-square)
-![Maintenance](https://img.shields.io/maintenance/yes/2024?style=flat-square)
-![GitHub last commit](https://img.shields.io/github/last-commit/JonathanTreffler/backblaze-personal-wine-container?style=flat-square)
-![GitHub contributors](https://img.shields.io/github/contributors/JonathanTreffler/backblaze-personal-wine-container?style=flat-square)
+![GitHub License](https://img.shields.io/github/license/iamfoz/backblaze-personal-wine-container?style=flat-square)
+![Maintenance](https://img.shields.io/maintenance/yes/2026?style=flat-square)
+![GitHub last commit](https://img.shields.io/github/last-commit/iamfoz/backblaze-personal-wine-container?style=flat-square)
+![GitHub contributors](https://img.shields.io/github/contributors/iamfoz/backblaze-personal-wine-container?style=flat-square)
 [![Stand With Ukraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/badges/StandWithUkraine.svg)](https://stand-with-ukraine.pp.ua)
 
-# Backblaze Personal Wine Community Container
+# Backblaze 64 Personal Wine Community Container
 
 This Docker container runs the Backblaze personal backup client via [WINE](https://www.winehq.org), so that you can back up your files with the separation and portability capabilities of Docker on Linux.
 
@@ -16,9 +14,10 @@ It runs the Backblaze client and starts a virtual X server and a VNC server with
 
 ## Table of Content
 
-   * **[Backblaze Personal Wine Container](#backblaze-personal-wine-container)**
+   * **[Backblaze 64 Personal Wine Community Container](#backblaze-64-personal-wine-community-container)**
       * [Table of Content](#table-of-content)
       * [Project Status](#project-status)
+      * [Known Limitations](#known-limitations)
       * [Docker Images](#docker-images)
          * [Content](#content)
          * [Tags](#tags)
@@ -42,6 +41,13 @@ It runs the Backblaze client and starts a virtual X server and a VNC server with
 This docker should just work for most people. But if you for example have a complex permissions setup in the filesystem you are trying to back up you will need good knowledge of docker to get it set up.
 
 Still please be attentive during the install process: The docker by design has read/write access to all the data you are trying to back up and if you make a grave mistake you could delete stuff.
+
+## Known Limitations
+
+Backblaze 10.x (64-bit, Windows 10-only) installs, signs in, and backs up reliably under Wine, but two cosmetic quirks remain. **Neither affects your backups:**
+
+- **The control panel renders dark / unstyled.** Backblaze draws its UI with custom GDI+ code that Wine doesn't fully reproduce, so the control-panel window has a black background and the warning dialogs show no body text. The UI is still usable — buttons and input fields work, so you can sign in, choose what to back up, and change settings. (Investigated and ruled out: the Windows colour palette, window-manager modes, the virtual-desktop toggle, `winehq-staging`, and native `gdiplus` — it's a Wine/Backblaze rendering incompatibility, not a setting we can flip.)
+- **"Permission Issue … `bzdata\bzreports`" warning.** A false positive: Backblaze's permission self-check misbehaves under Wine, but it writes to that directory fine and backups run normally. Safe to ignore.
 
 ## Docker Images
 ### Content
@@ -72,14 +78,11 @@ Here are the main components of this image:
 
 | Tag | Description |
 |-----|-------------|
-| latest | Latest stable version of the image based on ubuntu 22 |
-| ubuntu22 | Latest stable version of the image based on ubuntu 22 |
-| ubuntu20 | Latest stable version of the image based on ubuntu 20 **(Not recommended anymore)** |
-| ubuntu18 | Latest stable version of the image based on ubuntu 18 **(End of Life - unmaintained)** |
-| v1.x | Versioned stable releases based on ubuntu 22 |
-| main | Automatic build of the main branch (may be unstable) based on ubuntu 22 |
+| latest | Latest stable build (Ubuntu 22.04) |
+| ubuntu22 | Same as `latest` (Ubuntu 22.04) |
+| main | Automatic build of the `main` branch (may be unstable) |
 
-There are no versioned ubuntu20 or ubuntu18 builds.
+Only the Ubuntu 22.04 image is built. Upstream's older `ubuntu20` / `ubuntu18` variants are retired — their Wine is too old for the 64-bit Windows 10 client.
 
 ### Platforms
 
@@ -103,8 +106,8 @@ Environment variables can be set by adding one or more arguments `-e "<VAR>=<VAL
 | Variable       | Description                                  | Default |
 |----------------|----------------------------------------------|---------|
 |`DISABLE_VIRTUAL_DESKTOP` | Disables Wine's Virtual Desktop Mode | false |
-|`DISABLE_AUTOUPDATE` | Disables the auto-update of the backblaze client to the latest known-good version at the time of the docker version release | true |
-|`FORCE_LATEST_UPDATE`| Forces the auto updater to download the newest version of the backblaze client from the backblaze servers instead of a known-good version from the Internet Archive | true |
+|`DISABLE_AUTOUPDATE` | When set to true, skip the startup update check and just launch the installed client. When false (the default), the container checks Backblaze for a newer client on each start and updates if one is available. | false |
+|`FORCE_LATEST_UPDATE`| Forces the auto updater to download the newest version of the backblaze client from Backblaze's servers | true |
 |`UMASK`| Mask that controls how file permissions are set for newly created files. The value of the mask is in octal notation.  By default, this variable is not set and the default umask of `022` is used, meaning that newly created files are readable by everyone, but only writable by the owner. See the following online umask calculator: http://wintelguy.com/umask-calc.pl | (unset) |
 |`TZ`| [TimeZone] of the container.  Timezone can also be set by mapping `/etc/localtime` between the host and the container. | `Etc/UTC` |
 |`APP_NICENESS`| Priority at which the application should run.  A niceness value of -20 is the highest priority and 19 is the lowest priority.  By default, niceness is not set, meaning that the default niceness of 0 is used.  **NOTE**: A negative niceness (priority increase) requires additional permissions.  In this case, the container should be run with the docker option `--cap-add=SYS_NICE`. | (unset) |
@@ -149,13 +152,13 @@ You can mount drives with different paths, but these will need to be mounted man
 1. Add your storage path as a wine drive, so Backblaze can access it
 
     ````shell
-    docker exec --user app backblaze_personal_backup ln -s /backup_volume/ /config/wine/dosdevices/d:
+    docker exec --user app Backblaze64 ln -s /backup_volume/ /config/wine/dosdevices/d:
     ````
 
 1. Restart the docker to get Backblaze to recognize the new drive
 
     ````shell
-    docker restart backblaze_personal_backup
+    docker restart Backblaze64
     ````
 
 1. Reload the Web Interface
@@ -285,10 +288,10 @@ container.
     docker run \
         -p 8080:5800 \
         --init \
-        --name backblaze_personal_backup \
+        --name Backblaze64 \
         -v "[backup folder]/:/drive_d/" \
         -v "[config folder]/:/config/" \
-        tessypowder/backblaze-personal-wine:latest
+        ghcr.io/iamfoz/backblaze-personal-wine:latest
     ````
 
 1. Open the Web Interface (on the port you specified in the docker run command, in this example 8080):
@@ -322,7 +325,7 @@ container.
 
     ![Bildschirmfoto von 2022-01-16 15-01-00](https://user-images.githubusercontent.com/28999431/149663289-d53c7241-5856-4032-af41-66a3fa513b36.png)
 
-1. If your [config folder] is somewehere inside the [backup folder] on the docker host side (which is the case for the Unraid template) in order to prevent an infinite loop of config file uploads, because those uploads change bz_done* files in [config folder]/wine/drive_c/ProgramData/Backblaze/bzdata/bzbackup/bzdatacenter open the web interface, open the Backblaze settings, open the "Exclusions" tab, click on "Add Folder" and in the popup navigate to My Computer -> (D:) and naviagate to the config folder inside. For unraid template installs this is My Computer -> (D:) -> appdata -> backblaze_personal_backup. Click on OK and close the Backblaze Settings.
+1. If your [config folder] is somewehere inside the [backup folder] on the docker host side (which is the case for the Unraid template) in order to prevent an infinite loop of config file uploads, because those uploads change bz_done* files in [config folder]/wine/drive_c/ProgramData/Backblaze/bzdata/bzbackup/bzdatacenter open the web interface, open the Backblaze settings, open the "Exclusions" tab, click on "Add Folder" and in the popup navigate to My Computer -> (D:) and naviagate to the config folder inside. For unraid template installs this is My Computer -> (D:) -> appdata -> Backblaze64. Click on OK and close the Backblaze Settings.
 
 1. The Installation is done 🎉
 
@@ -351,7 +354,7 @@ container.
   - **Still not working**:
     - Run
       ````shell
-      docker exec --user app backblaze_personal_backup ls -la /config/wine/dosdevices/
+      docker exec --user app Backblaze64 ls -la /config/wine/dosdevices/
       ````
 
     - The output should look like this:
@@ -378,10 +381,10 @@ container.
         --init \
         -e USER_ID=0 \
         -e GROUP_ID=0 \
-        --name backblaze_personal_backup \
+        --name Backblaze64 \
         -v "[backup folder]/:/drive_d/" \
         -v "[config folder]/:/config/" \
-        tessypowder/backblaze-personal-wine:latest
+        ghcr.io/iamfoz/backblaze-personal-wine:latest
     ````
 
   - **Additional 'black screen' troubleshooting for Synology devices**:
@@ -394,10 +397,10 @@ container.
         --privileged \
         -e USER_ID=0 \
         -e GROUP_ID=0 \
-        --name backblaze_personal_backup \
+        --name Backblaze64 \
         -v "[backup folder]/:/drive_d/" \
         -v "[config folder]/:/config/" \
-        tessypowder/backblaze-personal-wine:latest
+        ghcr.io/iamfoz/backblaze-personal-wine:latest
     ````
 
   - **For More Information**: See [#98](https://github.com/JonathanTreffler/backblaze-personal-wine-container/issues/98), [#99](https://github.com/JonathanTreffler/backblaze-personal-wine-container/issues/99)
@@ -409,11 +412,11 @@ The `--init` flag installs a tiny process that can actually do a few init things
 2. Backblaze will create a `.bzvol` directory in the root of every hard drive it's configured to back up in which it'll store a full copy of files >100M split into 10M parts. Mount accordingly if you want to preserve SSD erase cycles.
 3. You can browse the files accessible to Backblaze using:
     ````shell
-    docker exec --user app backblaze_personal_backup wine explorer
+    docker exec --user app Backblaze64 wine explorer
     ````
 4. You can open the Wine Config using:
     ````shell
-    docker exec --user app backblaze_personal_backup winecfg
+    docker exec --user app Backblaze64 winecfg
     ````
 5. We are using Wine's virtual desktop mode as default and are using a default screen resoluzion of 900x700 pixels. It's larger than the Backblaze UI window itself to make room for the Backblaze restore app. You can always modify the resolution as you like with DISPLAY_WIDTH and DISPLAY_HEIGHT:
     ````shell
@@ -421,13 +424,12 @@ The `--init` flag installs a tiny process that can actually do a few init things
     ````
 
 # Credits
-This was originally developed by @Atemu (https://github.com/Atemu/backblaze-personal-wine-container).
 
-The Backblaze name, logo and application is the property of Backblaze, Inc.
+**Backblaze 64** is a 64-bit / Windows 10 fork maintained by [@iamfoz](https://github.com/iamfoz/backblaze-personal-wine-container), re-engineered to install and run Backblaze Personal Backup 10.x (which dropped 32-bit and pre-Windows 10 support).
 
-This docker does not redistribute the Backblaze application. It gets downloaded from the official Backblaze Servers or Internet Archive during the install process.
+It builds directly on [@JonathanTreffler](https://github.com/JonathanTreffler/backblaze-personal-wine-container)'s Backblaze Personal Wine Community Container — huge thanks to Jonathan, whose project this is forked from. That project was originally developed by [@Atemu](https://github.com/Atemu/backblaze-personal-wine-container) and is built on [@jlesage](https://github.com/jlesage/docker-baseimage-gui)'s excellent GUI base image.
 
-This docker image is based on @jlesage 's excellent [base image](https://github.com/jlesage/docker-baseimage-gui).
+The Backblaze name, logo and application are the property of Backblaze, Inc. This image does not redistribute the Backblaze application; it is downloaded from the official Backblaze servers during installation.
 
 ## Contributors:
 This project was made by:

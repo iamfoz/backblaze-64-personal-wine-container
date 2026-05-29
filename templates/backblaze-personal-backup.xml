@@ -1,0 +1,138 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Backblaze64</Name>
+  <Repository>ghcr.io/iamfoz/backblaze-personal-wine:latest</Repository>
+  <Registry>https://github.com/iamfoz/backblaze-personal-wine-container/pkgs/container/backblaze-personal-wine</Registry>
+  <Network>bridge</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/iamfoz/backblaze-personal-wine-container/issues</Support>
+  <Project>https://github.com/iamfoz/backblaze-personal-wine-container</Project>
+  <Overview>Backblaze Personal Backup running under Wine (64-bit Windows environment) on Ubuntu 22.04. Provides a web-based GUI via browser or VNC. Automatically keeps Backblaze updated to the latest version on each restart.</Overview>
+  <Category>Backup:</Category>
+  <WebUI>http://[IP]:[PORT:5800]/</WebUI>
+  <Icon>https://cdn.jsdelivr.net/gh/selfhst/icons/png/backblaze.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText>If Backblaze 64 is useful to you, sponsorship is hugely appreciated and helps keep it maintained.</DonateText>
+  <DonateLink>https://github.com/sponsors/iamfoz</DonateLink>
+
+  <!-- Ports -->
+  <Config
+    Name="Web UI Port"
+    Target="5800"
+    Default="5800"
+    Mode="tcp"
+    Description="Port for the browser-based GUI (HTTP)."
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">5800</Config>
+
+  <Config
+    Name="VNC Port"
+    Target="5900"
+    Default="5900"
+    Mode="tcp"
+    Description="Port for direct VNC client access."
+    Type="Port"
+    Display="always"
+    Required="false"
+    Mask="false">5900</Config>
+
+  <!-- Paths -->
+  <Config
+    Name="Config"
+    Target="/config"
+    Default="/mnt/user/appdata/Backblaze64"
+    Mode="rw"
+    Description="Persistent storage for the Wine prefix and Backblaze configuration. Must survive container restarts."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/Backblaze64</Config>
+
+  <Config
+    Name="Backup Source (Drive D)"
+    Target="/drive_d"
+    Default=""
+    Mode="ro"
+    Description="Optional: map a host path to back up as drive D. Repeat with /drive_e, /drive_f, etc. for additional locations."
+    Type="Path"
+    Display="always"
+    Required="false"
+    Mask="false"/>
+
+  <!-- Environment variables -->
+  <Config
+    Name="Timezone"
+    Target="TZ"
+    Default="Etc/UTC"
+    Description="Timezone string, e.g. America/New_York. See https://en.wikipedia.org/wiki/List_of_tz_database_time_zones"
+    Type="Variable"
+    Display="always"
+    Required="false"
+    Mask="false">Etc/UTC</Config>
+
+  <Config
+    Name="User ID"
+    Target="USER_ID"
+    Default="1000"
+    Description="UID the app runs as. Match to your Unraid user (check with: id -u)."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">1000</Config>
+
+  <Config
+    Name="Group ID"
+    Target="GROUP_ID"
+    Default="1000"
+    Description="GID the app runs as. Match to your Unraid group (check with: id -g)."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">1000</Config>
+
+  <Config
+    Name="Disable Auto-Update"
+    Target="DISABLE_AUTOUPDATE"
+    Default="false"
+    Description="Set to true to skip the Backblaze version check on startup (faster boot, but won't auto-update)."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">false</Config>
+
+  <Config
+    Name="Disable Virtual Desktop"
+    Target="DISABLE_VIRTUAL_DESKTOP"
+    Default="false"
+    Description="Set to true to disable Wine's virtual desktop mode."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">false</Config>
+
+  <Config
+    Name="Display Width"
+    Target="DISPLAY_WIDTH"
+    Default="900"
+    Description="Virtual desktop width in pixels."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">900</Config>
+
+  <Config
+    Name="Display Height"
+    Target="DISPLAY_HEIGHT"
+    Default="700"
+    Description="Virtual desktop height in pixels."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">700</Config>
+</Container>
