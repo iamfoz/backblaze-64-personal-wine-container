@@ -78,11 +78,11 @@ Here are the main components of this image:
 
 | Tag | Description |
 |-----|-------------|
-| latest | Latest stable build (Ubuntu 22.04) |
-| ubuntu22 | Same as `latest` (Ubuntu 22.04) |
+| latest | Latest stable build (Ubuntu 24.04) |
+| ubuntu24 | Same as `latest` (Ubuntu 24.04) |
 | main | Automatic build of the `main` branch (may be unstable) |
 
-Only the Ubuntu 22.04 image is built. Upstream's older `ubuntu20` / `ubuntu18` variants are retired — their Wine is too old for the 64-bit Windows 10 client.
+Only the Ubuntu 24.04 LTS image is built. The older `ubuntu22` / `ubuntu20` / `ubuntu18` variants are no longer published.
 
 ### Platforms
 

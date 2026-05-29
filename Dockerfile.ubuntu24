@@ -1,0 +1,78 @@
+FROM jlesage/baseimage-gui:ubuntu-24.04-v4@sha256:206b2204356d808483fdb3fee667e079f137f772f975bf18c6c937b7902d7cb0
+
+ENV WINEPREFIX=/config/wine/
+# Backblaze 10.x is a native 64-bit app, so the prefix must be win64.
+ENV WINEARCH=win64
+ENV LANG=en_US.UTF-8
+ENV APP_NAME="Backblaze Personal Backup"
+ENV FORCE_LATEST_UPDATE="true"
+ENV DISABLE_AUTOUPDATE="false"
+ENV DISABLE_VIRTUAL_DESKTOP="false"
+ENV DISPLAY_WIDTH="900"
+ENV DISPLAY_HEIGHT="700"
+# Disable Wine debug noise
+ENV WINEDEBUG=-all
+# Set DISPLAY so GUI programs can find the X server
+ENV DISPLAY=:0
+
+# Unraid reads these labels to show a WebUI button and the app icon on the
+# Docker page - works even for containers started with `docker run`.
+LABEL net.unraid.docker.webui="http://[IP]:[PORT:5800]/" \
+      net.unraid.docker.icon="https://cdn.jsdelivr.net/gh/selfhst/icons/png/backblaze.png"
+
+# Install 64-bit Wine from WineHQ using the modern deb822 "sources" method.
+# Lessons baked in here:
+#   * The WineHQ apt repo only ever keeps the LATEST build of each branch, so
+#     pinning an exact version (e.g. winehq-stable=10.0*) breaks the moment a
+#     newer release ships. We track winehq-stable (currently Wine 11.x).
+#   * deb822 + a keyring file is reliable; the old apt-key / add-apt-repository
+#     approach silently fell back to Ubuntu's ancient Wine 6.x when it broke.
+#   * Backblaze 10.x is 64-bit only, but winehq-stable still pulls its i386
+#     WoW64 libraries via recommends. That is harmless and kept for safety.
+# Installing Wine on the jlesage 24.04 base needs three adjustments:
+#
+# 1. Its build-time environment is minimal - /run and the user/group database
+#    do not exist yet - so postinst scripts that take locks or create users
+#    (dbus, fontconfig, udev, ...) abort. Recreate what the base's own add-pkg
+#    helper sets up (init_env) first, then strip the scaffolding back out.
+#
+# 2. Wine hard-depends (via libsane/libgphoto2 -> udev) on systemd, whose
+#    postinst cannot configure on this base (it wants a real /var/log and trips
+#    over the base's /etc/gshadow). Pin full systemd out so the udev dependency
+#    is satisfied by the lightweight systemd-standalone-sysusers instead.
+#
+# 3. Install with --no-install-recommends to avoid avahi/cups/etc. that a backup
+#    container has no use for, adding back only the Wine runtime libs Backblaze
+#    needs (TLS, fonts, X render/extension libs). winbind is omitted too (its
+#    only use here is Wine's unused NTLM auth).
+RUN mkdir -p /config/log /tmp/run && \
+    /etc/cont-init.d/10-init-users.sh && \
+    printf 'Package: systemd systemd:i386 systemd-sysv systemd-sysv:i386\nPin: release *\nPin-Priority: -1\n' \
+        > /etc/apt/preferences.d/no-systemd && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates curl xvfb cabextract p7zip-full && \
+    dpkg --add-architecture i386 && \
+    mkdir -pm755 /etc/apt/keyrings && \
+    curl -fsSL https://dl.winehq.org/wine-builds/winehq.key \
+        -o /etc/apt/keyrings/winehq-archive.key && \
+    curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources \
+        -o /etc/apt/sources.list.d/winehq-noble.sources && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends winehq-stable \
+        libgnutls30t64 libfreetype6 libfontconfig1 libpng16-16t64 \
+        libxcomposite1 libxcursor1 libxfixes3 libxi6 libxinerama1 \
+        libxrandr2 libxrender1 libxxf86vm1 && \
+    apt-get install -y --no-install-recommends winetricks && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends locales && \
+    sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
+    dpkg-reconfigure --frontend=noninteractive locales && \
+    update-locale LANG=en_US.UTF-8 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* \
+        /tmp/.passwd /tmp/.group /tmp/.shadow /tmp/.gshadow /tmp/run /config/log
+
+EXPOSE 5900
+
+COPY rootfs/ /
+RUN chmod +x /startapp.sh

@@ -21,8 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     it: the installer's CAB payload is extracted, the program binaries are
     copied into place, and Backblaze's native `bzdoinstall.exe` is run directly
     (its only OS gate rejects server editions, which a workstation prefix passes).
-- CI now builds only the `ubuntu22` image; the `ubuntu20` and `ubuntu18`
-  variants are retired (their Wine is too old for a 64-bit Windows 10 client).
+- Base image moved to Ubuntu 24.04 LTS (`jlesage/baseimage-gui:ubuntu-24.04-v4`),
+  with WineHQ packages installed from the `noble` repository, for a longer
+  security-support window and an up-to-date userspace.
+- CI builds only the `ubuntu24` image; the older `ubuntu22`, `ubuntu20`, and
+  `ubuntu18` variants are no longer published.
 
 ## 1.11
 

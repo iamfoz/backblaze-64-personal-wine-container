@@ -8,7 +8,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/iamfoz/backblaze-personal-wine-container/issues</Support>
   <Project>https://github.com/iamfoz/backblaze-personal-wine-container</Project>
-  <Overview>Backblaze Personal Backup running under Wine (64-bit Windows environment) on Ubuntu 22.04. Provides a web-based GUI via browser or VNC. Automatically keeps Backblaze updated to the latest version on each restart.</Overview>
+  <Overview>Backblaze Personal Backup running under Wine (64-bit Windows environment) on Ubuntu 24.04. Provides a web-based GUI via browser or VNC. Automatically keeps Backblaze updated to the latest version on each restart.</Overview>
   <Category>Backup:</Category>
   <WebUI>http://[IP]:[PORT:5800]/</WebUI>
   <Icon>https://cdn.jsdelivr.net/gh/selfhst/icons/png/backblaze.png</Icon>
