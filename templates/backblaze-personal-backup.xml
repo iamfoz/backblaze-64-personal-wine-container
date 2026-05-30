@@ -80,22 +80,22 @@
   <Config
     Name="User ID"
     Target="USER_ID"
-    Default="1000"
-    Description="UID the app runs as. Match to your Unraid user (check with: id -u)."
+    Default="99"
+    Description="UID the app runs as. On Unraid this is normally 99 (nobody), which matches user-share ownership - the app must own the files it backs up, since Backblaze writes a .bzvol folder into each drive's root. Change only if your data is owned by a different user (check with: id -u)."
     Type="Variable"
     Display="advanced"
     Required="false"
-    Mask="false">1000</Config>
+    Mask="false">99</Config>
 
   <Config
     Name="Group ID"
     Target="GROUP_ID"
-    Default="1000"
-    Description="GID the app runs as. Match to your Unraid group (check with: id -g)."
+    Default="100"
+    Description="GID the app runs as. On Unraid this is normally 100 (users), matching user-share ownership. Change only if your data is owned by a different group (check with: id -g)."
     Type="Variable"
     Display="advanced"
     Required="false"
-    Mask="false">1000</Config>
+    Mask="false">100</Config>
 
   <Config
     Name="Disable Auto-Update"
