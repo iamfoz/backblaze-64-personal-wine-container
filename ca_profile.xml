@@ -1,0 +1,15 @@
+<CommunityApplications>
+  <Profile>
+Backblaze 64 runs the **Backblaze Personal Backup** client (v10, 64-bit) under Wine on Ubuntu 24.04 LTS, with a browser- and VNC-based GUI. It keeps the client updated automatically and is built to run unattended on Unraid.
+
+This is a community-maintained fork of JonathanTreffler's `backblaze-personal-wine` container, re-engineered for Backblaze's 64-bit, Windows 10-only client.
+
+Documentation and support: https://github.com/iamfoz/backblaze-personal-wine-container
+  </Profile>
+  <Icon>https://cdn.jsdelivr.net/gh/selfhst/icons/png/backblaze.png</Icon>
+  <WebPage>https://github.com/iamfoz/backblaze-personal-wine-container</WebPage>
+  <!-- Optional: add your Unraid forum support thread once it exists -->
+  <!-- <Forum>https://forums.unraid.net/topic/YOUR_THREAD</Forum> -->
+  <DonateLink>https://github.com/sponsors/iamfoz</DonateLink>
+  <DonateText>If Backblaze 64 is useful to you, sponsorship helps keep it maintained.</DonateText>
+</CommunityApplications>

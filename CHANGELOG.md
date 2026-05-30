@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   security-support window and an up-to-date userspace.
 - CI builds only the `ubuntu24` image; the older `ubuntu22`, `ubuntu20`, and
   `ubuntu18` variants are no longer published.
+- Removed the dead "pinned version" update path (its archive.org URL 404s and
+  it was already disabled); `FORCE_LATEST_UPDATE=false` now simply keeps the
+  installed client and skips the update check.
+- Added a Community Applications profile (`ca_profile.xml`) and a `<TemplateURL>`
+  for the Unraid CA submission.
 
 ## 1.11
 
