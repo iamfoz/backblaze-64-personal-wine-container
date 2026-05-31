@@ -49,7 +49,10 @@ force_windows_10() {
     wine reg add "$nt_key" /v ProductName               /t REG_SZ    /d 'Microsoft Windows 10' /f
     wine reg add "$nt_key" /v CurrentMajorVersionNumber /t REG_DWORD /d 10 /f
     wine reg add "$nt_key" /v CurrentMinorVersionNumber /t REG_DWORD /d 0  /f
-    wineserver -w
+    # Do NOT "wineserver -w" here. reg writes are synchronous, and once Backblaze
+    # is installed the first wine call auto-starts its persistent bzserv service -
+    # waiting for the server to terminate would then block forever and the GUI
+    # (bzbui.exe) would never launch.
 }
 
 echo "WINE: binary=$(command -v wine) version=$(wine --version 2>/dev/null)"
@@ -69,21 +72,22 @@ do
     fi
 done
 
-# Set Virtual Desktop
-cd $WINEPREFIX
+# Set the Wine "virtual desktop" by writing the registry directly. We must NOT
+# use "winetricks vd=..." here: winetricks runs "wineserver -w" internally, which
+# hangs forever once Backblaze's persistent bzserv service is running (it never
+# lets the wineserver terminate). These are exactly the keys winetricks writes.
+cd "$WINEPREFIX"
+explorer_key='HKCU\Software\Wine\Explorer'
+desktops_key='HKCU\Software\Wine\Explorer\Desktops'
 if [ "$DISABLE_VIRTUAL_DESKTOP" = "true" ]; then
-    log_message "WINE: DISABLE_VIRTUAL_DESKTOP=true - Virtual Desktop mode will be disabled"
-    winetricks vd=off
+    log_message "WINE: DISABLE_VIRTUAL_DESKTOP=true - disabling Virtual Desktop mode"
+    wine reg delete "$explorer_key" /v Desktop /f 2>/dev/null
+    wine reg delete "$desktops_key" /v Default /f 2>/dev/null
 else
-    # Check if width and height are defined
-    if [ -n "$DISPLAY_WIDTH" ] && [ -n "$DISPLAY_HEIGHT" ]; then
-    log_message "WINE: Enabling Virtual Desktop mode with $DISPLAY_WIDTH:$DISPLAY_HEIGHT aspect ratio"
-    winetricks vd="$DISPLAY_WIDTH"x"$DISPLAY_HEIGHT"
-    else
-        # Default aspect ratio
-        log_message "WINE: Enabling Virtual Desktop mode with recommended aspect ratio"
-        winetricks vd="900x700"
-    fi
+    desktop_size="${DISPLAY_WIDTH:-900}x${DISPLAY_HEIGHT:-700}"
+    log_message "WINE: Enabling Virtual Desktop mode at $desktop_size"
+    wine reg add "$explorer_key" /v Desktop /t REG_SZ /d Default /f
+    wine reg add "$desktops_key" /v Default /t REG_SZ /d "$desktop_size" /f
 fi
 
 # Disclaimer
