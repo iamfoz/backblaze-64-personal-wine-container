@@ -10,8 +10,11 @@ export WINEARCH="win64"
 export WINEDLLOVERRIDES="mscoree=" # Disable Mono installation
 
 log_message() {
-    # The log file lives inside the Wine prefix, which does not exist yet on the
-    # very first run; tolerate that rather than spewing "No such file" errors.
+    # The log file lives inside the Wine prefix, which does not exist on the very
+    # first run. Skip logging until its directory exists - a trailing 2>/dev/null
+    # does NOT suppress the error, because bash reports the failed >> redirection
+    # before it applies the stderr redirect.
+    [ -d "$(dirname "$log_file")" ] || return 0
     echo "$(date): $1" >> "$log_file" 2>/dev/null
 }
 
