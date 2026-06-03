@@ -156,7 +156,29 @@ fetch_and_install() {
 
 }
 
+# Backblaze's bzbui.exe references its high-DPI skin assets with hyphenated names
+# (e.g. "bzbui_skin_bg-4x.gif", "windows-computer-4x_dm.gif"), but the installer
+# payload ships them with underscores ("bzbui_skin_bg_4x.gif"). Without the
+# hyphen-named copies bzbui cannot build its main control-panel window - it
+# renders unstyled and logs "could not CreateDialog for main white window". The
+# naming differs across asset families (some flip every "_", some only the one
+# before "4x"), so rather than guess we read the exact names the binaries
+# reference and alias each from its underscore twin - the rule is reliable: the
+# wanted name with every "-" turned back into "_" is the file already on disk.
+# Deriving the list from the binaries keeps it complete across client versions,
+# so the GUI renders correctly on the first launch with no per-file chasing.
+create_skin_aliases() {
+    bb_dir="${WINEPREFIX}drive_c/Program Files/Backblaze"
+    [ -d "$bb_dir" ] || return 0
+    grep -aohE '[A-Za-z0-9_-]+-4x[A-Za-z0-9_]*\.gif' "$bb_dir"/*.exe "$bb_dir"/*.dll 2>/dev/null \
+        | sort -u | while read -r want; do
+            have="$(printf '%s' "$want" | tr '-' '_')"
+            [ -f "$bb_dir/$have" ] && [ ! -e "$bb_dir/$want" ] && cp -- "$bb_dir/$have" "$bb_dir/$want"
+        done
+}
+
 start_app() {
+    create_skin_aliases
     log_message "STARTAPP: Starting Backblaze version $(cat "$local_version_file")"
     wine "${WINEPREFIX}drive_c/Program Files/Backblaze/bzbui.exe" -noquiet &
     sleep infinity

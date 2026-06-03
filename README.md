@@ -44,10 +44,11 @@ Still please be attentive during the install process: The docker by design has r
 
 ## Known Limitations
 
-Backblaze 10.x (64-bit, Windows 10-only) installs, signs in, and backs up reliably under Wine, but two cosmetic quirks remain. **Neither affects your backups:**
+Backblaze 10.x (64-bit, Windows 10-only) installs, signs in, and backs up reliably under Wine. One cosmetic quirk remains, and it does **not** affect your backups:
 
-- **The control panel renders dark / unstyled.** Backblaze draws its UI with custom GDI+ code that Wine doesn't fully reproduce, so the control-panel window has a black background and the warning dialogs show no body text. The UI is still usable — buttons and input fields work, so you can sign in, choose what to back up, and change settings. (Investigated and ruled out: the Windows colour palette, window-manager modes, the virtual-desktop toggle, `winehq-staging`, and native `gdiplus` — it's a Wine/Backblaze rendering incompatibility, not a setting we can flip.)
 - **"Permission Issue … `bzdata\bzreports`" warning.** A false positive: Backblaze's permission self-check misbehaves under Wine, but it writes to that directory fine and backups run normally. Safe to ignore.
+
+> The control panel previously rendered unstyled (black background, blank dialog text). That turned out **not** to be an unfixable GDI+ incompatibility: `bzbui.exe` references its hi-DPI skin assets with hyphenated names (`*-4x.gif`) while the bypass install ships them underscored (`*_4x.gif`), so the skin failed to load and the main window couldn't build. The container now creates the hyphen-named aliases at startup, so the panel renders correctly on first launch.
 
 ## Docker Images
 ### Content
