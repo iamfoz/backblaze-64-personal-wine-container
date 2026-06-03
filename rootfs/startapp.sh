@@ -52,16 +52,58 @@ force_windows_10() {
     wine reg add "$nt_key" /v ProductName               /t REG_SZ    /d 'Microsoft Windows 10' /f
     wine reg add "$nt_key" /v CurrentMajorVersionNumber /t REG_DWORD /d 10 /f
     wine reg add "$nt_key" /v CurrentMinorVersionNumber /t REG_DWORD /d 0  /f
+    # Defeat the Windows 8.1+ GetVersionEx "version lie": an *unmanifested* process
+    # is told 6.2 (Windows 8) regardless of the keys set above. Telling Wine to
+    # prefer an external manifest lets the rundll32.exe.manifest written by
+    # install_supportedos_manifest() declare a Windows 10/11 supportedOS, so the
+    # .NET "CheckVersions" action Backblaze runs inside rundll32 sees the real 10.0.
+    wine reg add 'HKLM\Software\Microsoft\Windows\CurrentVersion\SideBySide' /v PreferExternalManifest /t REG_DWORD /d 1 /f
     # Do NOT "wineserver -w" here. reg writes are synchronous, and once Backblaze
     # is installed the first wine call auto-starts its persistent bzserv service -
     # waiting for the server to terminate would then block forever and the GUI
     # (bzbui.exe) would never launch.
 }
 
+# Backblaze runs a .NET MSI custom action ("CheckVersions") inside rundll32.exe -
+# during a normal MSI install and, crucially for us, during its own in-app
+# self-update. Thanks to the Windows 8.1+ "version lie", that unmanifested
+# rundll32 is told Windows 8 (6.2) and the action aborts with "MajorVerTooOld" /
+# "unsupported OS", even though force_windows_10() set the prefix to 10.0. We drop
+# an external manifest declaring a Windows 10/11 supportedOS into both system
+# dirs; together with the PreferExternalManifest key set in force_windows_10(),
+# GetVersionEx then returns the real 10.0. Our installer bypasses the MSI so this
+# is not needed for the first install, but it keeps Backblaze's self-update from
+# breaking on the OS gate once it ships a version newer than the installed one.
+# (Mirrors upstream's assets/rundll32.exe.manifest, written at runtime so the fix
+# stays self-contained in this script instead of a baked image template.)
+install_supportedos_manifest() {
+    for d in system32 syswow64; do
+        dir="${WINEPREFIX}drive_c/windows/${d}"
+        [ -d "$dir" ] || continue
+        cat > "$dir/rundll32.exe.manifest" <<'EOF'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10/11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+      <!-- Windows 8.1 -->
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
+      <!-- Windows 8 -->
+      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>
+    </application>
+  </compatibility>
+</assembly>
+EOF
+        log_message "WINE: installed rundll32 supportedOS manifest into ${d}"
+    done
+}
+
 echo "WINE: binary=$(command -v wine) version=$(wine --version 2>/dev/null)"
 echo "WINE: WINEARCH=${WINEARCH} WINEPREFIX=${WINEPREFIX}"
 echo "WINE: forcing reported Windows version to Windows 10"
 force_windows_10
+install_supportedos_manifest
 echo "WINE: OS version now reported by the prefix:"
 wine cmd /c ver 2>/dev/null | tr -d '\r'
 log_message "WINE: prefix ready and reporting Windows 10"
