@@ -44,7 +44,9 @@ Still please be attentive during the install process: The docker by design has r
 
 ## Known Limitations
 
-Backblaze 10.x (64-bit, Windows 10-only) installs, signs in, and backs up reliably under Wine. One cosmetic quirk remains, and it does **not** affect your backups:
+Backblaze 10.x (64-bit, Windows 10-only) installs, signs in, and backs up reliably under Wine. Two caveats are worth knowing — neither corrupts or blocks your backups:
+
+- **Upload speed is limited by Backblaze-on-Wine, not the container or your network.** An `iperf3` test from inside the container reaches full line speed, so the bottleneck is the Backblaze client itself: the 10.x upload path is several times slower *per thread* under Wine than the old 9.x client, and Backblaze's heuristic for spawning more upload threads misreads an idle box and under-spawns. **Raising the thread count** under Settings → Performance helps a lot — the work is network-wait-bound, so over-subscribing threads well beyond your CPU core count is fine here (the usual "stay under your core count" advice is for native machines and does not apply). Throughput is also far lower while grinding through many small files than on large ones, so expect it to climb as the backup progresses. See upstream [#212](https://github.com/JonathanTreffler/backblaze-personal-wine-container/issues/212) for details and a community workaround (adding CPU load to coax Backblaze into spawning more upload threads).
 
 - **"Permission Issue … `bzdata\bzreports`" warning.** A false positive: Backblaze's permission self-check misbehaves under Wine, but it writes to that directory fine and backups run normally. Safe to ignore.
 
