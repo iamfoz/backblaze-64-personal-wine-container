@@ -50,6 +50,8 @@ Backblaze 10.x (64-bit, Windows 10-only) installs, signs in, and backs up reliab
 
 > The control panel previously rendered unstyled (black background, blank dialog text). That turned out **not** to be an unfixable GDI+ incompatibility: `bzbui.exe` references its hi-DPI skin assets with hyphenated names (`*-4x.gif`) while the bypass install ships them underscored (`*_4x.gif`), so the skin failed to load and the main window couldn't build. The container now creates the hyphen-named aliases at startup, so the panel renders correctly on first launch.
 
+> Backblaze's installer — and, more importantly, its in-app **self-update** — runs a .NET MSI custom action (`CheckVersions`) inside `rundll32.exe`. Under Wine's Windows 8.1+ "version lie", an *unmanifested* process is told it is running Windows 8 (6.2) regardless of what the registry reports, so that check aborts with `MajorVerTooOld` / "unsupported OS" even though the prefix is forced to Windows 10. The first install sidesteps this by bypassing the MSI (it drives `bzdoinstall.exe` directly), but a self-update runs the MSI itself. The container therefore writes an external `rundll32.exe.manifest` declaring a Windows 10/11 `supportedOS` into `system32` and `syswow64` at startup and enables `PreferExternalManifest`, so `GetVersionEx` reports the real version and self-updates do not break on the OS gate.
+
 ## Docker Images
 ### Content
 Here are the main components of this image:
