@@ -2,13 +2,13 @@
 <Container version="2">
   <Name>Backblaze64</Name>
   <Repository>ghcr.io/iamfoz/backblaze-personal-wine:latest</Repository>
-  <Registry>https://github.com/iamfoz/backblaze-personal-wine-container/pkgs/container/backblaze-personal-wine</Registry>
-  <TemplateURL>https://raw.githubusercontent.com/iamfoz/backblaze-personal-wine-container/main/templates/backblaze-personal-backup.xml</TemplateURL>
+  <Registry>https://github.com/iamfoz/backblaze-64-personal-wine-container/pkgs/container/backblaze-personal-wine</Registry>
+  <TemplateURL>https://raw.githubusercontent.com/iamfoz/backblaze-64-personal-wine-container/main/templates/backblaze-personal-backup.xml</TemplateURL>
   <Network>bridge</Network>
   <Shell>bash</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/iamfoz/backblaze-personal-wine-container/issues</Support>
-  <Project>https://github.com/iamfoz/backblaze-personal-wine-container</Project>
+  <Support>https://github.com/iamfoz/backblaze-64-personal-wine-container/issues</Support>
+  <Project>https://github.com/iamfoz/backblaze-64-personal-wine-container</Project>
   <Overview>Backblaze Personal Backup running under Wine (64-bit Windows environment) on Ubuntu 24.04. Provides a web-based GUI via browser or VNC. Automatically keeps Backblaze updated to the latest version on each restart.</Overview>
   <Category>Backup:</Category>
   <WebUI>http://[IP]:[PORT:5800]/</WebUI>

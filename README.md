@@ -1,7 +1,7 @@
-![GitHub License](https://img.shields.io/github/license/iamfoz/backblaze-personal-wine-container?style=flat-square)
+![GitHub License](https://img.shields.io/github/license/iamfoz/backblaze-64-personal-wine-container?style=flat-square)
 ![Maintenance](https://img.shields.io/maintenance/yes/2026?style=flat-square)
-![GitHub last commit](https://img.shields.io/github/last-commit/iamfoz/backblaze-personal-wine-container?style=flat-square)
-![GitHub contributors](https://img.shields.io/github/contributors/iamfoz/backblaze-personal-wine-container?style=flat-square)
+![GitHub last commit](https://img.shields.io/github/last-commit/iamfoz/backblaze-64-personal-wine-container?style=flat-square)
+![GitHub contributors](https://img.shields.io/github/contributors/iamfoz/backblaze-64-personal-wine-container?style=flat-square)
 [![Stand With Ukraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/badges/StandWithUkraine.svg)](https://stand-with-ukraine.pp.ua)
 
 # Backblaze 64 Personal Wine Community Container
@@ -426,7 +426,7 @@ The `--init` flag installs a tiny process that can actually do a few init things
 
 # Credits
 
-**Backblaze 64** is a 64-bit / Windows 10 fork maintained by [@iamfoz](https://github.com/iamfoz/backblaze-personal-wine-container), re-engineered to install and run Backblaze Personal Backup 10.x (which dropped 32-bit and pre-Windows 10 support).
+**Backblaze 64** is a 64-bit / Windows 10 fork maintained by [@iamfoz](https://github.com/iamfoz/backblaze-64-personal-wine-container), re-engineered to install and run Backblaze Personal Backup 10.x (which dropped 32-bit and pre-Windows 10 support).
 
 It builds directly on [@JonathanTreffler](https://github.com/JonathanTreffler/backblaze-personal-wine-container)'s Backblaze Personal Wine Community Container — huge thanks to Jonathan, whose project this is forked from. That project was originally developed by [@Atemu](https://github.com/Atemu/backblaze-personal-wine-container) and is built on [@jlesage](https://github.com/jlesage/docker-baseimage-gui)'s excellent GUI base image.
 

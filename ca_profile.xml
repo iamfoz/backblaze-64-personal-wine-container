@@ -4,10 +4,10 @@ Backblaze 64 runs the **Backblaze Personal Backup** client (v10, 64-bit) under W
 
 This is a community-maintained fork of JonathanTreffler's `backblaze-personal-wine` container, re-engineered for Backblaze's 64-bit, Windows 10-only client.
 
-Documentation and support: https://github.com/iamfoz/backblaze-personal-wine-container
+Documentation and support: https://github.com/iamfoz/backblaze-64-personal-wine-container
   </Profile>
   <Icon>https://cdn.jsdelivr.net/gh/selfhst/icons/png/backblaze.png</Icon>
-  <WebPage>https://github.com/iamfoz/backblaze-personal-wine-container</WebPage>
+  <WebPage>https://github.com/iamfoz/backblaze-64-personal-wine-container</WebPage>
   <!-- Optional: add your Unraid forum support thread once it exists -->
   <!-- <Forum>https://forums.unraid.net/topic/YOUR_THREAD</Forum> -->
   <DonateLink>https://github.com/sponsors/iamfoz</DonateLink>
