@@ -8,8 +8,7 @@ Documentation and support: https://github.com/iamfoz/backblaze-64-personal-wine-
   </Profile>
   <Icon>https://cdn.jsdelivr.net/gh/selfhst/icons/png/backblaze.png</Icon>
   <WebPage>https://github.com/iamfoz/backblaze-64-personal-wine-container</WebPage>
-  <!-- Optional: add your Unraid forum support thread once it exists -->
-  <!-- <Forum>https://forums.unraid.net/topic/YOUR_THREAD</Forum> -->
+  <Forum>https://forums.unraid.net/topic/199284-support-backblaze-64-backblaze-personal-backup-10x-64-bit-under-wine/</Forum>
   <DonateLink>https://github.com/sponsors/iamfoz</DonateLink>
   <DonateText>If Backblaze 64 is useful to you, sponsorship helps keep it maintained.</DonateText>
 </CommunityApplications>

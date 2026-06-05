@@ -7,7 +7,7 @@
   <Network>bridge</Network>
   <Shell>bash</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/iamfoz/backblaze-64-personal-wine-container/issues</Support>
+  <Support>https://forums.unraid.net/topic/199284-support-backblaze-64-backblaze-personal-backup-10x-64-bit-under-wine/</Support>
   <Project>https://github.com/iamfoz/backblaze-64-personal-wine-container</Project>
   <Overview>Backblaze Personal Backup running under Wine (64-bit Windows environment) on Ubuntu 24.04. Provides a web-based GUI via browser or VNC. Automatically keeps Backblaze updated to the latest version on each restart.</Overview>
   <Category>Backup:</Category>
