@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [10.0.0] - 2026-06-05
+
 ### Changed
 - Re-engineered for Backblaze 10.x, which is 64-bit only and requires Windows 10.
   - 64-bit WineHQ install (`winehq-stable`) via the modern deb822 `.sources`
@@ -21,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     it: the installer's CAB payload is extracted, the program binaries are
     copied into place, and Backblaze's native `bzdoinstall.exe` is run directly
     (its only OS gate rejects server editions, which a workstation prefix passes).
+  - Backblaze's in-app self-update runs a .NET MSI custom action
+    (`CheckVersions`) inside `rundll32.exe`, which the Windows 8.1+ "version
+    lie" reports as Windows 8 (6.2) to unmanifested processes regardless of the
+    registry, aborting the update with "unsupported OS" / `MajorVerTooOld`. The
+    container now writes an external `rundll32.exe.manifest` declaring a Windows
+    10/11 `supportedOS` into `system32` and `syswow64` and enables
+    `PreferExternalManifest`, so `GetVersionEx` reports the real Windows 10 and
+    self-updates no longer break on the OS gate (#5).
 - Base image moved to Ubuntu 24.04 LTS (`jlesage/baseimage-gui:ubuntu-24.04-v4`),
   with WineHQ packages installed from the `noble` repository, for a longer
   security-support window and an up-to-date userspace.
@@ -128,4 +138,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Updated Dependencies
 
-[Unreleased]: https://github.com/JonathanTreffler/backblaze-personal-wine-container/compare/v1.0...HEAD
+[Unreleased]: https://github.com/iamfoz/backblaze-64-personal-wine-container/compare/v10.0.0...HEAD
+[10.0.0]: https://github.com/iamfoz/backblaze-64-personal-wine-container/releases/tag/v10.0.0
