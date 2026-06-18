@@ -88,6 +88,8 @@ jobs:
         with:
           context: .
           file: ./Dockerfile.${{ matrix.dockerfile }}
+          build-args: |
+            DOCKER_IMAGE_VERSION=${{ steps.meta.outputs.version }}
           push: ${{ github.event_name != 'pull_request' }}
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}

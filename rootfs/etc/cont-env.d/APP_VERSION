@@ -1,0 +1,13 @@
+#!/bin/sh
+# Populates the "Application Version" line of the jlesage startup banner with the
+# installed Backblaze client version, read from the Wine prefix. The jlesage base
+# runs files in /etc/cont-env.d/ at container start and uses an executable's
+# stdout as the variable's value, so this is re-evaluated on every start and
+# tracks Backblaze's auto-updates. Shows a placeholder until the client is
+# installed on the first run.
+f="/config/wine/dosdevices/c:/ProgramData/Backblaze/bzdata/bzreports/bzserv_version.txt"
+if [ -s "$f" ]; then
+    tr -d '\r\n' < "$f"
+else
+    printf '%s' "(not yet installed)"
+fi
