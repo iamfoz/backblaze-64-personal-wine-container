@@ -40,6 +40,22 @@ if [ ! -f "${WINEPREFIX}system.reg" ]; then
     wineserver -w
 fi
 
+# Map the host backup drives (/drive_d .. /drive_z) to Wine drive letters by
+# creating dosdevices symlinks. This MUST happen here - before the first Wine
+# command that starts the long-lived wineserver (force_windows_10 below). Wine
+# only enumerates its drives when the server starts, so a symlink created later
+# (as this used to be, right before launching Backblaze) is invisible until the
+# *next* container start. That is exactly why a newly added drive only appeared
+# after a restart. Creating the links now, while no server is running, makes the
+# drive available on the very first launch. (Trailing slash on the target is
+# irrelevant to Wine; both /drive_x and /drive_x/ work.)
+for x in {d..z}; do
+    if test -d "/drive_${x}" && ! test -d "${WINEPREFIX}dosdevices/${x}:"; then
+        log_message "DRIVE: drive_${x} found - linking to Wine drive ${x}:"
+        ln -s "/drive_${x}/" "${WINEPREFIX}dosdevices/${x}:"
+    fi
+done
+
 # Force the reported Windows version to Windows 10 on EVERY start. We set both
 # Wine's own version key (exactly what winecfg writes) and the raw NT
 # CurrentVersion keys, so the check passes no matter how Backblaze probes the OS.
@@ -107,15 +123,6 @@ install_supportedos_manifest
 echo "WINE: OS version now reported by the prefix:"
 wine cmd /c ver 2>/dev/null | tr -d '\r'
 log_message "WINE: prefix ready and reporting Windows 10"
-
-#Configure Extra Mounts
-for x in {d..z}
-do
-    if test -d "/drive_${x}" && ! test -d "${WINEPREFIX}dosdevices/${x}:"; then
-        log_message "DRIVE: drive_${x} found but not mounted, mounting..."
-        ln -s "/drive_${x}/" "${WINEPREFIX}dosdevices/${x}:"
-    fi
-done
 
 # Set the Wine "virtual desktop" by writing the registry directly. We must NOT
 # use "winetricks vd=..." here: winetricks runs "wineserver -w" internally, which
