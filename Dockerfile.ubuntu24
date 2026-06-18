@@ -1,3 +1,71 @@
+# ============================================================================
+# Stage 1 - build Wine from source with the Backblaze upload-throughput fix.
+#
+# Stock WineHQ throttles single-stream uploads under Wine to ~140 KB/s for
+# app-limited senders like libcurl (which Backblaze's bztransmit uses), so a
+# large bz_done checkpoint never finishes inside Backblaze's 600 s upload
+# timeout. The fix is two small changes to server/sock.c - applied by
+# patches/wine-sock-upload-fix.py - that correct Wine's select() writability and
+# FD_WRITE re-enabling semantics to match Windows. This stage clones a pinned
+# Wine release, applies the patch, and builds a win64 Wine into /opt/wine. Only
+# /opt/wine is copied into the runtime image, so the build toolchain never
+# bloats it.
+#
+# This is a stopgap until the fix lands upstream in Wine; once it does, this
+# stage can be dropped and the runtime stage can install winehq-stable again.
+#
+# WINE_REF pins the Wine source. Default is the release this fix was validated
+# against; override with --build-arg WINE_REF=<tag-or-commit> to bump it (the
+# patcher fails loud if the source has drifted, which is the signal to re-verify).
+# ============================================================================
+ARG WINE_REF=wine-11.10
+
+FROM ubuntu:24.04 AS wine-builder
+ARG WINE_REF
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Build toolchain plus the -dev libraries Wine links against. Deliberately scoped
+# to fonts, TLS and the X stack Backblaze's GUI needs - no OpenGL/sound/scanner
+# dev packages, so configure auto-disables those subsystems (matching the
+# validated build and keeping the runtime library set small).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates git gcc flex bison make pkg-config python3 \
+        gcc-mingw-w64-x86-64 \
+        libfreetype-dev libfontconfig-dev libgnutls28-dev libpng-dev \
+        libx11-dev libxext-dev libxrender-dev libxrandr-dev libxi-dev \
+        libxfixes-dev libxcursor-dev libxinerama-dev libxcomposite-dev \
+        libxxf86vm-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /wine
+COPY patches/wine-sock-upload-fix.py /wine/patches/
+# Partial (blobless) clone keeps the checkout small while still allowing WINE_REF
+# to be any tag, branch, or exact commit; blobs are fetched on checkout.
+RUN git clone --filter=blob:none https://gitlab.winehq.org/wine/wine.git src \
+ && git -C src checkout "${WINE_REF}" \
+ && python3 patches/wine-sock-upload-fix.py src/server/sock.c
+
+# Cap build parallelism by available RAM. Wine's parallel link steps are
+# memory-heavy, so -j<all-cores> on a high-core / modest-RAM host exhausts memory
+# and thrashes the machine into swap. Default to ~1 job per 2 GB (never more than
+# the core count); override on a large box with --build-arg MAKE_JOBS=N.
+ARG MAKE_JOBS
+RUN set -eu; \
+    mkdir build; cd build; \
+    ../src/configure --enable-win64 --disable-tests --prefix=/opt/wine; \
+    cpus="$(nproc)"; \
+    mem_gb="$(awk '/MemTotal/{printf "%d", $2/1048576}' /proc/meminfo)"; \
+    jobs="${MAKE_JOBS:-$(( mem_gb / 2 ))}"; \
+    if [ "$jobs" -lt 1 ]; then jobs=1; fi; \
+    if [ "$jobs" -gt "$cpus" ]; then jobs="$cpus"; fi; \
+    echo "Building Wine with -j${jobs} (cpus=${cpus}, mem=${mem_gb}GB; override with --build-arg MAKE_JOBS=N)"; \
+    make -j"${jobs}"; \
+    make install; \
+    rm -rf /opt/wine/share/man /opt/wine/include
+
+# ============================================================================
+# Stage 2 - the runtime image: jlesage GUI base running Backblaze under our Wine.
+# ============================================================================
 FROM jlesage/baseimage-gui:ubuntu-24.04-v4@sha256:206b2204356d808483fdb3fee667e079f137f772f975bf18c6c937b7902d7cb0
 
 ENV WINEPREFIX=/config/wine/
@@ -14,56 +82,47 @@ ENV DISPLAY_HEIGHT="700"
 ENV WINEDEBUG=-all
 # Set DISPLAY so GUI programs can find the X server
 ENV DISPLAY=:0
+# Our Wine is installed under /opt/wine; startapp.sh calls wine/wineserver/etc.
+# from PATH, so it must come first.
+ENV PATH="/opt/wine/bin:${PATH}"
 
 # Unraid reads these labels to show a WebUI button and the app icon on the
 # Docker page - works even for containers started with `docker run`.
 LABEL net.unraid.docker.webui="http://[IP]:[PORT:5800]/" \
       net.unraid.docker.icon="https://cdn.jsdelivr.net/gh/selfhst/icons/png/backblaze.png"
 
-# Install 64-bit Wine from WineHQ using the modern deb822 "sources" method.
-# Lessons baked in here:
-#   * The WineHQ apt repo only ever keeps the LATEST build of each branch, so
-#     pinning an exact version (e.g. winehq-stable=10.0*) breaks the moment a
-#     newer release ships. We track winehq-stable (currently Wine 11.x).
-#   * deb822 + a keyring file is reliable; the old apt-key / add-apt-repository
-#     approach silently fell back to Ubuntu's ancient Wine 6.x when it broke.
-#   * Backblaze 10.x is 64-bit only, but winehq-stable still pulls its i386
-#     WoW64 libraries via recommends. That is harmless and kept for safety.
-# Installing Wine on the jlesage 24.04 base needs three adjustments:
-#
-# 1. Its build-time environment is minimal - /run and the user/group database
-#    do not exist yet - so postinst scripts that take locks or create users
-#    (dbus, fontconfig, udev, ...) abort. Recreate what the base's own add-pkg
-#    helper sets up (init_env) first, then strip the scaffolding back out.
-#
-# 2. Wine hard-depends (via libsane/libgphoto2 -> udev) on systemd, whose
-#    postinst cannot configure on this base (it wants a real /var/log and trips
-#    over the base's /etc/gshadow). Pin full systemd out so the udev dependency
-#    is satisfied by the lightweight systemd-standalone-sysusers instead.
-#
-# 3. Install with --no-install-recommends to avoid avahi/cups/etc. that a backup
-#    container has no use for, adding back only the Wine runtime libs Backblaze
-#    needs (TLS, fonts, X render/extension libs). winbind is omitted too (its
-#    only use here is Wine's unused NTLM auth).
+# Our patched Wine, built in stage 1.
+COPY --from=wine-builder /opt/wine /opt/wine
+
+# Expose the Wine binaries on the default PATH. The jlesage base launches the app
+# service with its own PATH that does NOT pick up the ENV PATH above, so the bare
+# `wine`/`wineserver`/`wineboot`/... calls in startapp.sh must be resolvable
+# directly. Link the binaries Wine and the startup script invoke by name into
+# /usr/bin - where winehq-stable used to install them, and which is on the app
+# service's PATH. Wine still finds its own libraries relative to /opt/wine via
+# the symlink target.
+RUN set -eu; for b in wine wine64 wineserver wineboot winepath winecfg wineconsole; do \
+        if [ -e "/opt/wine/bin/$b" ]; then ln -sf "/opt/wine/bin/$b" "/usr/bin/$b"; fi; \
+    done
+
+# Runtime dependencies. Because we build a pure win64 Wine from source we no
+# longer need the WineHQ apt repo, the i386/WoW64 libraries, winetricks, or the
+# systemd-pinning gymnastics that winehq-stable's dependency chain (libsane ->
+# libgphoto2 -> udev -> systemd) used to force. We install only:
+#   * the tools startapp.sh uses (curl, 7z, cabextract, xvfb),
+#   * the shared libraries our Wine links against (fonts, TLS, the X stack),
+#   * locales for the en_US.UTF-8 the prefix expects.
+# The init_env scaffolding (and its later cleanup) mirrors the base image's own
+# add-pkg helper, so font/ca-certificate postinst scripts succeed on this
+# otherwise minimal base.
 RUN mkdir -p /config/log /tmp/run && \
     /etc/cont-init.d/10-init-users.sh && \
-    printf 'Package: systemd systemd:i386 systemd-sysv systemd-sysv:i386\nPin: release *\nPin-Priority: -1\n' \
-        > /etc/apt/preferences.d/no-systemd && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-        ca-certificates curl xvfb cabextract p7zip-full && \
-    dpkg --add-architecture i386 && \
-    mkdir -pm755 /etc/apt/keyrings && \
-    curl -fsSL https://dl.winehq.org/wine-builds/winehq.key \
-        -o /etc/apt/keyrings/winehq-archive.key && \
-    curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources \
-        -o /etc/apt/sources.list.d/winehq-noble.sources && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends winehq-stable \
-        libgnutls30t64 libfreetype6 libfontconfig1 libpng16-16t64 \
-        libxcomposite1 libxcursor1 libxfixes3 libxi6 libxinerama1 \
-        libxrandr2 libxrender1 libxxf86vm1 && \
-    apt-get install -y --no-install-recommends winetricks && \
+        ca-certificates curl xvfb cabextract p7zip-full \
+        libfreetype6 libfontconfig1 libgnutls30t64 libpng16-16t64 \
+        libx11-6 libxext6 libxrender1 libxrandr2 libxi6 libxfixes3 \
+        libxcursor1 libxinerama1 libxcomposite1 libxxf86vm1 && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends locales && \
     sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
     dpkg-reconfigure --frontend=noninteractive locales && \
