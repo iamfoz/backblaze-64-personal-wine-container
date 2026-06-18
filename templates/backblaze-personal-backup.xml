@@ -57,10 +57,10 @@
 
   <Config
     Name="Backup Source (Drive D)"
-    Target="/drive_d"
+    Target="/drive_d/"
     Default=""
     Mode="rw"
-    Description="Optional: map a host path to back up as drive D. Must be read-write: Backblaze creates a .bzvol folder in the drive's root to track and back it up. Repeat with /drive_e, /drive_f, etc. for additional locations."
+    Description="Optional: map a host path to back up as drive D. Must be read-write: Backblaze creates a .bzvol folder in the drive's root to track and back it up. Repeat with /drive_e/, /drive_f/, etc. for additional locations."
     Type="Path"
     Display="always"
     Required="false"
