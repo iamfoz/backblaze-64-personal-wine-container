@@ -439,6 +439,9 @@ The Backblaze name, logo and application are the property of Backblaze, Inc. Thi
 ## Contributors:
 This project was made by:
 
+<a href="https://github.com/iamfoz">
+  <img src="https://github.com/iamfoz.png?size=64" width="64" height="64" alt="@iamfoz" />
+</a>
 <a href="https://github.com/JonathanTreffler/backblaze-personal-wine-container/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=JonathanTreffler/backblaze-personal-wine-container" />
 </a>
