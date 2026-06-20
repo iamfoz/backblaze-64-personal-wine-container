@@ -1,4 +1,4 @@
-FROM jlesage/baseimage-gui:ubuntu-24.04-v4.12.5@sha256:6973f57dd1848105cacf769f4dfefecd73ece16c166ba93f9ab63ab26fb204b7
+FROM jlesage/baseimage-gui:ubuntu-26.04-v4.12.5@sha256:cb60251a123ab73847f77d713c15f30fb0d131090bc0aaa7e6fd8903ecb37fe1
 
 ENV WINEPREFIX=/config/wine/
 # Backblaze 10.x is a native 64-bit app, so the prefix must be win64.
@@ -29,7 +29,7 @@ LABEL net.unraid.docker.webui="http://[IP]:[PORT:5800]/" \
 #     approach silently fell back to Ubuntu's ancient Wine 6.x when it broke.
 #   * Backblaze 10.x is 64-bit only, but winehq-stable still pulls its i386
 #     WoW64 libraries via recommends. That is harmless and kept for safety.
-# Installing Wine on the jlesage 24.04 base needs three adjustments:
+# Installing Wine on the jlesage 26.04 base needs three adjustments:
 #
 # 1. Its build-time environment is minimal - /run and the user/group database
 #    do not exist yet - so postinst scripts that take locks or create users
@@ -56,8 +56,8 @@ RUN mkdir -p /config/log /tmp/run && \
     mkdir -pm755 /etc/apt/keyrings && \
     curl -fsSL https://dl.winehq.org/wine-builds/winehq.key \
         -o /etc/apt/keyrings/winehq-archive.key && \
-    curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources \
-        -o /etc/apt/sources.list.d/winehq-noble.sources && \
+    curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/resolute/winehq-resolute.sources \
+        -o /etc/apt/sources.list.d/winehq-resolute.sources && \
     apt-get update && \
     apt-get install -y --no-install-recommends winehq-stable \
         libgnutls30t64 libfreetype6 libfontconfig1 libpng16-16t64 \
