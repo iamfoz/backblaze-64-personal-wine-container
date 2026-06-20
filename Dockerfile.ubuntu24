@@ -27,6 +27,10 @@ LABEL net.unraid.docker.webui="http://[IP]:[PORT:5800]/" \
 #     newer release ships. We track winehq-stable (currently Wine 11.x).
 #   * deb822 + a keyring file is reliable; the old apt-key / add-apt-repository
 #     approach silently fell back to Ubuntu's ancient Wine 6.x when it broke.
+#   * Save the key with a .asc (armored) extension and write our own deb822
+#     stanza pointing Signed-By at it. Newer apt (26.04+) ignores keyrings with
+#     an unrecognised ".key" extension, which leaves the repo unsigned; an inline
+#     stanza also avoids depending on the exact name of WineHQ's .sources file.
 #   * Backblaze 10.x is 64-bit only, but winehq-stable still pulls its i386
 #     WoW64 libraries via recommends. That is harmless and kept for safety.
 # Installing Wine on the jlesage 24.04 base needs three adjustments:
@@ -55,9 +59,9 @@ RUN mkdir -p /config/log /tmp/run && \
     dpkg --add-architecture i386 && \
     mkdir -pm755 /etc/apt/keyrings && \
     curl -fsSL https://dl.winehq.org/wine-builds/winehq.key \
-        -o /etc/apt/keyrings/winehq-archive.key && \
-    curl -fsSL https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources \
-        -o /etc/apt/sources.list.d/winehq-noble.sources && \
+        -o /etc/apt/keyrings/winehq-archive.asc && \
+    printf 'Types: deb\nURIs: https://dl.winehq.org/wine-builds/ubuntu\nSuites: noble\nComponents: main\nSigned-By: /etc/apt/keyrings/winehq-archive.asc\n' \
+        > /etc/apt/sources.list.d/winehq.sources && \
     apt-get update && \
     apt-get install -y --no-install-recommends winehq-stable \
         libgnutls30t64 libfreetype6 libfontconfig1 libpng16-16t64 \
