@@ -20,7 +20,7 @@
 # ============================================================================
 ARG WINE_REF=wine-11.10
 
-FROM ubuntu:24.04 AS wine-builder
+FROM ubuntu:26.04 AS wine-builder
 ARG WINE_REF
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -66,7 +66,7 @@ RUN set -eu; \
 # ============================================================================
 # Stage 2 - the runtime image: jlesage GUI base running Backblaze under our Wine.
 # ============================================================================
-FROM jlesage/baseimage-gui:ubuntu-24.04-v4.12.5@sha256:6973f57dd1848105cacf769f4dfefecd73ece16c166ba93f9ab63ab26fb204b7
+FROM jlesage/baseimage-gui:ubuntu-26.04-v4.12.5@sha256:cb60251a123ab73847f77d713c15f30fb0d131090bc0aaa7e6fd8903ecb37fe1
 
 ENV WINEPREFIX=/config/wine/
 # Backblaze 10.x is a native 64-bit app, so the prefix must be win64.
