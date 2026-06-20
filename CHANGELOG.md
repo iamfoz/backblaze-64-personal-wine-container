@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Ubuntu 26.04 LTS ("Resolute") image, published as the `ubuntu26` tag (and
+  `vX.Y.Z-ubuntu26` on releases). It ships alongside the default Ubuntu 24.04
+  image as an early-access variant so problems can be found before it becomes
+  the default. The project now tracks the two most recent Ubuntu LTS releases:
+  the older is the default (`latest`) for stability, the newer is offered early,
+  and the oldest is retired when it reaches end of support.
+
+### Changed
+- Updated the jlesage GUI base image to `v4.12.5` on both LTS variants.
+- The WineHQ signing key is now stored as an armored `.asc` keyring referenced by
+  an inline deb822 source, so the repository verifies under the stricter apt in
+  Ubuntu 26.04 (which ignores a keyring saved with the old `.key` extension).
+- CI builds both LTS variants in a matrix. The shared `latest` / `main` / version
+  tags track the default (oldest supported) LTS; the newer LTS is published under
+  its own `ubuntuNN` tag.
+
 ## [10.0.0] - 2026-06-05
 
 ### Changed

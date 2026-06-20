@@ -83,11 +83,22 @@ Here are the main components of this image:
 
 | Tag | Description |
 |-----|-------------|
-| latest | Latest stable build (Ubuntu 24.04) |
-| ubuntu24 | Same as `latest` (Ubuntu 24.04) |
+| latest | Recommended stable image — the current default LTS (Ubuntu 24.04) |
+| ubuntu24 | Ubuntu 24.04 LTS build (same image as `latest`) |
+| ubuntu26 | Ubuntu 26.04 LTS build — early-access, for hardening before it becomes the default |
 | main | Automatic build of the `main` branch (may be unstable) |
+| vX.Y.Z | A specific release (Ubuntu 24.04); `vX.Y.Z-ubuntu26` for the 26.04 variant |
 
-Only the Ubuntu 24.04 LTS image is built. The older `ubuntu22` / `ubuntu20` / `ubuntu18` variants are no longer published.
+**LTS policy.** The image tracks the **two most recent Ubuntu LTS releases** at a
+time. The **older** of the two is the default (`latest`), chosen for stability;
+the **newer** ships alongside (currently `ubuntu26`) so problems can be found and
+fixed before it ever becomes the default. Interim bugfixes and base/runtime
+uplifts are released against both as they land. When an LTS reaches end of
+support it is retired — the newer LTS becomes the new default and the next LTS is
+added as the early-access variant. So `latest` always points at a mature,
+well-supported LTS, while the newer-LTS tag lets you opt in early if you want it.
+
+The older `ubuntu22` / `ubuntu20` / `ubuntu18` variants are no longer published.
 
 ### Platforms
 
