@@ -4,9 +4,9 @@
 # Stock WineHQ throttles single-stream uploads under Wine to ~140 KB/s for
 # app-limited senders like libcurl (which Backblaze's bztransmit uses), so a
 # large bz_done checkpoint never finishes inside Backblaze's 600 s upload
-# timeout. The fix is two small changes to server/sock.c - applied by
-# patches/wine-sock-upload-fix.py - that correct Wine's select() writability and
-# FD_WRITE re-enabling semantics to match Windows. This stage clones a pinned
+# timeout. The fix is a small change to server/sock.c - applied by
+# patches/wine-sock-upload-fix.py - that corrects Wine's select() writability
+# semantics to match Windows. This stage clones a pinned
 # Wine release, applies the patch, and builds a win64 Wine into /opt/wine. Only
 # /opt/wine is copied into the runtime image, so the build toolchain never
 # bloats it.
