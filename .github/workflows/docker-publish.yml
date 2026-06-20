@@ -33,7 +33,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        dockerfile: [ubuntu24]
+        # ubuntu24 is the default (oldest supported LTS); the shared :latest/:main/
+        # version tags track it for stability. ubuntu26 ships as :ubuntu26 for early
+        # validation before it becomes the default. When 24.04's support ends, drop
+        # its entry here and let the default fall through to the next-oldest LTS.
+        dockerfile: [ubuntu24, ubuntu26]
 
     steps:
       - name: Checkout repository
@@ -62,23 +66,27 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          # :latest only moves on a release-tag push (e.g. v10.0.0), so a routine
-          # main build or the weekly cron no longer overwrites it. main/ubuntu24
-          # track the branch builds; the version tag is published on tag pushes.
+          # Each variant always gets its own :ubuntuNN tag. The shared, unsuffixed
+          # tags (:latest, :main, the version tag) belong to the DEFAULT variant
+          # only - the oldest supported LTS (ubuntu24) - so they stay stable and the
+          # two matrix jobs never clobber each other's tags. :latest only moves on a
+          # release-tag push. The newer LTS is reachable via :ubuntu26 (and
+          # :<version>-ubuntu26 on releases) for early validation.
           tags: |
-            type=ref,event=tag
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
-            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=ubuntu24
+            type=raw,value=${{ matrix.dockerfile }}
+            type=ref,event=tag,enable=${{ matrix.dockerfile == 'ubuntu24' }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') && matrix.dockerfile == 'ubuntu24' }}
+            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' && matrix.dockerfile == 'ubuntu24' }}
+            type=ref,event=tag,suffix=-ubuntu26,enable=${{ matrix.dockerfile == 'ubuntu26' }}
 
       # Set up cache
       - name: Setup Docker build cache
         uses: actions/cache@v5
         with:
           path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          key: ${{ runner.os }}-buildx-${{ matrix.dockerfile }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-buildx-
+            ${{ runner.os }}-buildx-${{ matrix.dockerfile }}-
 
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
