@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [10.1.0] - 2026-06-20
+
 ### Added
 - Ubuntu 26.04 LTS ("Resolute") image, published as the `ubuntu26` tag (and
   `vX.Y.Z-ubuntu26` on releases). It ships alongside the default Ubuntu 24.04
@@ -155,5 +157,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Updated Dependencies
 
-[Unreleased]: https://github.com/iamfoz/backblaze-64-personal-wine-container/compare/v10.0.0...HEAD
+[Unreleased]: https://github.com/iamfoz/backblaze-64-personal-wine-container/compare/v10.1.0...HEAD
+[10.1.0]: https://github.com/iamfoz/backblaze-64-personal-wine-container/compare/v10.0.0...v10.1.0
 [10.0.0]: https://github.com/iamfoz/backblaze-64-personal-wine-container/releases/tag/v10.0.0
