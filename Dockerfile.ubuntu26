@@ -18,7 +18,7 @@
 # against; override with --build-arg WINE_REF=<tag-or-commit> to bump it (the
 # patcher fails loud if the source has drifted, which is the signal to re-verify).
 # ============================================================================
-ARG WINE_REF=wine-11.10
+ARG WINE_REF=wine-11.12
 
 FROM ubuntu:26.04 AS wine-builder
 ARG WINE_REF
