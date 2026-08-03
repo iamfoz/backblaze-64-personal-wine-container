@@ -1,0 +1,146 @@
+#!/bin/sh
+# Recovers from the two stall modes bb-health detects. Opt-in.
+#
+# Each recovery is the smallest action that clears the fault:
+#
+#   WEDGE  Delete the stale four-hour lock so the next pass can start. Lighter
+#          than a container restart, and bb-health has already confirmed no
+#          bztransmit is alive to own the lock.
+#
+#   HANG   Kill the deadlocked push threads. bzserv respawns them, which restarts
+#          the transfer without disturbing the rest of the container. If that does
+#          not clear the fault the health state stays unhealthy and visible; the
+#          watchdog does not escalate further on its own.
+#
+# After detecting a fault it waits COOLDOWN_MIN before acting again, whether or
+# not the action worked, so an unfixable fault produces one log line per cooldown
+# instead of a retry storm.
+#
+# Env: ENABLE_WATCHDOG (must be "true"), WATCHDOG_INTERVAL (300s),
+#      COOLDOWN_MIN (30), plus the thresholds bb-health reads.
+set -u
+
+usage() {
+    cat <<'EOF'
+Recovers the backup automatically when bb-health reports a fault.
+
+BB-WATCHDOG [--version]
+
+Started by the container when ENABLE_WATCHDOG is true.  Clears a stale
+four-hour lock, or restarts deadlocked upload threads.  Actions are written to
+the container log.
+
+  ENABLE_WATCHDOG      Must be true, or the watchdog stays idle.
+  WATCHDOG_INTERVAL    Seconds between checks.  Default 300.
+  COOLDOWN_MIN         Minutes to wait after acting.  Default 30.
+EOF
+}
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+
+# Report which image build this came from. The tools ship together inside an image,
+# so the build stamp is the identifier worth having in a bug report.
+if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-V" ]; then
+    echo "bb-watchdog (Backblaze 64 container)"
+    cat /etc/bb-build 2>/dev/null || echo "version=unknown (no build stamp)"
+    exit 0
+fi
+
+INTERVAL="${WATCHDOG_INTERVAL:-300}"
+COOLDOWN_MIN="${COOLDOWN_MIN:-30}"
+STALL_MIN="${STALL_MIN:-20}"
+last_action=0
+
+# All three must be plain positive integers. sleep rejects a suffixed value such
+# as "5 min" and returns immediately, which without validation turns this loop
+# into a fork storm on a host that is usually short of resources already.
+int_or() { case "$1" in ''|*[!0-9]*) echo "$2" ;; *) echo "$1" ;; esac; }
+INTERVAL="$(int_or "$INTERVAL" 300)"
+COOLDOWN_MIN="$(int_or "$COOLDOWN_MIN" 30)"
+STALL_MIN="$(int_or "$STALL_MIN" 20)"
+
+# The cooldown must exceed bb-health's stall threshold. Killing the deadlocked
+# threads does not advance the transmit log; only the respawned pass writing a
+# line does. If the watchdog re-arms before the log can look fresh, it kills the
+# healthy replacement pass every cycle and causes the stall it should clear.
+if [ "$COOLDOWN_MIN" -le "$STALL_MIN" ]; then
+    COOLDOWN_MIN=$(( STALL_MIN + 10 ))
+fi
+
+say() { echo "[bb-watchdog] $(date '+%Y-%m-%d %H:%M:%S') $*"; }
+
+proc_pids() {
+    for c in /proc/[0-9]*/cmdline; do
+        [ -r "$c" ] || continue
+        if tr '\0' ' ' < "$c" 2>/dev/null | grep -q -- "$1"; then
+            p=${c#/proc/}; echo "${p%/cmdline}"
+        fi
+    done
+}
+
+cooling_down() {
+    now=$(date +%s)
+    [ $(( now - last_action )) -lt $(( COOLDOWN_MIN * 60 )) ]
+}
+
+say "started: checking every ${INTERVAL}s (cooldown ${COOLDOWN_MIN}m)"
+
+while true; do
+    sleep "$INTERVAL" || sleep 300
+
+    status="$(bb-health 2>/dev/null)" || true
+    case "$status" in
+        OK*|"") continue ;;
+    esac
+
+    if cooling_down; then
+        say "still unhealthy (${status}) - within cooldown, not acting again yet"
+        continue
+    fi
+
+    # Start the cooldown at detection rather than on success. A recovery that
+    # fails, for example on a read-only config volume, has to back off too, or it
+    # retries every interval and floods the log.
+    last_action=$(date +%s)
+
+    case "$status" in
+        WEDGE*)
+            lock="/config/wine/dosdevices/c:/ProgramData/Backblaze/bzdata/bzbackup/lock_bzfileid_4_hour_lock.lck"
+            say "detected: ${status}"
+            if rm -f "$lock" 2>/dev/null; then
+                say "recovered: removed the stale four-hour lock; the next pass should proceed"
+            else
+                say "could NOT remove ${lock} - check permissions on the config volume; next attempt in ${COOLDOWN_MIN}m"
+            fi
+            ;;
+        HANG*)
+            say "detected: ${status}"
+            pids="$(proc_pids -threadpush)"
+            if [ -n "$pids" ]; then
+                # shellcheck disable=SC2086
+                kill $pids 2>/dev/null
+                sleep 10
+                # Escalate to -9 only for original pids that are still alive.
+                # Re-scanning by name would catch a healthy replacement thread
+                # bzserv had already respawned, and killing that mid-write causes
+                # the wedge this recovery is meant to clear.
+                still=""
+                for p in $pids; do
+                    if kill -0 "$p" 2>/dev/null \
+                       && tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q -- "-threadpush"; then
+                        still="$still $p"
+                    fi
+                done
+                if [ -n "$still" ]; then
+                    # shellcheck disable=SC2086
+                    kill -9 $still 2>/dev/null
+                fi
+                say "recovered: killed deadlocked push thread(s) [${pids}]; bzserv will respawn them"
+            else
+                say "no push threads found to kill - transmit may have cleared on its own"
+            fi
+            ;;
+        *)
+            say "unrecognised health status: ${status}"
+            ;;
+    esac
+done

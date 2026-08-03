@@ -1,0 +1,93 @@
+#!/bin/sh
+# Show the installed Backblaze client version alongside the one Backblaze is
+# currently offering, plus the container and Wine versions.
+#
+# Backblaze publishes release notes ahead of serving a build, so a version in the
+# notes is not always one the container can install. This asks the same API the
+# updater polls, which is what decides the next restart. The combined output is
+# also what to paste into a bug report.
+set -u
+
+usage() {
+    cat <<'EOF'
+Displays the installed Backblaze client version and the version Backblaze is
+currently serving.
+
+BB-VERSION [--version]
+
+  --version    Displays the image build only.
+
+A version listed in Backblaze's release notes is not always being served yet.
+This reports what the container will actually install on the next restart.
+EOF
+}
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+
+# Report which image build this came from. The tools ship together inside an image,
+# so the build stamp is the identifier worth having in a bug report.
+if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-V" ]; then
+    echo "bb-version (Backblaze 64 container)"
+    cat /etc/bb-build 2>/dev/null || echo "version=unknown (no build stamp)"
+    exit 0
+fi
+
+BZ="/config/wine/dosdevices/c:/ProgramData/Backblaze/bzdata"
+VERSION_FILE="${BZ}/bzreports/bzserv_version.txt"
+MIRRORS="ca000 ca001 ca002 ca003 ca004 ca005"
+
+installed=""
+[ -r "$VERSION_FILE" ] && installed="$(tr -d ' \r\n' < "$VERSION_FILE" 2>/dev/null)"
+
+# The updater tracks the "update" channel, which carries the newest build. The file
+# also lists "release" and a much older staged "autoupdate" channel; matching on
+# "<update " avoids both (and does not match "<autoupdate ", which has no "<" before
+# "update").
+available=""
+mirror=""
+for m in $MIRRORS; do
+    xml="$(curl -fsS --max-time 10 "https://${m}.backblaze.com/api/clientversion.xml" 2>/dev/null)" || continue
+    available="$(printf '%s' "$xml" | grep -o '<update win32_version="[0-9.]*"' | head -1 | cut -d'"' -f2)"
+    [ -n "$available" ] && { mirror="$m"; break; }
+done
+
+echo "Container"
+echo "  Image:     ${DOCKER_IMAGE_VERSION:-unknown}"
+# the build stamp pins the exact image; DOCKER_IMAGE_VERSION alone says "dev" locally
+[ -r /etc/bb-build ] && sed 's/^/  build:     /' /etc/bb-build
+echo "  Wine:      $(wine --version 2>/dev/null || echo unknown)"
+echo
+echo "Backblaze client"
+echo "  Installed: ${installed:-not installed yet}"
+if [ -n "$available" ]; then
+    echo "  Available: ${available} (via ${mirror})"
+else
+    echo "  Available: could not reach Backblaze's version API"
+fi
+
+# Status only means something when both numbers are known.
+if [ -n "$installed" ] && [ -n "$available" ]; then
+    if [ "$installed" = "$available" ]; then
+        status="up to date"
+    elif dpkg --compare-versions "$installed" lt "$available" 2>/dev/null; then
+        if [ "${DISABLE_AUTOUPDATE:-false}" = "true" ]; then
+            status="update available - blocked by DISABLE_AUTOUPDATE=true"
+        # startapp's updater only runs when this is EXACTLY "true"; unset means
+        # no update, so the default here must not paper over that.
+        elif [ "${FORCE_LATEST_UPDATE:-}" != "true" ]; then
+            status="update available - blocked by FORCE_LATEST_UPDATE=${FORCE_LATEST_UPDATE:-unset}"
+        else
+            status="update available - restart the container to install it"
+        fi
+    else
+        status="installed build is newer than the offered one"
+    fi
+    echo "  Status:    ${status}"
+fi
+
+# A version in Backblaze's release notes is not installable until it reaches this
+# API, so say so rather than leaving the reader to wonder why a newer number they
+# read about has not arrived.
+echo
+echo "Note: this reports what Backblaze is currently serving. Versions announced in"
+echo "      the release notes can take time to reach the update API, and until they"
+echo "      do there is nothing for the container to install."

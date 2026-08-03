@@ -1,0 +1,251 @@
+#!/bin/sh
+# Checks the container for the faults seen in this project and repairs the ones
+# that are safe to repair.
+#
+# Repairs are idempotent and never touch backup state. Where the diagnosis is
+# ambiguous the repair is skipped and only reported: a wrong repair costs more
+# than a missed one. Some of these repairs also run at container start, so
+# running them here avoids a restart mid-backup.
+set -u
+
+usage() {
+    cat <<'EOF'
+Checks the Backblaze installation for known problems and repairs what it can.
+
+BB-DOCTOR [--fix]
+
+  --fix        Repairs the problems that can be repaired safely.
+  --version    Displays the image build this tool came from.
+
+Without --fix, nothing is changed.  Exits with 1 if any problem was found.
+EOF
+}
+
+# Report which image build this came from - the identifier worth having in a bug report.
+if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-V" ]; then
+    echo "bb-doctor (Backblaze 64 container)"
+    cat /etc/bb-build 2>/dev/null || echo "version=unknown (no build stamp)"
+    exit 0
+fi
+
+FIX=0
+[ "${1:-}" = "--fix" ] && FIX=1
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+
+PREFIX="${WINEPREFIX:-/config/wine/}"
+BZ="${PREFIX}dosdevices/c:/ProgramData/Backblaze/bzdata"
+BBDIR="${PREFIX}drive_c/Program Files/Backblaze"
+LOCK="${BZ}/bzbackup/lock_bzfileid_4_hour_lock.lck"
+
+ok=0; warn=0; bad=0; fixed=0
+OK()   { echo "  [ ok ] $*"; ok=$((ok+1)); }
+WARN() { echo "  [warn] $*"; warn=$((warn+1)); }
+BAD()  { echo "  [FAIL] $*"; bad=$((bad+1)); }
+FIXED(){ echo "         -> fixed: $*"; fixed=$((fixed+1)); }
+NOTE() { echo "         $*"; }
+
+proc_match() {
+    for c in /proc/[0-9]*/cmdline; do
+        [ -r "$c" ] || continue
+        tr '\0' ' ' < "$c" 2>/dev/null | grep -q -- "$1" && return 0
+    done
+    return 1
+}
+
+echo "Backblaze container check"
+echo
+
+# ---- Wine prefix ---------------------------------------------------------------
+echo "Wine prefix"
+# Both checks read the registry files rather than running "wine". Starting a Wine
+# process against a live prefix can disturb the running client, and it produces no
+# output at all when the caller does not own the prefix, which read as a broken
+# install when bb-doctor was run as root.
+SYSREG="${PREFIX}system.reg"
+USERREG="${PREFIX}user.reg"
+if [ -d "${PREFIX}drive_c" ]; then
+    OK "prefix present at ${PREFIX}"
+    if [ -f "$SYSREG" ]; then
+        # Wine writes a bare "#arch=win64" line at the top of each registry file.
+        if grep -q '^#arch=win64' "$SYSREG" 2>/dev/null; then
+            OK "prefix architecture is win64"
+        elif grep -q '^#arch=win32' "$SYSREG" 2>/dev/null; then
+            BAD "prefix is win32 - Backblaze 10.x is 64-bit only and will not install"
+            NOTE "not auto-fixable: recreating the prefix discards the backup state."
+            NOTE "back up /config, remove the wine directory, and let it rebuild."
+        else
+            WARN "could not determine the prefix architecture from ${SYSREG}"
+        fi
+        # startapp.sh sets these on every start; ProductName is the least ambiguous
+        # of them, since other keys named CurrentVersion exist elsewhere in the hive.
+        if grep -q '"ProductName"="Microsoft Windows 10"' "$SYSREG" 2>/dev/null \
+           || grep -q '"CurrentVersion"="10\.0"' "$SYSREG" 2>/dev/null \
+           || grep -q '"Version"="win10"' "$USERREG" 2>/dev/null; then
+            OK "prefix is set to report Windows 10"
+        else
+            BAD "prefix is not set to report Windows 10 - the installer will refuse to run"
+            NOTE "restarting the container rewrites this automatically."
+            NOTE "not repaired here: writing to the prefix as the wrong user would leave"
+            NOTE "registry files the client can no longer update."
+        fi
+    else
+        WARN "no registry files yet at ${PREFIX} - the prefix is still being built"
+    fi
+else
+    BAD "no Wine prefix at ${PREFIX} - the container has not completed first start"
+fi
+
+# supportedOS manifest: without it, self-updates fail the OS gate
+missing_manifest=""
+for d in system32 syswow64; do
+    [ -f "${PREFIX}drive_c/windows/${d}/rundll32.exe.manifest" ] || missing_manifest="${missing_manifest} ${d}"
+done
+if [ -z "$missing_manifest" ]; then
+    OK "rundll32 supportedOS manifest present"
+else
+    WARN "supportedOS manifest missing in:${missing_manifest} - client self-updates will fail the OS check"
+    NOTE "restarting the container rewrites this automatically."
+fi
+echo
+
+# ---- Client install -------------------------------------------------------------
+echo "Backblaze client"
+if [ -f "${BBDIR}/bzserv.exe" ]; then
+    OK "client installed"
+    vf="${BZ}/bzreports/bzserv_version.txt"
+    [ -r "$vf" ] && OK "version $(tr -d ' \r\n' < "$vf") (run bb-version to compare with what Backblaze is serving)"
+    # The control panel needs hyphen-named skin aliases or it renders blank.
+    miss=0; linked=0
+    for g in "${BBDIR}"/*_4x.gif; do
+        [ -e "$g" ] || continue
+        alias_name="$(echo "$g" | sed 's/_4x\.gif$/-4x.gif/')"
+        if [ ! -e "$alias_name" ]; then
+            miss=$((miss+1))
+            if [ "$FIX" = 1 ] && ln -sf "$g" "$alias_name" 2>/dev/null; then
+                linked=$((linked+1))
+            fi
+        fi
+    done
+    if [ "$miss" = 0 ]; then OK "control panel skin aliases present"
+    elif [ "$FIX" = 1 ] && [ "$linked" = "$miss" ]; then
+        FIXED "recreated ${miss} skin alias(es) - the control panel should render again"
+    elif [ "$FIX" = 1 ]; then
+        BAD "could only recreate ${linked} of ${miss} skin alias(es) - check who owns ${BBDIR} (USER_ID/GROUP_ID)"
+    else WARN "${miss} skin alias(es) missing - the control panel may render blank. Re-run with --fix"
+    fi
+else
+    WARN "client not installed yet - this is normal on a new container until first start finishes"
+fi
+echo
+
+# ---- Drives ----------------------------------------------------------------------
+echo "Backup drives"
+found=0
+for x in d e f g h i j k l m n o p q r s t u v w x y z; do
+    [ -d "/drive_${x}" ] || continue
+    found=$((found+1))
+    link="${PREFIX}dosdevices/${x}:"
+    if [ -e "$link" ]; then
+        if [ -r "$link" ] && ls "$link" >/dev/null 2>&1; then
+            OK "/drive_${x} mapped to ${x}: and readable"
+        else
+            BAD "${x}: is mapped but not readable - check permissions and USER_ID/GROUP_ID"
+        fi
+    else
+        BAD "/drive_${x} is mounted but not mapped to a Wine drive letter"
+        if [ "$FIX" = 1 ]; then
+            # -f: the path may already exist as a DANGLING symlink (stale target
+            # from an older layout), which is exactly the state that needs repair.
+            ln -sfn "/drive_${x}/" "$link" 2>/dev/null \
+                && FIXED "linked ${x}: (restart the container so Wine picks it up)"
+        else
+            NOTE "re-run with --fix, or restart the container."
+        fi
+    fi
+done
+[ "$found" = 0 ] && WARN "no /drive_* mounts found - nothing is being backed up"
+echo
+
+# ---- Permissions and space --------------------------------------------------------
+echo "Storage"
+if [ -w /config ]; then OK "/config is writable"; else BAD "/config is not writable - set USER_ID/GROUP_ID to match the host owner"; fi
+if [ -d "$BZ" ] && [ ! -w "$BZ" ]; then BAD "the Backblaze data directory is not writable - backups cannot record progress"; fi
+avail_kb="$(df -Pk /config 2>/dev/null | awk 'NR==2{print $4}')"
+if [ -n "${avail_kb:-}" ]; then
+    avail_mb=$(( avail_kb / 1024 ))
+    if [ "$avail_mb" -lt 500 ]; then BAD "only ${avail_mb} MB free on /config - Backblaze needs room for its state"
+    elif [ "$avail_mb" -lt 2048 ]; then WARN "${avail_mb} MB free on /config - getting tight"
+    else OK "$(( avail_mb / 1024 )) GB free on /config"; fi
+fi
+echo
+
+# ---- Host resources ----------------------------------------------------------------
+echo "Host resources"
+mt="$(awk '/MemTotal/{printf "%d", $2/1048576}' /proc/meminfo 2>/dev/null)"
+st="$(awk '/SwapTotal/{printf "%d", $2/1048576}' /proc/meminfo 2>/dev/null)"
+[ -n "${mt:-}" ] && { [ "$mt" -ge 12 ] && OK "${mt} GB host RAM" || WARN "${mt} GB host RAM - large file counts can peak at 4-5 GB in one process"; }
+if [ "${st:-0}" -gt 0 ]; then OK "${st} GB swap available - absorbs memory peaks"
+else WARN "no swap - a memory peak becomes an out-of-memory kill, which is what leaves the stale lock behind"; fi
+zomb="$(awk '/^State:/{print $2}' /proc/[0-9]*/status 2>/dev/null | grep -c Z)"
+[ "${zomb:-0}" -gt 50 ] && WARN "${zomb} zombie processes - run the container with --init to reap them" \
+                        || OK "process table healthy (${zomb:-0} zombies)"
+echo
+
+# ---- Stall conditions ----------------------------------------------------------------
+echo "Backup health"
+status="$(bb-health 2>/dev/null || true)"
+case "$status" in
+    OK*) OK "no stall detected" ;;
+    WEDGE*)
+        BAD "$status"
+        if [ "$FIX" = 1 ]; then
+            rm -f "$LOCK" 2>/dev/null && FIXED "removed the stale four-hour lock - the next pass should proceed"
+        else
+            NOTE "re-run with --fix to clear the stale lock, or set ENABLE_WATCHDOG=true to handle it automatically."
+        fi ;;
+    HANG*)
+        BAD "$status"
+        NOTE "not auto-fixed here: killing transfer threads mid-flight is the watchdog's job."
+        NOTE "set ENABLE_WATCHDOG=true, or restart the container." ;;
+    *) WARN "could not determine backup health" ;;
+esac
+# Count live push threads rather than files. The bzthread directory keeps
+# hundreds of old instruction XMLs, so counting files warns on every transmit.
+tp=0
+for c in /proc/[0-9]*/cmdline; do
+    [ -r "$c" ] || continue
+    tr '\0' ' ' < "$c" 2>/dev/null | grep -q -- "-threadpush" && tp=$((tp+1))
+done
+if [ "$tp" -gt 12 ]; then
+    WARN "${tp} upload threads in flight - Backblaze's Automatic setting can spawn enough to deadlock Wine"
+    NOTE "set Settings -> Performance to Manual, 4-8 threads."
+fi
+echo
+
+# ---- Connectivity ---------------------------------------------------------------------
+echo "Connectivity"
+# The same six mirrors bb-version polls. One mirror being down or geo-routed away
+# is not a connectivity problem, so only the loss of all six is reported.
+reach=""
+for m in ca000 ca001 ca002 ca003 ca004 ca005; do
+    if curl -fsS --max-time 10 -o /dev/null "https://${m}.backblaze.com/api/clientversion.xml" 2>/dev/null; then
+        reach="$m"; break
+    fi
+done
+if [ -n "$reach" ]; then
+    OK "Backblaze API reachable (via ${reach})"
+else
+    BAD "cannot reach any Backblaze API mirror - check the container's network and any egress filtering"
+fi
+echo
+
+echo "-----------------------------------------------------------------"
+echo "${ok} ok, ${warn} warning(s), ${bad} problem(s)$([ "$fixed" -gt 0 ] && echo ", ${fixed} fixed")"
+if [ "$bad" -gt 0 ] && [ "$FIX" = 0 ]; then
+    echo "Re-run 'bb-doctor --fix' to repair what can be repaired safely."
+fi
+if [ "$bad" -gt 0 ] || [ "$warn" -gt 0 ]; then
+    echo "For help, run 'bb-report' to build a diagnostic bundle to attach to an issue."
+fi
+[ "$bad" -gt 0 ] && exit 1
+exit 0

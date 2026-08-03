@@ -1,0 +1,112 @@
+#!/bin/sh
+# Reports backup health for the container HEALTHCHECK and for bb-watchdog.
+#
+# An idle, newly installed or signed-out container reports OK. A backup with
+# nothing to do is not broken, and a health state that flickers red during
+# normal quiet periods would train people to ignore it. Only corroborated
+# failures are reported:
+#
+#   HANG   A push thread is alive but the transmit log has not advanced for
+#          STALL_MIN minutes. Backblaze's auto-throttle can start enough upload
+#          threads to deadlock Wine's pipe handling, leaving a thread that never
+#          logs again.
+#
+#   WEDGE  A stale four-hour lock is blocking every pass. When bztransmit dies
+#          mid-pass, usually an out-of-memory kill on a small host, its lock file
+#          outlives it and bzserv floods the log with "Failed to grab
+#          fourHourLock". Four conditions are required: the lock present, older
+#          than LOCK_AGE_MIN, repeated failures in the log, and no bztransmit
+#          running. A live pass holding the lock is therefore never flagged.
+#
+# Env: STALL_MIN (20), LOCK_AGE_MIN (245), LOCK_FAILS (5).
+set -u
+
+usage() {
+    cat <<'EOF'
+Reports whether the backup is running normally.
+
+BB-HEALTH [--version]
+
+Displays one of:
+
+  OK           Nothing is wrong.  An idle or newly installed container is OK.
+  HANG         An upload thread is alive but the transmit log has stopped.
+  WEDGE        A stale four-hour lock is blocking every pass.
+
+Exits with 0 for OK, otherwise 1.  Used by the container health check.
+EOF
+}
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+
+# Report which image build this came from. The tools ship together inside an image,
+# so the build stamp is the identifier worth having in a bug report.
+if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-V" ]; then
+    echo "bb-health (Backblaze 64 container)"
+    cat /etc/bb-build 2>/dev/null || echo "version=unknown (no build stamp)"
+    exit 0
+fi
+
+BZ="/config/wine/dosdevices/c:/ProgramData/Backblaze/bzdata"
+TLOG="${BZ}/bzlogs/bztransmit"
+LOCK="${BZ}/bzbackup/lock_bzfileid_4_hour_lock.lck"
+STALL_MIN="${STALL_MIN:-20}"
+LOCK_AGE_MIN="${LOCK_AGE_MIN:-245}"     # the lock covers 4h; past that a live holder would have renewed or finished
+LOCK_FAILS="${LOCK_FAILS:-5}"
+
+# The thresholds feed arithmetic below and must be plain positive integers. A
+# suffixed value such as "20m" would otherwise fail in a way that reads as a
+# stall, so bad input falls back to the default.
+int_or() { case "$1" in ''|*[!0-9]*) echo "$2" ;; *) echo "$1" ;; esac; }
+STALL_MIN="$(int_or "$STALL_MIN" 20)"
+LOCK_AGE_MIN="$(int_or "$LOCK_AGE_MIN" 245)"
+LOCK_FAILS="$(int_or "$LOCK_FAILS" 5)"
+
+# Match a process by command line without needing procps in the image.
+proc_match() {
+    for c in /proc/[0-9]*/cmdline; do
+        [ -r "$c" ] || continue
+        if tr '\0' ' ' < "$c" 2>/dev/null | grep -q -- "$1"; then return 0; fi
+    done
+    return 1
+}
+
+newest_log() { ls -t "${TLOG}"/*.log 2>/dev/null | head -1; }
+
+# Age of a file in whole minutes, or empty if it cannot be read. This uses stat
+# and epoch arithmetic rather than find's -newermt date parsing. A stall check has
+# to fail safe: with find, any error (unparsable date, file rotated away mid-check)
+# gave the same empty output as a genuinely stale file and produced a HANG, whose
+# recovery kills live upload threads. A read failure here yields "" and is
+# skipped by the caller.
+age_min() {
+    mt="$(stat -c %Y "$1" 2>/dev/null)" || return 0
+    case "$mt" in ''|*[!0-9]*) return 0 ;; esac
+    echo $(( ( $(date +%s) - mt ) / 60 ))
+}
+
+log="$(newest_log)"
+
+# --- HANG: a push is alive but the transmit log has stopped advancing -------------
+if proc_match -threadpush && [ -n "$log" ]; then
+    log_age="$(age_min "$log")"
+    if [ -n "$log_age" ] && [ "$log_age" -ge "$STALL_MIN" ]; then
+        echo "HANG transmit log idle ${log_age}m (threshold ${STALL_MIN}m) with a push thread alive"
+        exit 1
+    fi
+fi
+
+# --- WEDGE: a stale four-hour lock is blocking every pass -------------------------
+if [ -f "$LOCK" ] && ! proc_match bztransmit; then
+    lock_age="$(age_min "$LOCK")"
+    if [ -n "$lock_age" ] && [ "$lock_age" -ge "$LOCK_AGE_MIN" ]; then
+        fails=0
+        [ -n "$log" ] && fails=$(tail -40 "$log" 2>/dev/null | grep -c "Failed to grab fourHourLock")
+        if [ "${fails:-0}" -ge "$LOCK_FAILS" ]; then
+            echo "WEDGE stale four-hour lock, ${fails} recent lock failures, no bztransmit running"
+            exit 1
+        fi
+    fi
+fi
+
+echo "OK"
+exit 0

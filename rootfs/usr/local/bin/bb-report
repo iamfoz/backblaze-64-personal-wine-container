@@ -1,0 +1,359 @@
+#!/usr/bin/env python3
+"""Builds a sanitised diagnostic bundle for a bug report.
+
+Collection is by allowlist. The per-thread XMLs hold a live auth token, the AES
+key and IV, and the wrapped file encryption key; the bz_done files are a listing
+of everything on the machine. None of them are collected. A list of things to
+exclude would only have to be wrong once, so nothing is included unless it is
+named here, and every collected line is filtered afterwards.
+
+Paths become per-component keyed hashes: /drive_d/9f2c1a4b7e88/3d5a1c9b2e77.mp4.
+Files in one directory share a directory hash, so a fault can be traced to a
+directory or followed across bundles without a name being recoverable. The key
+is an HMAC under a random salt held at 0600 in /config and never included in a
+bundle. If the salt leaked, short names such as "Photos" would fall to a
+dictionary attack, so its secrecy carries the scheme.
+
+Stable hashes make two bundles from one machine linkable. That helps while
+chasing a single fault and is unwanted afterwards, so --regenerate-hashes
+rotates the salt. Each bundle records a hash epoch derived from the salt, so a
+maintainer can tell whether two bundles share a namespace without being able to
+reverse anything; rotated hashes would otherwise read as different files rather
+than as not comparable.
+"""
+
+HELP = """\
+Creates a diagnostic bundle to attach to a bug report.
+
+BB-REPORT [--list | --regenerate-hashes]
+
+  --list                 Lists what would be collected.  Collects nothing.
+  --regenerate-hashes    Replaces the hash key, so later bundles cannot be
+                         matched against bundles already sent.
+  --version              Displays the image build.
+
+The bundle is written to the config folder.  File and folder names are replaced
+with hashes.  Account details, keys and file listings are not collected.
+Review the bundle before posting it.
+"""
+import hashlib, hmac, os, re, secrets, shutil, subprocess, sys, tempfile, time, zipfile
+
+CONFIG = "/config"
+SALT_FILE = os.path.join(CONFIG, ".bb-report-salt")
+BZ = "/config/wine/dosdevices/c:/ProgramData/Backblaze/bzdata"
+TLOG = os.path.join(BZ, "bzlogs/bztransmit")
+OUT_DIR = CONFIG
+LOG_TAIL = 2000
+
+# ---- salt -----------------------------------------------------------------------
+SALT_LEN = 16
+
+def load_salt(regenerate=False):
+    """Load the hashing salt, creating it when needed. The salt is the whole scheme:
+    a short or empty salt makes every published hash fall to a wordlist, so a stored
+    salt is trusted only if it is exactly SALT_LEN bytes. Anything shorter, such as
+    a 0-byte file left by an interrupted or out-of-space first run, is treated as
+    absent and regenerated. The write goes through a temp file, fsync and rename so
+    a crash mid-write cannot leave a short salt, and the 0600 mode is set again on
+    every load because host permission tools flatten modes."""
+    if regenerate and os.path.exists(SALT_FILE):
+        os.remove(SALT_FILE)
+    if os.path.exists(SALT_FILE):
+        with open(SALT_FILE, "rb") as fh:
+            salt = fh.read()
+        if len(salt) == SALT_LEN:
+            try:
+                os.chmod(SALT_FILE, 0o600)
+            except OSError:
+                pass
+            return salt, False
+        print("Note: the stored hash salt was invalid (%d bytes) and has been"
+              % len(salt))
+        print("      replaced, so this bundle cannot be compared with older ones.")
+        os.remove(SALT_FILE)
+    salt = secrets.token_bytes(SALT_LEN)
+    old = os.umask(0o077)
+    try:
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(SALT_FILE), prefix=".bb-salt-")
+        try:
+            os.write(fd, salt)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(tmp, SALT_FILE)
+    finally:
+        os.umask(old)
+    os.chmod(SALT_FILE, 0o600)
+    return salt, True
+
+def hasher(salt):
+    def h(text, n=12):
+        return hmac.new(salt, text.encode("utf-8", "replace"), hashlib.sha256).hexdigest()[:n]
+    return h
+
+# ---- sanitiser -------------------------------------------------------------------
+# Most specific patterns first: a token inside a path-looking string is then
+# redacted as a token instead of partly surviving as a path component.
+SECRET_KEYS = ("bz_auth_token", "hex_encoded_aeskey128", "hex_encoded_aesiv128",
+               "hex_encoded_encryptedfek", "hex_encoded_bz_done_line", "orig_bzff_sha1",
+               "bzuuid", "hguid", "clientuuid", "accountid", "bz_account", "password",
+               "passphrase", "privatekey", "apikey", "token", "secret", "salt")
+
+RE_KEYVAL = re.compile(
+    r'(?i)\b(' + "|".join(re.escape(k) for k in SECRET_KEYS) + r')(\s*[=:]\s*"?)([^"\s<>&]+)')
+RE_EMAIL = re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+')
+RE_IPV4 = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
+RE_MAC = re.compile(r'\b(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\b')
+RE_LONGHEX = re.compile(r'\b[0-9a-fA-F]{32,}\b')           # keys/tokens/GUID blobs
+# A path ends at a character that cannot occur in a filename, not at the first
+# space or apostrophe. Both are ordinary in real names ("Mum's Old Hard Disk\tax
+# return 2019.pdf"), and treating either as a terminator left the rest of the name
+# in the output. The excluded set is the characters Windows forbids in a filename
+# plus control characters, so a match runs to the end of a log line. Trailing text
+# on the line can be swallowed into the last hashed component. That is the right
+# trade: the cost is some lost detail, the alternative is publishing filenames.
+RE_WINPATH = re.compile(r'\b([A-Za-z]):(\\[^"<>|*?\t\r\n]*)')
+# Any absolute path is a candidate rather than an allowlist of roots. Users mount
+# backup volumes at container paths of their own naming, which the README
+# documents, and those names describe the data. unix_path() below decides which
+# components stay readable. The two lookbehinds keep URLs out: ':' blocks the
+# first slash of '://' and ':/' blocks the second.
+RE_UNIXPATH = re.compile(r'(?<![\w.:])(?<!:/)(/[^"<>|*?\t\r\n:/][^"<>|*?\t\r\n]*)')
+
+# Container-internal roots carry no user-chosen names, so they stay readable and
+# process listings and tool paths remain legible.
+SYSTEM_ROOTS = {"bin", "boot", "config", "defaults", "dev", "etc", "init", "lib",
+                "lib64", "opt", "proc", "root", "run", "sbin", "srv", "sys",
+                "tmp", "usr", "var"}
+# Conventional mount roots identify the mount without naming anyone, so the root
+# stays readable and everything below it is hashed.
+MOUNT_ROOT = re.compile(r'^(drive_[a-z]|mnt|media|home|Users)$')
+
+# Extensions worth keeping on the final component: they say what kind of file
+# stalled without identifying it. A dot-suffix outside this list ("Jane.Doe",
+# "Backup.2019") is part of a name, so it is hashed with the rest.
+KEEP_EXTS = frozenset("""
+jpg jpeg png gif bmp tif tiff heic heif webp raw cr2 cr3 nef arw dng orf rw2 psd svg
+mp4 mkv avi mov wmv m4v mpg mpeg webm ts flv vob
+mp3 flac wav aac m4a ogg opus wma aiff alac
+pdf doc docx xls xlsx ppt pptx txt rtf odt ods odp csv md epub mobi azw3
+zip rar 7z tar gz bz2 xz zst iso img dmg bak
+exe msi dll sys log xml json ini cfg conf dat db sqlite tmp lck srt sub vtt
+""".split())
+
+SAFE_IPS = {"127.0.0.1", "0.0.0.0", "255.255.255.255"}
+
+def sanitise(text, h):
+    """Redact secrets and replace real paths with per-component keyed hashes."""
+    def win_path(m):
+        # rstrip so a trailing space cannot produce a different hash for the same file
+        drive, rest = m.group(1), m.group(2).rstrip()
+        parts = [p for p in re.split(r'\\+', rest) if p]
+        last = len(parts) - 1
+        return drive + ":\\" + "\\".join(
+            hash_component(p, h, is_last=(i == last)) for i, p in enumerate(parts))
+
+    def unix_path(m):
+        parts = [p for p in m.group(1).rstrip().strip("/").split("/") if p]
+        if not parts:
+            return m.group(1)
+        head, tail = parts[0], parts[1:]
+        if head in SYSTEM_ROOTS:
+            return m.group(1)                      # container-internal: leave verbatim
+        last = len(tail) - 1
+        hashed_tail = [hash_component(p, h, is_last=(i == last))
+                       for i, p in enumerate(tail)]
+        if MOUNT_ROOT.match(head):
+            return "/" + "/".join([head] + hashed_tail)
+        # A user-named root such as /Kids_Photos_2019 is itself a name, so it is
+        # hashed like everything under it.
+        return "/" + "/".join([hash_component(head, h, is_last=not tail)] + hashed_tail)
+
+    def keyval(m):
+        return m.group(1) + m.group(2) + "<redacted>"
+
+    text = RE_KEYVAL.sub(keyval, text)
+    text = RE_EMAIL.sub("<email>", text)
+    text = RE_MAC.sub("<mac>", text)
+    text = RE_LONGHEX.sub("<redacted-hex>", text)
+    text = RE_WINPATH.sub(win_path, text)
+    text = RE_UNIXPATH.sub(unix_path, text)
+    text = RE_IPV4.sub(lambda m: m.group(0) if m.group(0) in SAFE_IPS else "<ip>", text)
+    return text
+
+def hash_component(part, h, is_last=False):
+    """Hash one path component. A known extension is kept on the final component
+    only - elsewhere a dot is part of the name (per-person folders like Jane.Doe),
+    and an unknown suffix is a name fragment even at the end (Backup.2019)."""
+    if part in (".", ".."):
+        return part
+    base, dot, ext = part.rpartition(".")
+    if is_last and dot and ext.lower() in KEEP_EXTS:
+        return h(base.lower()) + "." + ext.lower()
+    return h(part.lower())
+
+# ---- collection -------------------------------------------------------------------
+def run(cmd):
+    try:
+        p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+        return (p.stdout or "") + (p.stderr or "")
+    except Exception as e:
+        return "command failed: %s\n" % e
+
+def tail_file(path, lines=LOG_TAIL):
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - 1_000_000))
+            return "\n".join(fh.read().decode("utf-8", "replace").splitlines()[-lines:])
+    except OSError as e:
+        return "could not read: %s\n" % e
+
+def newest_logs(directory, count=2):
+    try:
+        fs = [os.path.join(directory, f) for f in os.listdir(directory) if f.endswith(".log")]
+        return sorted(fs, key=os.path.getmtime, reverse=True)[:count]
+    except OSError:
+        return []
+
+# Every item is (name in bundle, description, producer). Nothing else is collected.
+def build_items():
+    items = [
+        ("container/versions.txt", "image, Wine and client versions", lambda: run("bb-version")),
+        ("container/health.txt", "backup health status", lambda: run("bb-health")),
+        ("container/doctor.txt", "installation check", lambda: run("bb-doctor")),
+        ("container/os.txt", "kernel and distribution", lambda: run("uname -a; cat /etc/os-release")),
+        ("container/env.txt", "container settings (values of unknown vars are hidden)", collect_env),
+        ("container/processes.txt", "running processes", lambda: run("ps -ef 2>/dev/null || cat /proc/*/cmdline")),
+        ("container/memory.txt", "host memory and swap", lambda: run("cat /proc/meminfo")),
+        ("container/cgroup.txt", "container memory limits and usage",
+         lambda: run("cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory.max 2>/dev/null; "
+                     "cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null")),
+        ("container/disk.txt", "disk usage", lambda: run("df -h")),
+        ("container/drives.txt", "mapped drives", lambda: run("ls -la /config/wine/dosdevices/ 2>/dev/null")),
+        ("backblaze/startapp.log", "container startup log",
+         lambda: tail_file("/config/wine/dosdevices/c:/backblaze-wine-startapp.log")),
+    ]
+    for i, p in enumerate(newest_logs(TLOG), start=1):
+        items.append(("backblaze/bztransmit_%d.log" % i, "transfer log (most recent)",
+                      lambda p=p: tail_file(p)))
+    return items
+
+# Only variables this project defines are shown by value; anything else could be a
+# secret the user added (a VNC password, a proxy URL with credentials).
+KNOWN_ENV = ("APP_NAME", "DOCKER_IMAGE_VERSION", "WINEARCH", "WINEPREFIX", "WINEDEBUG",
+             "DISPLAY_WIDTH", "DISPLAY_HEIGHT", "DISABLE_AUTOUPDATE", "FORCE_LATEST_UPDATE",
+             "DISABLE_VIRTUAL_DESKTOP", "ENABLE_WATCHDOG", "TZ", "LANG", "UMASK",
+             "USER_ID", "GROUP_ID", "CLEAN_TMP_DIR", "APP_NICENESS")
+def collect_env():
+    out = []
+    for k in sorted(os.environ):
+        out.append("%s=%s" % (k, os.environ[k] if k in KNOWN_ENV else "<hidden>"))
+    return "\n".join(out)
+
+# ---- main ---------------------------------------------------------------------------
+def main():
+    args = sys.argv[1:]
+    if "-h" in args or "--help" in args:
+        print(HELP, end="")
+        return 0
+    if "--version" in args or "-V" in args:
+        # which image build this came from - the identifier worth having in a bug report
+        print("bb-report (Backblaze 64 container)")
+        try:
+            with open("/etc/bb-build") as fh:
+                sys.stdout.write(fh.read())
+        except OSError:
+            print("version=unknown (no build stamp)")
+        return 0
+    if "--list" in args:
+        print("bb-report would collect:\n")
+        for name, desc, _ in build_items():
+            print("  %-34s %s" % (name, desc))
+        print("\nNot collected, ever: per-thread XMLs (auth token, encryption keys, file"
+              "\npaths), bz_done file listings, account configuration, and the hash salt.")
+        return 0
+
+    regen = "--regenerate-hashes" in args
+    if regen and os.path.exists(SALT_FILE):
+        print("Rotating the hash salt. Hashes in this and future bundles will NOT match")
+        print("any bundle you have already submitted - including ones in an open issue.")
+        try:
+            if input("Continue? [y/N] ").strip().lower() not in ("y", "yes"):
+                print("Cancelled.")
+                return 1
+        except EOFError:
+            print("Cancelled (no terminal to confirm on).")
+            return 1
+
+    salt, created = load_salt(regenerate=regen)
+    h = hasher(salt)
+    epoch = h("bb-report-hash-epoch", 8)   # names the namespace; reveals nothing
+
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    out_path = os.path.join(OUT_DIR, "bb-report-%s.zip" % stamp)
+    tmp = tempfile.mkdtemp(prefix="bb-report-")
+    try:
+        manifest = [
+            "Backblaze container diagnostic bundle",
+            "Created:    %s" % time.strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "Hash epoch: %s" % epoch,
+            "",
+            "File and directory names are replaced with keyed hashes. The same name always",
+            "gives the same hash within a hash epoch, so a problem can be traced through a",
+            "directory and followed across bundles that share the epoch above. The hashes",
+            "cannot be decoded back to names: they are HMACs under a random secret salt",
+            "that stays on the machine and is never included here.",
+            "",
+            "Run 'bb-report --regenerate-hashes' to rotate the salt and break the link with",
+            "bundles submitted previously.",
+            "",
+            "Contents:",
+        ]
+        collected = []
+        for name, desc, producer in build_items():
+            try:
+                raw = producer()
+            except Exception as e:
+                raw = "collection failed: %s\n" % e
+            clean = sanitise(raw, h)
+            dest = os.path.join(tmp, name)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "w", encoding="utf-8") as fh:
+                fh.write(clean)
+            collected.append((name, desc))
+            manifest.append("  %-34s %s" % (name, desc))
+        manifest += [
+            "",
+            "Deliberately excluded: per-thread XMLs (they carry a live auth token, the AES",
+            "key and IV, and the wrapped file encryption key), bz_done file listings,",
+            "account configuration, and the hash salt.",
+            "",
+        ]
+        with open(os.path.join(tmp, "README.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(manifest))
+
+        with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
+            z.write(os.path.join(tmp, "README.txt"), "README.txt")
+            for name, _ in collected:
+                z.write(os.path.join(tmp, name), name)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    size_kb = os.path.getsize(out_path) / 1024
+    print("Diagnostic bundle written:")
+    print("  %s  (%.0f KB)" % (out_path, size_kb))
+    print()
+    print("On the host this is inside your config/appdata folder, alongside the Wine")
+    print("directory - attach it to your forum post or GitHub issue.")
+    print()
+    print("Hash epoch %s. Bundles sharing this epoch can be compared with each other." % epoch)
+    if created:
+        print("A new hash salt was created, so this bundle cannot be compared with older ones.")
+    print()
+    print("It contains no file names, no account details and no keys, but do look through")
+    print("it before posting - it is your machine, and you should be comfortable with it.")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

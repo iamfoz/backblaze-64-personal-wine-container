@@ -1,0 +1,30 @@
+#!/bin/sh
+# Supervised wrapper for the auto-recovery watchdog.
+#
+# Opt-in: it stays dormant unless ENABLE_WATCHDOG=true, because it takes corrective
+# action (deleting a lock file, killing threads) and that should be a deliberate
+# choice rather than something a user discovers after the fact. When dormant it
+# parks instead of exiting, so the supervisor does not treat it as a crashed
+# service and restart it in a loop.
+#
+# This directory alone does not make the service run. The base image's supervisor
+# starts only services reachable from the "default" group, so the empty marker
+# ../default/bb-watchdog.dep is what registers it. Without the marker the
+# directory is ignored with no error.
+#
+# The state file records which branch was taken. Service output does not reliably
+# reach `docker logs`, so this is how to confirm the service started and whether
+# it is armed, for debugging and for the CI smoke test, which would otherwise be
+# checking log plumbing rather than behaviour.
+set -u
+
+STATE_FILE=/tmp/.bb-watchdog-state
+
+if [ "${ENABLE_WATCHDOG:-false}" != "true" ]; then
+    echo disabled > "$STATE_FILE" 2>/dev/null
+    echo "[bb-watchdog] disabled (set ENABLE_WATCHDOG=true to enable auto-recovery)"
+    exec sleep infinity
+fi
+
+echo enabled > "$STATE_FILE" 2>/dev/null
+exec /usr/local/bin/bb-watchdog
