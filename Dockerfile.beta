@@ -1,0 +1,169 @@
+# ============================================================================
+# Beta image. Ubuntu 26.04 with Wine built from source and the upload-speed
+# patch applied. Published as the :beta tag.
+#
+# Stock Wine caps a single upload stream at roughly 140 KB/s for senders like
+# libcurl, which is what Backblaze's bztransmit uses: Wine reports a socket as
+# not writable while its send buffer still has room, so the sending loop waits
+# out a full timeout instead of sending. patches/wine-sock-upload-fix.py
+# corrects the select() writability semantics to match Windows.
+#
+# The fix is filed as WineHQ bug 59893 and submitted upstream. Once it ships in
+# a Wine release this whole file can go and the stable images will carry the
+# fix on their own.
+#
+# This image is not the supported path. It carries a Wine build that has not
+# been through WineHQ review, and it tracks the newer LTS. Use the stable tags
+# unless upload speed is the reason you are here.
+#
+# Wine is licensed under the LGPL. This image contains a modified Wine built
+# from the public source at gitlab.winehq.org, with the patch in patches/ in
+# this repository applied. Both are available at those locations.
+#
+# WINE_REF pins the Wine source. The patcher fails loudly if the source has
+# moved, which is the signal to re-verify rather than ship a mispatched Wine.
+# ============================================================================
+ARG WINE_REF=wine-11.14
+
+FROM ubuntu:26.04 AS wine-builder
+ARG WINE_REF
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Build toolchain plus the -dev libraries Wine links against. Deliberately scoped
+# to fonts, TLS and the X stack Backblaze's GUI needs - no OpenGL/sound/scanner
+# dev packages, so configure auto-disables those subsystems (matching the
+# validated build and keeping the runtime library set small).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates git gcc flex bison make pkg-config python3 \
+        gcc-mingw-w64-x86-64 \
+        libfreetype-dev libfontconfig-dev libgnutls28-dev libpng-dev \
+        libx11-dev libxext-dev libxrender-dev libxrandr-dev libxi-dev \
+        libxfixes-dev libxcursor-dev libxinerama-dev libxcomposite-dev \
+        libxxf86vm-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /wine
+COPY patches/wine-sock-upload-fix.py /wine/patches/
+# Partial (blobless) clone keeps the checkout small while still allowing WINE_REF
+# to be any tag, branch, or exact commit; blobs are fetched on checkout.
+RUN git clone --filter=blob:none https://gitlab.winehq.org/wine/wine.git src \
+ && git -C src checkout "${WINE_REF}" \
+ && python3 patches/wine-sock-upload-fix.py src/server/sock.c
+
+# Cap build parallelism by available RAM. Wine's parallel link steps are
+# memory-heavy, so -j<all-cores> on a high-core / modest-RAM host exhausts memory
+# and thrashes the machine into swap. Default to ~1 job per 2 GB (never more than
+# the core count); override on a large box with --build-arg MAKE_JOBS=N.
+ARG MAKE_JOBS
+RUN set -eu; \
+    mkdir build; cd build; \
+    ../src/configure --enable-win64 --disable-tests --prefix=/opt/wine; \
+    cpus="$(nproc)"; \
+    mem_gb="$(awk '/MemTotal/{printf "%d", $2/1048576}' /proc/meminfo)"; \
+    jobs="${MAKE_JOBS:-$(( mem_gb / 2 ))}"; \
+    if [ "$jobs" -lt 1 ]; then jobs=1; fi; \
+    if [ "$jobs" -gt "$cpus" ]; then jobs="$cpus"; fi; \
+    echo "Building Wine with -j${jobs} (cpus=${cpus}, mem=${mem_gb}GB; override with --build-arg MAKE_JOBS=N)"; \
+    make -j"${jobs}"; \
+    make install; \
+    rm -rf /opt/wine/share/man /opt/wine/include
+
+# ============================================================================
+# Stage 2 - the runtime image: jlesage GUI base running Backblaze under our Wine.
+# ============================================================================
+FROM jlesage/baseimage-gui:ubuntu-26.04-v4.12.6@sha256:8e7e36393474e63c4ff2cc61c0ea776cbd9b4e3066af8e14cf547a67c55c08a6
+
+ENV WINEPREFIX=/config/wine/
+# Backblaze 10.x is a native 64-bit app, so the prefix must be win64.
+ENV WINEARCH=win64
+ENV LANG=en_US.UTF-8
+ENV APP_NAME="Backblaze 64-Bit Personal Backup (beta)"
+ENV FORCE_LATEST_UPDATE="true"
+ENV DISABLE_AUTOUPDATE="false"
+ENV DISABLE_VIRTUAL_DESKTOP="false"
+ENV DISPLAY_WIDTH="900"
+ENV DISPLAY_HEIGHT="700"
+# Disable Wine debug noise
+ENV WINEDEBUG=-all
+# Set DISPLAY so GUI programs can find the X server
+ENV DISPLAY=:0
+# Our Wine is installed under /opt/wine; startapp.sh calls wine/wineserver/etc.
+# from PATH, so it must come first.
+ENV PATH="/opt/wine/bin:${PATH}"
+
+# Unraid reads these labels to show a WebUI button and the app icon on the
+# Docker page - works even for containers started with `docker run`.
+LABEL net.unraid.docker.webui="http://[IP]:[PORT:5800]/" \
+      net.unraid.docker.icon="https://cdn.jsdelivr.net/gh/selfhst/icons/png/backblaze.png"
+
+# Our patched Wine, built in stage 1.
+COPY --from=wine-builder /opt/wine /opt/wine
+
+# Expose the Wine binaries on the default PATH. The jlesage base launches the app
+# service with its own PATH that does NOT pick up the ENV PATH above, so the bare
+# `wine`/`wineserver`/`wineboot`/... calls in startapp.sh must be resolvable
+# directly. Link the binaries Wine and the startup script invoke by name into
+# /usr/bin - where winehq-stable used to install them, and which is on the app
+# service's PATH. Wine still finds its own libraries relative to /opt/wine via
+# the symlink target.
+RUN set -eu; for b in wine wine64 wineserver wineboot winepath winecfg wineconsole; do \
+        if [ -e "/opt/wine/bin/$b" ]; then ln -sf "/opt/wine/bin/$b" "/usr/bin/$b"; fi; \
+    done
+
+# Runtime dependencies. Because we build a pure win64 Wine from source we no
+# longer need the WineHQ apt repo, the i386/WoW64 libraries, winetricks, or the
+# systemd-pinning gymnastics that winehq-stable's dependency chain (libsane ->
+# libgphoto2 -> udev -> systemd) used to force. We install only:
+#   * the tools startapp.sh uses (curl, 7z, cabextract, xvfb),
+#   * the shared libraries our Wine links against (fonts, TLS, the X stack),
+#   * locales for the en_US.UTF-8 the prefix expects.
+# The init_env scaffolding (and its later cleanup) mirrors the base image's own
+# add-pkg helper, so font/ca-certificate postinst scripts succeed on this
+# otherwise minimal base.
+RUN mkdir -p /config/log /tmp/run && \
+    /etc/cont-init.d/10-init-users.sh && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates curl xvfb cabextract p7zip-full python3 \
+        libfreetype6 libfontconfig1 libgnutls30t64 libpng16-16t64 \
+        libx11-6 libxext6 libxrender1 libxrandr2 libxi6 libxfixes3 \
+        libxcursor1 libxinerama1 libxcomposite1 libxxf86vm1 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends locales && \
+    sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
+    dpkg-reconfigure --frontend=noninteractive locales && \
+    update-locale LANG=en_US.UTF-8 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* \
+        /tmp/.passwd /tmp/.group /tmp/.shadow /tmp/.gshadow /tmp/run /config/log
+
+# Image/release version, shown by bb-version and baked into the build stamp below.
+# CI passes the release tag via --build-arg; local builds default to "dev".
+# Declared HERE, after the heavy apt layer, so a version change does not bust its
+# build cache. Without this ARG, Docker silently ignores the build-arg CI passes
+# and every published image would stamp itself "dev".
+ARG DOCKER_IMAGE_VERSION=dev
+ENV DOCKER_IMAGE_VERSION=${DOCKER_IMAGE_VERSION}
+
+# Stamp the build so every bb-* tool can report exactly which image it came from.
+# Sourced from the build rather than versioned per tool: the tools only ever ship
+# together inside an image, so "which build is this" is the question worth answering
+# in a bug report, and a single source cannot drift out of step.
+ARG BUILD_REV=unknown
+RUN printf 'version=%s\nrevision=%s\nvariant=%s\nbuilt=%s\n' \
+        "${DOCKER_IMAGE_VERSION:-dev}" "${BUILD_REV}" "beta-ubuntu26" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /etc/bb-build
+
+EXPOSE 5900
+
+COPY rootfs/ /
+RUN chmod +x /startapp.sh /etc/cont-env.d/APP_VERSION /usr/local/bin/bb-monitor \
+        /usr/local/bin/bb-health /usr/local/bin/bb-watchdog /usr/local/bin/bb-version \
+        /usr/local/bin/bb-doctor /usr/local/bin/bb-report \
+        /etc/services.d/bb-watchdog/run
+
+# Report the backup itself as the container's health, rather than just whether a
+# process is alive. bb-health only reports unhealthy on a corroborated stall (see
+# the script), so an idle or still-being-set-up container stays healthy. The long
+# start period covers the first run, which downloads and installs Backblaze.
+HEALTHCHECK --interval=5m --timeout=30s --start-period=15m --retries=2 \
+    CMD /usr/local/bin/bb-health || exit 1
