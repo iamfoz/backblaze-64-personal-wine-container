@@ -1,0 +1,9 @@
+# Python bytecode from running the bundled tools or tests locally. Build artefacts
+# of whatever machine ran them - must never reach a commit or an image.
+__pycache__/
+*.pyc
+
+# Local working notes and experiments, deliberately not part of the project.
+scratch/
+
+.DS_Store

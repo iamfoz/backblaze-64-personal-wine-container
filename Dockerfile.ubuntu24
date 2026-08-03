@@ -1,4 +1,4 @@
-FROM jlesage/baseimage-gui:ubuntu-24.04-v4.12.5@sha256:6973f57dd1848105cacf769f4dfefecd73ece16c166ba93f9ab63ab26fb204b7
+FROM jlesage/baseimage-gui:ubuntu-24.04-v4.12.6@sha256:e35d68767241f1c58407af909b57c7d073b4569deae1231be9be9b5232b47237
 
 ENV WINEPREFIX=/config/wine/
 # Backblaze 10.x is a native 64-bit app, so the prefix must be win64.
@@ -55,7 +55,7 @@ RUN mkdir -p /config/log /tmp/run && \
         > /etc/apt/preferences.d/no-systemd && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-        ca-certificates curl xvfb cabextract p7zip-full && \
+        ca-certificates curl xvfb cabextract p7zip-full python3 && \
     dpkg --add-architecture i386 && \
     mkdir -pm755 /etc/apt/keyrings && \
     curl -fsSL https://dl.winehq.org/wine-builds/winehq.key \
@@ -76,7 +76,34 @@ RUN mkdir -p /config/log /tmp/run && \
     rm -rf /var/lib/apt/lists/* \
         /tmp/.passwd /tmp/.group /tmp/.shadow /tmp/.gshadow /tmp/run /config/log
 
+# Image/release version, shown by bb-version and baked into the build stamp below.
+# CI passes the release tag via --build-arg; local builds default to "dev".
+# Declared HERE, after the heavy apt layer, so a version change does not bust its
+# build cache. Without this ARG, Docker silently ignores the build-arg CI passes
+# and every published image would stamp itself "dev".
+ARG DOCKER_IMAGE_VERSION=dev
+ENV DOCKER_IMAGE_VERSION=${DOCKER_IMAGE_VERSION}
+
+# Stamp the build so every bb-* tool can report exactly which image it came from.
+# Sourced from the build rather than versioned per tool: the tools only ever ship
+# together inside an image, so "which build is this" is the question worth answering
+# in a bug report, and a single source cannot drift out of step.
+ARG BUILD_REV=unknown
+RUN printf 'version=%s\nrevision=%s\nvariant=%s\nbuilt=%s\n' \
+        "${DOCKER_IMAGE_VERSION:-dev}" "${BUILD_REV}" "ubuntu24" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /etc/bb-build
+
 EXPOSE 5900
 
 COPY rootfs/ /
-RUN chmod +x /startapp.sh
+RUN chmod +x /startapp.sh /usr/local/bin/bb-monitor /usr/local/bin/bb-health \
+        /usr/local/bin/bb-watchdog /usr/local/bin/bb-version \
+        /usr/local/bin/bb-doctor /usr/local/bin/bb-report \
+        /etc/services.d/bb-watchdog/run
+
+# Report the backup itself as the container's health, rather than just whether a
+# process is alive. bb-health only reports unhealthy on a corroborated stall (see
+# the script), so an idle or still-being-set-up container stays healthy. The long
+# start period covers the first run, which downloads and installs Backblaze.
+HEALTHCHECK --interval=5m --timeout=30s --start-period=15m --retries=2 \
+    CMD /usr/local/bin/bb-health || exit 1

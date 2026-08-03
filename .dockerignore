@@ -1,0 +1,11 @@
+# The build context only needs the Dockerfile inputs. Everything here is kept out
+# of COPY rootfs/ / and friends - .gitignore does NOT apply to docker builds, so
+# stray local bytecode would otherwise be baked straight into the image.
+.git
+.github
+scratch
+tests
+**/__pycache__
+**/*.pyc
+.DS_Store
+*.md
