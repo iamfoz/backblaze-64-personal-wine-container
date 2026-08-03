@@ -6,6 +6,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A Docker `HEALTHCHECK` that reports the state of the backup rather than just whether
+  a process is alive, so a stalled backup shows as unhealthy on the Unraid Docker page.
+  Run `docker exec <container> bb-health` to query it directly. It reports unhealthy only
+  on corroborated evidence, so idle, freshly installed and signed-out containers stay
+  healthy.
+- Optional auto-recovery, enabled with `ENABLE_WATCHDOG=true`. It clears the stale
+  four-hour lock left behind by an out-of-memory kill, and kills deadlocked upload
+  threads so they respawn. Actions are logged, with a cooldown so an unfixable fault
+  cannot cause a loop.
+- `bb-version`, reporting the installed Backblaze client version alongside the one
+  Backblaze is currently serving, plus the container and Wine versions. Backblaze
+  publishes release notes ahead of serving a build, so a version in the notes is often
+  not yet installable; this queries the same API the updater polls and says whether an
+  update is pending or which setting is holding it back.
+- `bb-doctor`, which checks an installation against the problems this project has run
+  into and, with `--fix`, repairs the ones that can be repaired safely (reported Windows
+  version, drive links, control panel skin aliases, a stale four-hour lock). Repairs are
+  idempotent, never touch backup state, and are skipped when the diagnosis is ambiguous.
+- `bb-report`, which builds a sanitised diagnostic bundle for a forum post or issue.
+  Collection is allowlist-based, so the per-thread XMLs (live auth token, AES key and IV,
+  wrapped file encryption key) and the `bz_done` file listings are never included. File
+  names become per-component keyed hashes, so a problem can be traced to a directory or
+  followed across bundles without any name being recoverable. `--regenerate-hashes`
+  rotates the salt to break that link when a user wants to.
+- Every `bb-*` tool accepts `--version`, reporting the image version, git revision,
+  LTS variant and build date from a stamp written at build time. The tools only ever
+  ship together inside an image, so the build is the identifier worth having in a bug
+  report, and a single stamp cannot drift out of step with the tools it describes.
+- CI tests `bb-report`'s sanitiser on every change, using the real data shapes found
+  in this container. A sanitiser bug does not crash anything; it quietly publishes
+  private data in a bundle meant for a public issue tracker, so the check is gated
+  rather than left to be run by hand.
+- A CI smoke test that boots each built image and verifies the Wine prefix builds, the
+  drive mapping reaches into the prefix, and the bundled tools run — before anything is
+  published. Images are now pushed only if that passes.
+- Host sizing guidance in the README: Backblaze's memory use tracks file count rather
+  than data volume, with measured figures and the reason swap matters.
+- `bb-monitor`, a terminal upload dashboard built into the image. Run it from the
+  container console (Unraid: container icon → Console) or with
+  `docker exec -it <container> bb-monitor`. Shows live upload speed, per-thread file
+  progress, recently completed files, thread count, chunks per minute, session total,
+  and container memory plus host swap gauges. Files Backblaze splits into parts are
+  bundled into a single completed row showing parts done out of total, cumulative
+  size, and the file's aggregate transfer rate.
+- Documentation for the optional Wine upload-speed patch, an opt-in self-built image
+  carrying the fix for [WineHQ bug 59893](https://bugs.winehq.org/show_bug.cgi?id=59893)
+  while it is under review upstream.
+- Guidance to keep the Backblaze thread count manual and modest (4–8); the automatic
+  setting can spin up enough threads to deadlock Wine's pipe handling and stall
+  transmits.
+
+### Added
+- A `beta` image (`ghcr.io/iamfoz/backblaze-personal-wine:beta`): Ubuntu 26.04 with
+  Wine built from source and the upload-speed fix applied, so the fix can be used
+  without building it yourself. It is not the supported path, since it carries a
+  Wine change WineHQ has not yet reviewed and tracks the newer LTS. It is built on
+  the weekly schedule and publishes only the `beta` tag; the stable tags are
+  produced by a separate job and CI checks the beta cannot write them.
+
+### Changed
+- A pre-release review of the whole release surface raised 22 issues, of which 16
+  were confirmed against the code and fixed:
+  - `bb-report` hardening: a stored hash salt is now trusted only if intact
+    (a zero-length salt from an interrupted first run would have made every
+    published hash fall to a wordlist), the salt is written atomically and its
+    0600 mode re-asserted on every load; user-named mount roots are hashed rather
+    than allowlisted (a `-v /mnt/user/Photos:/Photos` style mount previously
+    published its name via `df`/`ls` output); dotted directory names like
+    `Jane.Doe` are no longer mistaken for extensions, and only recognised
+    extensions survive on final components.
+  - `bb-health` stall detection now fails SAFE: file ages come from `stat`
+    arithmetic instead of `find -newermt`, whose any-error-means-empty output
+    read as "stalled" and could fabricate a `HANG` (whose recovery kills upload
+    threads); thresholds are validated as integers with fallback to defaults.
+  - `bb-watchdog`: the SIGKILL escalation now targets only the original stuck
+    PIDs (still alive and still push threads) instead of re-scanning by name,
+    which could destroy the healthy replacement thread bzserv had just respawned;
+    the cooldown starts at detection rather than on success, so a failing
+    recovery backs off instead of retrying every interval; the default cooldown
+    is 30 minutes and always exceeds the stall threshold, preventing a re-kill
+    loop; interval and cooldown values are validated.
+  - `bb-doctor`: `--fix` no longer reports skin aliases as fixed unless every
+    link was actually created; drive relinking uses `ln -sfn` so a dangling
+    symlink can be repaired; connectivity probes all six Backblaze mirrors
+    before declaring the API unreachable; thread counting uses live processes
+    rather than the accumulated instruction files.
+  - `bb-version` no longer claims "restart the container to install it" when
+    `FORCE_LATEST_UPDATE` is unset - the updater only runs when it is exactly
+    `true`, and the report now matches that.
+  - Release images now stamp their real version: the stock Dockerfiles were
+    missing the `ARG` for `DOCKER_IMAGE_VERSION`, so Docker silently dropped
+    the value CI passes and published images would have identified as "dev".
+  - The CI smoke test asserts the stamp file exists and anchors on a field the
+    no-stamp fallback text cannot produce, and the stall-detection tests now
+    gate the build alongside the sanitiser tests.
+  - `FORCE_LATEST_UPDATE` is exposed in the Unraid template, and the health
+    tuning variables are documented.
+- Base image updated to `v4.12.6` for both variants, which fixes a startup regression
+  when the container engine auto-mounts files under `/run`.
+- `python3` added to the runtime image so `bb-monitor` can run.
+- CI now uses `actions/checkout@v7`.
+
 ## [10.1.0] - 2026-06-20
 
 ### Added

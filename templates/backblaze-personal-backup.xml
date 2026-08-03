@@ -98,6 +98,26 @@
     Mask="false">100</Config>
 
   <Config
+    Name="Force Latest Update"
+    Target="FORCE_LATEST_UPDATE"
+    Default="true"
+    Description="When true (the default), the container downloads the newest Backblaze client on each start. Set to false to keep the installed client version and skip the update check."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">true</Config>
+
+  <Config
+    Name="Enable Watchdog"
+    Target="ENABLE_WATCHDOG"
+    Default="false"
+    Description="Set to true to let the container recover automatically when a backup stalls: it clears a stale four-hour lock left behind by an out-of-memory kill, and restarts deadlocked upload threads. Actions are written to the container log. Off by default because it deletes a lock file and kills processes."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">false</Config>
+
+  <Config
     Name="Disable Auto-Update"
     Target="DISABLE_AUTOUPDATE"
     Default="false"
