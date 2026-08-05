@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [10.2.0] - 2026-08-05
 
 ### Added
 - A Docker `HEALTHCHECK` that reports the state of the backup rather than just whether
@@ -69,7 +69,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   setting can spin up enough threads to deadlock Wine's pipe handling and stall
   transmits.
 
-### Added
 - A `beta` image (`ghcr.io/iamfoz/backblaze-personal-wine:beta`): Ubuntu 26.04 with
   Wine built from source and the upload-speed fix applied, so the fix can be used
   without building it yourself. It is not the supported path, since it carries a
@@ -281,6 +280,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Updated Dependencies
 
-[Unreleased]: https://github.com/iamfoz/backblaze-64-personal-wine-container/compare/v10.1.0...HEAD
+[10.2.0]: https://github.com/iamfoz/backblaze-64-personal-wine-container/compare/v10.1.0...v10.2.0
 [10.1.0]: https://github.com/iamfoz/backblaze-64-personal-wine-container/compare/v10.0.0...v10.1.0
 [10.0.0]: https://github.com/iamfoz/backblaze-64-personal-wine-container/releases/tag/v10.0.0
