@@ -160,7 +160,7 @@ RUN printf 'version=%s\nrevision=%s\nvariant=%s\nbuilt=%s\n' \
 EXPOSE 5900
 
 COPY rootfs/ /
-RUN chmod +x /startapp.sh /etc/cont-env.d/APP_VERSION /usr/local/bin/bb-monitor \
+RUN chmod +x /startapp.sh /usr/local/bin/bb-monitor \
         /usr/local/bin/bb-health /usr/local/bin/bb-watchdog /usr/local/bin/bb-version \
         /usr/local/bin/bb-doctor /usr/local/bin/bb-report \
         /etc/services.d/bb-watchdog/run
