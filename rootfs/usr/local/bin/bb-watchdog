@@ -5,7 +5,7 @@
 #
 #   WEDGE  Delete the stale four-hour lock so the next pass can start. Lighter
 #          than a container restart, and bb-health has already confirmed no
-#          bztransmit is alive to own the lock.
+#          bztransmit has been running long enough to own the lock.
 #
 #   HANG   Kill the deadlocked push threads. bzserv respawns them, which restarts
 #          the transfer without disturbing the rest of the container. If that does

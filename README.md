@@ -264,12 +264,17 @@ It reports one of:
   Backblaze's automatic thread setting can spin up enough upload threads to deadlock
   Wine's pipe handling, which leaves the transfer stuck forever.
 - `WEDGE` — a stale four-hour lock is blocking every pass. This is what an out-of-memory
-  kill leaves behind: the lock file outlives the process that owned it, and every
-  subsequent pass fails to acquire it.
+  kill or a container restart mid-pass leaves behind: the lock file outlives the process
+  that owned it, and every subsequent pass fails to acquire it. It usually shows as a
+  respawn loop — `bztransmit` is relaunched every few seconds and each attempt exits
+  with "Failed to grab fourHourLock", which keeps every log fresh and hides the fault
+  from any simple staleness test.
 
 Both states are reported only on corroborated evidence — for `WEDGE`, the lock must be
-present *and* stale *and* accompanied by repeated failures in the log *and* no
-`bztransmit` process alive to legitimately own it — so a healthy backup is never flagged.
+present *and* accompanied by repeated failures in the log *and* too old to belong to any
+`bztransmit` still inside its start-up grace window; a pass that has been running longer
+than that window is always assumed to own the lock — so a healthy backup is never
+flagged.
 
 ### Automatic recovery
 
@@ -288,12 +293,13 @@ very slow uplink where more than 20 minutes between transmit-log writes is norma
 | Variable | Meaning | Default |
 |---|---|---|
 |`STALL_MIN`| Minutes the transmit log may be silent (with an upload thread alive) before `HANG` is reported | `20` |
-|`LOCK_AGE_MIN`| Minimum age in minutes of the four-hour lock before it can be considered stale | `245` |
+|`LOCK_AGE_MIN`| Age in minutes past which the four-hour lock is stale even without the failures still being written | `245` |
 |`LOCK_FAILS`| Recent "Failed to grab fourHourLock" log lines required to corroborate a `WEDGE` | `5` |
+|`LOCK_GRACE_MIN`| Minutes a `bztransmit` must have been running before it is assumed to own the lock | `2` |
 |`WATCHDOG_INTERVAL`| Seconds between watchdog health checks | `300` |
 |`COOLDOWN_MIN`| Minutes the watchdog waits after acting before it may act again (raised automatically if set at or below `STALL_MIN`) | `30` |
 
-All five take plain whole numbers; anything else falls back to the default.
+All six take plain whole numbers; anything else falls back to the default.
 
 It is **opt-in** because it deletes a lock file and kills processes, which should be a
 deliberate choice rather than a surprise. Leaving it off costs nothing: the health status

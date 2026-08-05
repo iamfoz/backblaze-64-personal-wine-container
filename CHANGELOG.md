@@ -25,6 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   into and, with `--fix`, repairs the ones that can be repaired safely (reported Windows
   version, drive links, control panel skin aliases, a stale four-hour lock). Repairs are
   idempotent, never touch backup state, and are skipped when the diagnosis is ambiguous.
+- Detection of the stale-lock respawn loop. A four-hour lock whose holder is killed by
+  a container restart (or an out-of-memory kill) puts `bztransmit` in a relaunch loop:
+  every few seconds a new pass exits with "Failed to grab fourHourLock", and the
+  constant respawns keep every log and file mtime fresh, so the previous stall
+  heuristics reported a wedged container as healthy. `bb-health` now corroborates by
+  process age instead — a lock older than a small grace window cannot belong to a pass
+  younger than it — and reports the loop as `WEDGE`, so the health status goes red and
+  the watchdog clears it. `bb-doctor` diagnoses the same signature independently of
+  the tunable thresholds, and `bb-doctor --fix` removes the lock only while the full
+  signature holds: a `bztransmit` past the grace window, or one whose age cannot be
+  read, always keeps its lock. CI covers both the detection and the repair gate.
 - `bb-report`, which builds a sanitised diagnostic bundle for a forum post or issue.
   Collection is allowlist-based, so the per-thread XMLs (live auth token, AES key and IV,
   wrapped file encryption key) and the `bz_done` file listings are never included. File
