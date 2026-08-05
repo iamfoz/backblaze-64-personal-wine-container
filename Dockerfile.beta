@@ -5,12 +5,14 @@
 # Stock Wine caps a single upload stream at roughly 140 KB/s for senders like
 # libcurl, which is what Backblaze's bztransmit uses: Wine reports a socket as
 # not writable while its send buffer still has room, so the sending loop waits
-# out a full timeout instead of sending. patches/wine-sock-upload-fix.py
-# corrects the select() writability semantics to match Windows.
+# out a full timeout instead of sending. patches/wine-writability-fix.patch
+# reports writability from the kernel's own send-accept condition, at both the
+# poll answer and the blocking-send gate, matching Windows semantics (verified
+# against Windows Server 2022 and 2025).
 #
-# The fix is filed as WineHQ bug 59893 and submitted upstream. Once it ships in
-# a Wine release this whole file can go and the stable images will carry the
-# fix on their own.
+# The fix is filed as WineHQ bug 59893 and submitted upstream (MR !11272).
+# Once it ships in a Wine release this whole file can go and the stable images
+# will carry the fix on their own.
 #
 # This image is not the supported path. It carries a Wine build that has not
 # been through WineHQ review, and it tracks the newer LTS. Use the stable tags
@@ -20,8 +22,9 @@
 # from the public source at gitlab.winehq.org, with the patch in patches/ in
 # this repository applied. Both are available at those locations.
 #
-# WINE_REF pins the Wine source. The patcher fails loudly if the source has
+# WINE_REF pins the Wine source. git apply fails loudly if the source has
 # moved, which is the signal to re-verify rather than ship a mispatched Wine.
+# The patch is the same artifact submitted upstream, applied verbatim.
 # ============================================================================
 ARG WINE_REF=wine-11.14
 
@@ -43,12 +46,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /wine
-COPY patches/wine-sock-upload-fix.py /wine/patches/
+COPY patches/wine-writability-fix.patch /wine/patches/
 # Partial (blobless) clone keeps the checkout small while still allowing WINE_REF
 # to be any tag, branch, or exact commit; blobs are fetched on checkout.
 RUN git clone --filter=blob:none https://gitlab.winehq.org/wine/wine.git src \
  && git -C src checkout "${WINE_REF}" \
- && python3 patches/wine-sock-upload-fix.py src/server/sock.c
+ && git -C src apply --check /wine/patches/wine-writability-fix.patch \
+ && git -C src apply /wine/patches/wine-writability-fix.patch
 
 # Cap build parallelism by available RAM. Wine's parallel link steps are
 # memory-heavy, so -j<all-cores> on a high-core / modest-RAM host exhausts memory

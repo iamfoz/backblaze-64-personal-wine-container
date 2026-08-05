@@ -486,12 +486,13 @@ Then point your container at the `backblaze-personal-wine:patched` image instead
 published one, keeping your existing `/config` volume so the backup state carries over.
 Use `Dockerfile.ubuntu26` instead for the Ubuntu 26.04 variant.
 
-The patch itself is [`patches/wine-sock-upload-fix.py`](https://github.com/iamfoz/backblaze-64-personal-wine-container/blob/feat/bundle-patched-wine/patches/wine-sock-upload-fix.py),
-on the same branch as the build above (it is not part of the standard images).
-It is anchor-based and deliberately fails loudly if Wine's source has moved, so a mismatch
-stops the build rather than silently producing a mispatched Wine. Wine is licensed under
-the LGPL; the patched build is produced from Wine's public source with the patch in this
-repository applied, both of which are available at the links above.
+The patch itself is [`patches/wine-writability-fix.patch`](patches/wine-writability-fix.patch)
+(it is not part of the standard images). It is byte-identical to the series submitted
+to WineHQ for review, and the build applies it with `git apply --check` first, so a
+mismatch with Wine's source stops the build rather than silently producing a mispatched
+Wine. Wine is licensed under the LGPL; the patched build is produced from Wine's public
+source with the patch in this repository applied, both of which are available at the
+links above.
 
 ## Security
 

@@ -65,6 +65,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Wine change WineHQ has not yet reviewed and tracks the newer LTS. It is built on
   the weekly schedule and publishes only the `beta` tag; the stable tags are
   produced by a separate job and CI checks the beta cannot write them.
+- The beta's Wine fix was reworked after extended testing. The original version
+  measured send-buffer room by payload bytes, which near the blocking boundary
+  could report a socket writable when a send would block; Wine's full socket
+  test suite deadlocked on that state. The fix now reports writability from the
+  kernel's own send-accept accounting and applies the same condition to Wine's
+  blocking-send path, which previously parked sends the kernel would accept.
+  Verified against Wine's full `ws2_32:sock` suite (which now passes cleaner
+  than stock Wine), against real Windows Server 2022 and 2025, and against a
+  live backup at full uplink speed. The patch in `patches/` is byte-identical
+  to the series submitted upstream.
 
 ### Changed
 - A pre-release review of the whole release surface raised 22 issues, of which 16
