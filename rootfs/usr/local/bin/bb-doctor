@@ -52,6 +52,40 @@ proc_match() {
     return 1
 }
 
+# Age of a file in whole minutes, or empty if it cannot be read. Same fail-safe
+# contract as bb-health's copy: a read error yields "" and the caller skips the
+# check rather than inventing a stale age.
+age_min() {
+    mt="$(stat -c %Y "$1" 2>/dev/null)" || return 0
+    case "$mt" in ''|*[!0-9]*) return 0 ;; esac
+    echo $(( ( $(date +%s) - mt ) / 60 ))
+}
+
+# Minutes since the oldest process matching $1 started, or empty when none
+# match. Start times come from the starttime field of /proc/PID/stat measured
+# against /proc/uptime. A start time that cannot be read reports as very old:
+# this decides whether a live bztransmit could own the four-hour lock, and that
+# question must fail toward "it could".
+oldest_proc_min() {
+    up="$(cut -d. -f1 /proc/uptime 2>/dev/null)"
+    tick="$(getconf CLK_TCK 2>/dev/null)"
+    case "$up" in ''|*[!0-9]*) up="" ;; esac
+    case "$tick" in ''|*[!0-9]*) tick=100 ;; esac
+    oldest=""
+    for c in /proc/[0-9]*/cmdline; do
+        [ -r "$c" ] || continue
+        tr '\0' ' ' < "$c" 2>/dev/null | grep -q -- "$1" || continue
+        # starttime is the 20th field after the parenthesised comm, which can
+        # itself contain spaces, so strip through the last ")" first.
+        st="$(sed 's/^.*) //' "${c%/cmdline}/stat" 2>/dev/null | awk '{print $20}')"
+        case "$st" in ''|*[!0-9]*) st="" ;; esac
+        if [ -z "$up" ] || [ -z "$st" ]; then echo 99999; return; fi
+        age=$(( ( up - st / tick ) / 60 ))
+        if [ -z "$oldest" ] || [ "$age" -gt "$oldest" ]; then oldest="$age"; fi
+    done
+    echo "$oldest"
+}
+
 echo "Backblaze container check"
 echo
 
@@ -195,7 +229,39 @@ echo
 echo "Backup health"
 status="$(bb-health 2>/dev/null || true)"
 case "$status" in
-    OK*) OK "no stall detected" ;;
+    OK*)
+        # A stale lock that survives a restart puts bztransmit in a respawn
+        # loop: bzserv relaunches it every few seconds and each attempt dies on
+        # "Failed to grab fourHourLock", so the constant restarts keep every
+        # mtime fresh and a staleness heuristic alone never fires. bb-health
+        # detects this too, but its thresholds are env-tunable, so the
+        # signature is checked here again with fixed ones: the lock present,
+        # failures still being written to today's log, and no bztransmit old
+        # enough to have created the lock (a pass writes its lock only after
+        # it starts, so a 2-minute-old lock cannot belong to younger passes).
+        curlog="${BZ}/bzlogs/bztransmit/bztransmit$(date +%d).log"
+        fails=0
+        if [ -f "$curlog" ]; then
+            la="$(age_min "$curlog")"
+            [ -n "$la" ] && [ "$la" -le 5 ] \
+                && fails="$(tail -60 "$curlog" 2>/dev/null | grep -c "Failed to grab fourHourLock")"
+        fi
+        oldest="$(oldest_proc_min bztransmit)"
+        lock_age=""
+        [ -f "$LOCK" ] && lock_age="$(age_min "$LOCK")"
+        if [ "${fails:-0}" -ge 5 ] && [ -n "$lock_age" ] && [ "$lock_age" -ge 2 ] \
+           && { [ -z "$oldest" ] || [ "$oldest" -lt 2 ]; }; then
+            BAD "stale four-hour lock with bztransmit respawning against it (${fails} recent failures to grab it)"
+            NOTE "the lock outlived its owner - a restart or out-of-memory kill mid-pass -"
+            NOTE "and every new pass exits until it is removed."
+            if [ "$FIX" = 1 ]; then
+                rm -f "$LOCK" 2>/dev/null && FIXED "removed the stale four-hour lock - the next pass should proceed"
+            else
+                NOTE "re-run with --fix to clear the stale lock, or set ENABLE_WATCHDOG=true to handle it automatically."
+            fi
+        else
+            OK "no stall detected"
+        fi ;;
     WEDGE*)
         BAD "$status"
         if [ "$FIX" = 1 ]; then
