@@ -12,13 +12,22 @@
 #          logs again.
 #
 #   WEDGE  A stale four-hour lock is blocking every pass. When bztransmit dies
-#          mid-pass, usually an out-of-memory kill on a small host, its lock file
-#          outlives it and bzserv floods the log with "Failed to grab
-#          fourHourLock". Four conditions are required: the lock present, older
-#          than LOCK_AGE_MIN, repeated failures in the log, and no bztransmit
-#          running. A live pass holding the lock is therefore never flagged.
+#          mid-pass - an out-of-memory kill, or a container restart that takes
+#          the lock holder with it - the lock file outlives it and the log
+#          floods with "Failed to grab fourHourLock". Required in every case:
+#          the lock present, repeated failures in the log, and no bztransmit
+#          that has been running for LOCK_GRACE_MIN minutes. A pass writes its
+#          lock only after it starts, so a lock older than the grace window
+#          cannot belong to any process younger than it, and a live holder is
+#          never second-guessed. On top of that, either the lock is older than
+#          LOCK_AGE_MIN, or it is older than LOCK_GRACE_MIN with failures
+#          still being written now. The second form catches the respawn loop:
+#          bzserv relaunches bztransmit every few seconds, each attempt dies
+#          on the lock, and the constant restarts keep every mtime fresh, so
+#          only process age can corroborate it. It is a WEDGE rather than a
+#          HANG because there is nothing to kill, only a lock to remove.
 #
-# Env: STALL_MIN (20), LOCK_AGE_MIN (245), LOCK_FAILS (5).
+# Env: STALL_MIN (20), LOCK_AGE_MIN (245), LOCK_FAILS (5), LOCK_GRACE_MIN (2).
 set -u
 
 usage() {
@@ -52,6 +61,7 @@ LOCK="${BZ}/bzbackup/lock_bzfileid_4_hour_lock.lck"
 STALL_MIN="${STALL_MIN:-20}"
 LOCK_AGE_MIN="${LOCK_AGE_MIN:-245}"     # the lock covers 4h; past that a live holder would have renewed or finished
 LOCK_FAILS="${LOCK_FAILS:-5}"
+LOCK_GRACE_MIN="${LOCK_GRACE_MIN:-2}"   # a pass must have run this long before it is assumed to own the lock
 
 # The thresholds feed arithmetic below and must be plain positive integers. A
 # suffixed value such as "20m" would otherwise fail in a way that reads as a
@@ -60,6 +70,7 @@ int_or() { case "$1" in ''|*[!0-9]*) echo "$2" ;; *) echo "$1" ;; esac; }
 STALL_MIN="$(int_or "$STALL_MIN" 20)"
 LOCK_AGE_MIN="$(int_or "$LOCK_AGE_MIN" 245)"
 LOCK_FAILS="$(int_or "$LOCK_FAILS" 5)"
+LOCK_GRACE_MIN="$(int_or "$LOCK_GRACE_MIN" 2)"
 
 # Match a process by command line without needing procps in the image.
 proc_match() {
@@ -71,6 +82,32 @@ proc_match() {
 }
 
 newest_log() { ls -t "${TLOG}"/*.log 2>/dev/null | head -1; }
+
+# Minutes since the oldest process matching $1 started, or empty when none
+# match. Start times come from the starttime field of /proc/PID/stat measured
+# against /proc/uptime, not from /proc/PID mtimes, which some kernels refresh.
+# A start time that cannot be read reports as very old: the caller uses this to
+# decide whether a live bztransmit could own the lock, and that question must
+# fail toward "it could".
+oldest_proc_min() {
+    up="$(cut -d. -f1 /proc/uptime 2>/dev/null)"
+    tick="$(getconf CLK_TCK 2>/dev/null)"
+    case "$up" in ''|*[!0-9]*) up="" ;; esac
+    case "$tick" in ''|*[!0-9]*) tick=100 ;; esac
+    oldest=""
+    for c in /proc/[0-9]*/cmdline; do
+        [ -r "$c" ] || continue
+        tr '\0' ' ' < "$c" 2>/dev/null | grep -q -- "$1" || continue
+        # starttime is the 20th field after the parenthesised comm, which can
+        # itself contain spaces, so strip through the last ")" first.
+        st="$(sed 's/^.*) //' "${c%/cmdline}/stat" 2>/dev/null | awk '{print $20}')"
+        case "$st" in ''|*[!0-9]*) st="" ;; esac
+        if [ -z "$up" ] || [ -z "$st" ]; then echo 99999; return; fi
+        age=$(( ( up - st / tick ) / 60 ))
+        if [ -z "$oldest" ] || [ "$age" -gt "$oldest" ]; then oldest="$age"; fi
+    done
+    echo "$oldest"
+}
 
 # Age of a file in whole minutes, or empty if it cannot be read. This uses stat
 # and epoch arithmetic rather than find's -newermt date parsing. A stall check has
@@ -96,14 +133,29 @@ if proc_match -threadpush && [ -n "$log" ]; then
 fi
 
 # --- WEDGE: a stale four-hour lock is blocking every pass -------------------------
-if [ -f "$LOCK" ] && ! proc_match bztransmit; then
+if [ -f "$LOCK" ]; then
+    oldest="$(oldest_proc_min bztransmit)"
     lock_age="$(age_min "$LOCK")"
-    if [ -n "$lock_age" ] && [ "$lock_age" -ge "$LOCK_AGE_MIN" ]; then
+    # Nothing to decide unless every live bztransmit is younger than the grace
+    # window: a lock older than the window cannot belong to any of them.
+    if [ -n "$lock_age" ] && { [ -z "$oldest" ] || [ "$oldest" -lt "$LOCK_GRACE_MIN" ]; }; then
         fails=0
         [ -n "$log" ] && fails=$(tail -40 "$log" 2>/dev/null | grep -c "Failed to grab fourHourLock")
         if [ "${fails:-0}" -ge "$LOCK_FAILS" ]; then
-            echo "WEDGE stale four-hour lock, ${fails} recent lock failures, no bztransmit running"
-            exit 1
+            if [ "$lock_age" -ge "$LOCK_AGE_MIN" ]; then
+                echo "WEDGE stale four-hour lock, ${fails} recent lock failures, no bztransmit old enough to own it"
+                exit 1
+            fi
+            # The respawn loop: bzserv relaunches bztransmit every few seconds
+            # and each attempt dies on the lock. The failures must still be
+            # being written now, or a younger-than-LOCK_AGE_MIN lock stays a
+            # live pass's business.
+            log_age="$(age_min "$log")"
+            if [ "$lock_age" -ge "$LOCK_GRACE_MIN" ] \
+               && [ -n "$log_age" ] && [ "$log_age" -le "$LOCK_GRACE_MIN" ]; then
+                echo "WEDGE stale four-hour lock, bztransmit respawning against it (${fails} recent lock failures)"
+                exit 1
+            fi
         fi
     fi
 fi
