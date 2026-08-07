@@ -9,7 +9,9 @@
   <Privileged>false</Privileged>
   <Support>https://forums.unraid.net/topic/199284-support-backblaze-64-backblaze-personal-backup-10x-64-bit-under-wine/</Support>
   <Project>https://github.com/iamfoz/backblaze-64-personal-wine-container</Project>
-  <Overview>Backblaze Personal Backup running under Wine (64-bit Windows environment) on Ubuntu 24.04. Provides a web-based GUI via browser or VNC, and keeps Backblaze updated to the latest version on each restart. Includes a live upload dashboard (bb-monitor, run from the container console), backup-aware health status on this Docker page, optional automatic recovery from stalled backups, and built-in diagnostic tools (bb-doctor, bb-report, bb-version).</Overview>
+  <Overview>Backblaze Personal Backup running under Wine (64-bit Windows environment) on Ubuntu 24.04. Provides a web-based GUI via browser or VNC, and keeps Backblaze updated to the latest version on each restart. Includes a live upload dashboard (bb-monitor, run from the container console), backup-aware health status on this Docker page, optional automatic recovery from stalled backups, and built-in diagnostic tools (bb-doctor, bb-report, bb-version).
+
+Note on the beta tag: the :beta image carries two patches to Wine's socket code that are not in the stable images. One is submitted upstream. The other is a workaround that deliberately differs from how Windows behaves, is not being submitted, and will be removed once the proper fix lands in Wine. It is there because it roughly triples upload throughput on high-latency connections. Use the stable tags unless upload speed is the reason you are here.</Overview>
   <Category>Backup:</Category>
   <WebUI>http://[IP]:[PORT:5800]/</WebUI>
   <Icon>https://cdn.jsdelivr.net/gh/selfhst/icons/png/backblaze.png</Icon>

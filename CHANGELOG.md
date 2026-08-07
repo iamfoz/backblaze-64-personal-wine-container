@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [beta] - 2026-08-07
+
+Beta channel only (`:beta` tag), carrying everything in 10.2.1 plus the patch below. The
+`:beta` tag is mutable, so each published build stamps a number: `bb-version` reports it
+and the monitors show it as `beta+<n>`. Quote that number in a bug report.
+
+### Added
+- A second Wine patch, `patches/wine-fdwrite-rearm.patch`, re-arming FD_WRITE after a
+  poll observes that a socket cannot accept a send. Once FD_WRITE has been reported,
+  Wine masks POLLOUT for that socket and suppresses further notification, so an
+  application waiting on the event sleeps until its own timeout even though the socket
+  drained milliseconds later. Measured against the existing writability patch alone on a
+  live backup: aggregate upload rose from 13.0-13.9 Mbit/s to 40.9, at an unchanged
+  per-connection ceiling, so the gain is recovered idle time rather than a faster pipe.
+  **This is a workaround, not a fix.** It diverges from Windows, which does not re-signal
+  FD_WRITE on a poll-observed not-writable, and it is deliberately not being submitted
+  upstream. The upstream work is a larger redesign being discussed with the Wine
+  maintainers; this patch will be dropped as soon as that lands. Only `Dockerfile.beta`
+  applies it, and CI fails a stable build if a patched `wineserver` ever appears in one.
+
+## [10.2.1] - 2026-08-07
+
+### Added
+- Build numbers: every image stamps `build=` into `/etc/bb-build` from the CI run
+  number, so a mutable tag can be pinned down in a bug report. `bb-version` prints it,
+  and `bb-monitor` shows it in the status bar as `v10.2.1+<n>`.
+
+### Fixed
+- `bb-monitor` showed completion times in UTC while its own clock showed local time, so
+  the two disagreed by an hour in the same panel wherever the container's `TZ` is not
+  UTC. Backblaze stamps its logs in UTC regardless of `TZ`; the completion times are now
+  converted for display while the internal duration arithmetic stays in UTC.
+
 ## [10.2.0] - 2026-08-05
 
 ### Added

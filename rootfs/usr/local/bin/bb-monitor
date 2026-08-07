@@ -35,7 +35,11 @@ def _build_label():
         return ""
     v=info.get("version","").strip()
     if not v: return ""
-    return "v"+v if v[0].isdigit() else v
+    label="v"+v if v[0].isdigit() else v
+    # The :beta tag is mutable, so "beta" alone identifies nothing. The build number
+    # (CI run) makes one published beta distinguishable from the next in a bug report.
+    b=info.get("build","").strip()
+    return "%s+%s"%(label,b) if b and b!="0" else label
 BUILD_LABEL=_build_label()
 
 # ---- helpers ------------------------------------------------------------------
@@ -51,6 +55,19 @@ def human(n):
 
 def _secs(t):
     hh,mm,ss=t.split(":"); return int(hh)*3600+int(mm)*60+int(ss)
+
+def _local_hms(line,fallback):
+    """Backblaze stamps its own log lines in UTC whatever the container's TZ is.
+    Returns (utc_hms, local_hms): callers keep the UTC value for span/duration
+    arithmetic, which must stay self-consistent, and show the local one."""
+    m=re.match(r'^(\d{4}-\d{2}-\d{2}) (\d\d:\d\d:\d\d)',line)
+    if not m: return fallback,fallback
+    utc_hms=m.group(2)
+    try:
+        epoch=calendar.timegm(time.strptime(m.group(1)+" "+utc_hms,"%Y-%m-%d %H:%M:%S"))
+        return utc_hms,time.strftime("%H:%M:%S",time.localtime(epoch))
+    except ValueError:
+        return utc_hms,utc_hms
 
 def rate_str(nbytes,secs,kbit_fallback=0):
     """MB/s above 1024 kbit/s, else kbit/s. Falls back to the logged rate."""
@@ -221,7 +238,8 @@ def gather(prev):
         line=newest_line(thr)
         if line is None or line==seen: continue   # no NEW completion line: skip
         m=re.search(r'(\d\d:\d\d:\d\d)',line)
-        tstr=m.group(1) if m else time.strftime("%H:%M:%S")
+        fallback=m.group(1) if m else time.strftime("%H:%M:%S")
+        tstr,tstr_local=_local_hms(line,fallback)   # tstr stays UTC for the span maths
         end=_secs(tstr)
         mn=re.search(r'elapsedSec=(\d+).*?numBytes=(\d+) bytes',line)
         el=int(mn.group(1)) if mn else 0
@@ -238,11 +256,11 @@ def gather(prev):
                 b={"chunked":True,"name":nm,"done":0,"total":max(1,-(-fs//part)),
                    "bytes":0,"first":end-el,"last":end}
                 _recent.append(b)
-            b["done"]+=1; b["bytes"]+=nb; b["t"]=tstr
+            b["done"]+=1; b["bytes"]+=nb; b["t"]=tstr_local
             b["first"]=min(b["first"],end-el); b["last"]=max(b["last"],end)
             _recent.remove(b); _recent.append(b)   # keep the active bundle in view
         else:
-            _recent.append({"chunked":False,"name":nm,"thr":thr,"t":tstr,
+            _recent.append({"chunked":False,"name":nm,"thr":thr,"t":tstr_local,
                             "bytes":fs or nb,"secs":el,"kbit":kb})
     del _recent[:-8]
     _inflight=cur

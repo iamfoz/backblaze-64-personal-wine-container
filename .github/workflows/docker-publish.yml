@@ -116,6 +116,7 @@ jobs:
           file: ./Dockerfile.${{ matrix.dockerfile }}
           build-args: |
             BUILD_REV=${{ github.sha }}
+            BUILD_NUMBER=${{ github.run_number }}
           load: true
           tags: bb-smoketest:${{ matrix.dockerfile }}
           platforms: linux/amd64
@@ -124,6 +125,24 @@ jobs:
 
       - name: Smoke test the built image
         run: ./.github/smoke-test.sh bb-smoketest:${{ matrix.dockerfile }}
+
+      # The stable images must never carry the patched Wine. They install
+      # winehq-stable from apt and reference nothing in patches/, so today this
+      # holds by construction - this step keeps it holding. The beta's Wine
+      # workaround diverges from Windows on purpose and is beta-only; a stable
+      # image that picked it up would be shipping that divergence to users who
+      # never opted into it.
+      - name: Assert the stable image carries unpatched Wine
+        run: |
+          set -eu
+          docker run --rm --entrypoint sh bb-smoketest:${{ matrix.dockerfile }} -c '
+            ws="$(readlink -f "$(command -v wineserver)")"
+            if grep -qa sock_stream_send_ready "$ws"; then
+              echo "FAIL: $ws contains the beta Wine patch; it must stay beta-only" >&2
+              exit 1
+            fi
+            echo "OK: $ws is unpatched"
+          '
 
       # Push only once the smoke test has passed (and never on a pull request).
       # The layers are already in the cache the test build populated, so this step
@@ -137,6 +156,7 @@ jobs:
           build-args: |
             DOCKER_IMAGE_VERSION=${{ steps.meta.outputs.version }}
             BUILD_REV=${{ github.sha }}
+            BUILD_NUMBER=${{ github.run_number }}
           push: ${{ github.event_name != 'pull_request' }}
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
@@ -187,6 +207,7 @@ jobs:
           build-args: |
             DOCKER_IMAGE_VERSION=beta
             BUILD_REV=${{ github.sha }}
+            BUILD_NUMBER=${{ github.run_number }}
           load: true
           tags: bb-beta-test:local
           platforms: linux/amd64
@@ -203,6 +224,14 @@ jobs:
           # Wine into /opt/wine. If that is missing, the patch is not in the image.
           docker run --rm --entrypoint /opt/wine/bin/wine bb-beta-test:local --version
           docker run --rm --entrypoint sh bb-beta-test:local -c 'grep -q "^variant=beta" /etc/bb-build'
+          # Fingerprint the writability patch in the built binary. The build already
+          # fails on `git apply --check`, but that only proves the patch applied to the
+          # source; this proves the result reached the shipped wineserver.
+          docker run --rm --entrypoint sh bb-beta-test:local -c \
+            'grep -ac sock_stream_send_ready /opt/wine/bin/wineserver | grep -qv "^0$"'
+          # The FD_WRITE re-arm adds no new symbol, so it has no binary fingerprint.
+          # Its guard is the `git apply --check` at build time, which fails the build
+          # if the context no longer matches.
 
       - name: Push the beta image
         uses: docker/build-push-action@v7
@@ -212,6 +241,7 @@ jobs:
           build-args: |
             DOCKER_IMAGE_VERSION=beta
             BUILD_REV=${{ github.sha }}
+            BUILD_NUMBER=${{ github.run_number }}
           push: true
           platforms: linux/amd64
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:beta

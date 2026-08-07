@@ -89,8 +89,11 @@ ENV DOCKER_IMAGE_VERSION=${DOCKER_IMAGE_VERSION}
 # together inside an image, so "which build is this" is the question worth answering
 # in a bug report, and a single source cannot drift out of step.
 ARG BUILD_REV=unknown
-RUN printf 'version=%s\nrevision=%s\nvariant=%s\nbuilt=%s\n' \
-        "${DOCKER_IMAGE_VERSION:-dev}" "${BUILD_REV}" "ubuntu26" \
+# BUILD_NUMBER is the CI run number. The :beta tag is mutable, so without it a
+# published beta cannot be told apart from the one before it in a bug report.
+ARG BUILD_NUMBER=0
+RUN printf 'version=%s\nrevision=%s\nbuild=%s\nvariant=%s\nbuilt=%s\n' \
+        "${DOCKER_IMAGE_VERSION:-dev}" "${BUILD_REV}" "${BUILD_NUMBER}" "ubuntu26" \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /etc/bb-build
 
 EXPOSE 5900

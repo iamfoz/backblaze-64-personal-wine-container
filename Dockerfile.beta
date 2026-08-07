@@ -47,12 +47,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /wine
 COPY patches/wine-writability-fix.patch /wine/patches/
+COPY patches/wine-fdwrite-rearm.patch /wine/patches/
 # Partial (blobless) clone keeps the checkout small while still allowing WINE_REF
 # to be any tag, branch, or exact commit; blobs are fetched on checkout.
+#
+# Order matters: wine-fdwrite-rearm.patch extends the block that
+# wine-writability-fix.patch introduces, so it must be applied second. Each gets its
+# own --check first, so a context mismatch fails the build with the offending patch
+# named rather than half-applying. The patches are authored against Wine master while
+# WINE_REF pins a release, so a --check failure after a WINE_REF bump usually means
+# the context moved and the patch needs regenerating, not that the fix is wrong.
 RUN git clone --filter=blob:none https://gitlab.winehq.org/wine/wine.git src \
  && git -C src checkout "${WINE_REF}" \
  && git -C src apply --check /wine/patches/wine-writability-fix.patch \
- && git -C src apply /wine/patches/wine-writability-fix.patch
+ && git -C src apply /wine/patches/wine-writability-fix.patch \
+ && git -C src apply --check /wine/patches/wine-fdwrite-rearm.patch \
+ && git -C src apply /wine/patches/wine-fdwrite-rearm.patch
 
 # Cap build parallelism by available RAM. Wine's parallel link steps are
 # memory-heavy, so -j<all-cores> on a high-core / modest-RAM host exhausts memory
@@ -153,8 +163,11 @@ ENV DOCKER_IMAGE_VERSION=${DOCKER_IMAGE_VERSION}
 # together inside an image, so "which build is this" is the question worth answering
 # in a bug report, and a single source cannot drift out of step.
 ARG BUILD_REV=unknown
-RUN printf 'version=%s\nrevision=%s\nvariant=%s\nbuilt=%s\n' \
-        "${DOCKER_IMAGE_VERSION:-dev}" "${BUILD_REV}" "beta-ubuntu26" \
+# BUILD_NUMBER is the CI run number. The :beta tag is mutable, so without it a
+# published beta cannot be told apart from the one before it in a bug report.
+ARG BUILD_NUMBER=0
+RUN printf 'version=%s\nrevision=%s\nbuild=%s\nvariant=%s\nbuilt=%s\n' \
+        "${DOCKER_IMAGE_VERSION:-dev}" "${BUILD_REV}" "${BUILD_NUMBER}" "beta-ubuntu26" \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /etc/bb-build
 
 EXPOSE 5900
