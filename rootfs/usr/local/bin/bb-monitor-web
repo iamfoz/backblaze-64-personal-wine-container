@@ -1,0 +1,994 @@
+#!/usr/bin/env python3
+"""bb-monitor-web: same live upload dashboard as bb-monitor, served over HTTP.
+
+Reuses the exact same data sources as bb-monitor (proc, cgroup, and
+Backblaze's own bzdata log/XML files) -- no curses, no subprocesses.
+A background thread gathers a fresh snapshot every INT seconds; the HTTP
+server just hands out the latest snapshot as JSON, plus a static HTML/JS
+page that polls it and redraws.
+
+In the container image this runs as a supervised service bound to loopback,
+with nginx proxying /monitor/ to it on the existing web port (5800). That way
+it inherits whatever WEB_AUTHENTICATION and SECURE_CONNECTION the user has
+configured for the GUI, instead of exposing backed-up file names on a second
+open port.
+
+Standalone, for testing:
+    python3 bb-monitor-web --host 127.0.0.1 --port 8099
+"""
+import argparse, calendar, json, os, re, sys, threading, time, unicodedata
+from collections import deque
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
+
+# ---- config (identical to bb-monitor) ------------------------------------
+BZ = "/config/wine/dosdevices/c:/ProgramData/Backblaze/bzdata"
+LOGDIR = BZ + "/bzlogs/bztransmit"
+BZSTAT_TOTAL = BZ + "/bzreports/bzstat_totalbackup.xml"
+BZSTAT_REMAIN = BZ + "/bzreports/bzstat_remainingbackup.xml"
+TDIR = BZ + "/bzthread"
+PROC = "/proc"
+NETDEV = "/proc/net/dev"
+MEMINFO = "/proc/meminfo"
+CG2 = "/sys/fs/cgroup"
+CG1 = "/sys/fs/cgroup/memory"
+INT = 2.0
+MPLOG = "/tmp/bb_multipart_bzdone.log"
+
+_logged = set()
+_inflight = {}
+_recent = []
+_sess = 0
+_rate_ema = 0.0
+# Throughput history for the ETA: (bytes, seconds) per genuinely-completed
+# transfer (a whole file, or a whole multi-part file once all its parts are
+# in). Weighting by actual bytes/duration over the last several completions
+# is far steadier than the live 2s network-counter sample.
+_completed_hist = deque(maxlen=10)
+
+_lock = threading.Lock()
+_latest = {"ok": False, "error": "warming up"}
+START_TIME = time.time()
+
+
+APP_NAME = "Backblaze 64"
+APP_COMPONENT = "Upload Monitor"
+APP_COPYRIGHT = "Copyright \u00a9 2026 Martyn Forryan"
+APP_LICENSE = "GNU Affero General Public License v3.0"
+APP_URL = "https://github.com/iamfoz/backblaze-64-personal-wine-container"
+
+# Contributed work credited in the About tab: (forum handle, one-line description).
+# An empty list hides the Thanks section, so a missing handle never ships as
+# placeholder text.
+CREDITS = [("rogman", "web monitor and theming concept")]
+
+
+def _build_info():
+    """Fields stamped into /etc/bb-build at image build time: version, revision,
+    build, variant, built. Single source for every bb-* tool, so a bug report
+    names the exact image rather than a per-tool version that can drift."""
+    try:
+        with open("/etc/bb-build") as fh:
+            return {k: v.strip() for k, v in
+                    (l.split("=", 1) for l in fh.read().splitlines() if "=" in l)}
+    except OSError:
+        return {}
+
+
+def _build_label(info):
+    v = info.get("version", "")
+    if not v:
+        return ""
+    label = "v" + v if v[0].isdigit() else v
+    # The :beta tag is mutable, so "beta" alone identifies nothing. The build
+    # number (CI run) tells one published beta from the next in a bug report.
+    b = info.get("build", "")
+    return "%s+%s" % (label, b) if b and b != "0" else label
+
+
+BUILD_INFO = _build_info()
+BUILD_LABEL = _build_label(BUILD_INFO)
+
+# Static, so it rides along with every payload including the error ones. The
+# About tab is most useful precisely when collection is broken and someone needs
+# to quote a build in a bug report.
+ABOUT = {
+    "name": APP_NAME,
+    "component": APP_COMPONENT,
+    "copyright": APP_COPYRIGHT,
+    "license": APP_LICENSE,
+    "url": APP_URL,
+    "build": BUILD_INFO,
+    "credits": [{"who": w, "what": t} for w, t in CREDITS],
+}
+
+# Restated now ABOUT exists, so even the pre-first-sample payload carries it.
+_latest = {"ok": False, "error": "warming up", "about": ABOUT}
+
+
+# ---- helpers (identical to bb-monitor) -----------------------------------
+def read(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+def human(n):
+    if n >= 1073741824:
+        return "%.1f GB" % (n / 1073741824)
+    if n >= 1048576:
+        return "%.0f MB" % (n / 1048576)
+    return "%d KB" % (n / 1024)
+
+
+def eta_str(secs):
+    """Human ETA from a seconds estimate. None = rate too low/unknown to project."""
+    if secs is None:
+        return "stalled"
+    if secs <= 0:
+        return "done"
+    secs = int(secs)
+    d, rem = divmod(secs, 86400)
+    h, rem = divmod(rem, 3600)
+    m, _ = divmod(rem, 60)
+    if d > 0:
+        return "%dd %dh" % (d, h)
+    if h > 0:
+        return "%dh %dm" % (h, m)
+    if m > 0:
+        return "%dm" % m
+    return "<1m"
+
+
+def _secs(t):
+    hh, mm, ss = t.split(":")
+    return int(hh) * 3600 + int(mm) * 60 + int(ss)
+
+
+def _local_hms(line, fallback):
+    """Backblaze's own log lines are stamped in UTC regardless of the
+    container's TZ setting. Returns (utc_hms, local_hms) so callers can keep
+    using the UTC value for self-consistent internal span/duration math
+    while showing the local value to the user."""
+    m = re.match(r'^(\d{4}-\d{2}-\d{2}) (\d\d:\d\d:\d\d)', line)
+    if not m:
+        return fallback, fallback
+    utc_hms = m.group(2)
+    try:
+        epoch = calendar.timegm(time.strptime(m.group(1) + " " + utc_hms, "%Y-%m-%d %H:%M:%S"))
+        return utc_hms, time.strftime("%H:%M:%S", time.localtime(epoch))
+    except ValueError:
+        return utc_hms, utc_hms
+
+
+def rate_str(nbytes, secs, kbit_fallback=0):
+    if secs > 0 and nbytes > 0:
+        kbit = nbytes / secs * 8 / 1000.0
+        return "%.2f MB/s" % (nbytes / secs / 1048576) if kbit > 1024 else "%d kbit/s" % kbit
+    if kbit_fallback > 1024:
+        return "%.2f MB/s" % (kbit_fallback / 8192.0)
+    return "%d kbit/s" % kbit_fallback if kbit_fallback else ""
+
+
+def rec_cols(r):
+    if r["chunked"]:
+        span = r["last"] - r["first"]
+        if span < 0:
+            span += 86400
+        return ("%d/%d" % (r["done"], r["total"]), human(r["bytes"]), rate_str(r["bytes"], span))
+    return ("thr%d" % r["thr"], human(r["bytes"]) if r["bytes"] else "?",
+             rate_str(r["bytes"], r["secs"], r["kbit"]))
+
+
+# ---- data sources (identical to bb-monitor) ------------------------------
+def scan_procs():
+    thr = 0
+    xmls = set()
+    has_fl = False
+    has_bt = False
+    try:
+        pids = [p for p in os.listdir(PROC) if p.isdigit()]
+    except OSError:
+        return 0, [], False, False
+    for p in pids:
+        try:
+            with open(os.path.join(PROC, p, "cmdline"), "rb") as fh:
+                cmd = fh.read().decode("utf-8", "replace").replace("\0", " ")
+        except OSError:
+            continue
+        if "bztransmit" in cmd:
+            has_bt = True
+        if "bzfilelist" in cmd:
+            has_fl = True
+        if "-threadpush" in cmd:
+            thr += 1
+            xmls.update(re.findall(r'bzt_\w+_bzt\.xml', cmd))
+    return thr, sorted(xmls), has_fl, has_bt
+
+
+def tail_log(n=800):
+    try:
+        fs = [os.path.join(LOGDIR, f) for f in os.listdir(LOGDIR) if f.endswith(".log")]
+        if not fs:
+            return ""
+        p = max(fs, key=os.path.getmtime)
+        with open(p, "rb") as fh:
+            fh.seek(0, 2)
+            sz = fh.tell()
+            fh.seek(max(0, sz - 262144))
+            return "\n".join(fh.read().decode("utf-8", "replace").splitlines()[-n:])
+    except OSError:
+        return ""
+
+
+def _tx():
+    t = 0
+    for ln in read(NETDEV).splitlines():
+        f = ln.replace(":", " ").split()
+        if len(f) >= 10 and f[0] != "lo" and f[1].isdigit():
+            try:
+                t += int(f[9])
+            except ValueError:
+                pass
+    return t
+
+
+def mem_info(host_total):
+    for cur, mx, stat, key in (
+        (CG2 + "/memory.current", CG2 + "/memory.max", CG2 + "/memory.stat", "inactive_file"),
+        (CG1 + "/memory.usage_in_bytes", CG1 + "/memory.limit_in_bytes", CG1 + "/memory.stat", "total_inactive_file"),
+    ):
+        u = read(cur).strip()
+        if not u.isdigit():
+            continue
+        m = re.search(r'^%s (\d+)' % key, read(stat), re.M)
+        used = max(0, int(u) - (int(m.group(1)) if m else 0))
+        l = read(mx).strip()
+        lim = int(l) if l.isdigit() else 0
+        if not 0 < lim < (1 << 60):
+            lim = host_total
+        if lim > 0:
+            return (used, lim, used * 100.0 / lim)
+    return None
+
+
+def backup_totals():
+    """Overall backup progress: total selected for backup vs. still remaining,
+    from Backblaze's own bzstat_totalbackup.xml / bzstat_remainingbackup.xml
+    (both rewritten periodically by the client itself, independent of any
+    single upload session)."""
+    tot_txt = read(BZSTAT_TOTAL)
+    rem_txt = read(BZSTAT_REMAIN)
+    tot_m = re.search(r'totnumbytesforbackup="(\d+)"', tot_txt)
+    rem_m = re.search(r'remainingnumbytesforbackup="(\d+)"', rem_txt)
+    if not (tot_m and rem_m):
+        return None
+    tot = int(tot_m.group(1))
+    rem = min(int(rem_m.group(1)), tot)
+    done = max(0, tot - rem)
+    pct = (done / tot * 100.0) if tot > 0 else 0.0
+
+    tot_f_m = re.search(r'totnumfilesforbackup="(\d+)"', tot_txt)
+    rem_f_m = re.search(r'remainingnumfilesforbackup="(\d+)"', rem_txt)
+    tot_files = int(tot_f_m.group(1)) if tot_f_m else None
+    rem_files = int(rem_f_m.group(1)) if rem_f_m else None
+    done_files = (tot_files - rem_files) if (tot_files is not None and rem_files is not None) else None
+
+    return {"total": tot, "done": done, "pct": pct, "total_files": tot_files,
+             "done_files": done_files, "remaining_files": rem_files}
+
+
+def uptime_str():
+    secs = int(time.time() - START_TIME)
+    d, rem = divmod(secs, 86400)
+    h, rem = divmod(rem, 3600)
+    m, _ = divmod(rem, 60)
+    return "%02dD:%02dH:%02dM" % (d, h, m)
+
+
+# ---- data collection (identical logic to bb-monitor's gather()) ---------
+def gather(prev):
+    global _inflight, _recent, _sess
+    o = {}
+    ts = time.time()
+
+    mi = read(MEMINFO)
+    m = re.search(r'MemTotal:\s+(\d+)', mi)
+    host_total = int(m.group(1)) * 1024 if m else 0
+    mt = re.search(r'SwapTotal:\s+(\d+)', mi)
+    mf = re.search(r'SwapFree:\s+(\d+)', mi)
+    o["swap"] = None
+    if mt and mf and int(mt.group(1)) > 0:
+        tot = int(mt.group(1)) * 1024
+        used = tot - int(mf.group(1)) * 1024
+        o["swap"] = (used, tot, used * 100.0 / tot)
+    o["mem"] = mem_info(host_total)
+    o["backup"] = backup_totals()
+
+    threads, xmls, has_fl, has_bt = scan_procs()
+    o["threads"] = threads
+    o["state"] = ("Transmitting" if threads else
+                  "Scanning" if has_fl else
+                  "Preparing" if has_bt else "Idle")
+
+    now = _tx()
+    if prev and now > 0 and now >= prev[0] and ts > prev[1]:
+        o["rate"] = (now - prev[0]) / (ts - prev[1]) / 1048576
+        _sess += now - prev[0]
+    else:
+        o["rate"] = 0.0
+    o["_tx"] = (now, ts) if now > 0 else prev
+    o["sess"] = _sess
+
+    # ETA rate: weighted average of (bytes / duration) over the last several
+    # *completed* transfers, not the raw 2s network-counter sample. Individual
+    # completions are real measured data points, so this only moves when a
+    # new file actually finishes -- no more jitter from bursty in-flight
+    # sampling. A live EMA is kept only as a fallback for the first minute or
+    # so, before any completions have landed yet.
+    global _rate_ema
+    if prev is not None:
+        _rate_ema = 0.15 * o["rate"] + 0.85 * _rate_ema
+    if o.get("backup"):
+        remaining = max(0, o["backup"]["total"] - o["backup"]["done"])
+        o["backup"]["remaining"] = remaining
+        hist_bytes = sum(b for b, s in _completed_hist)
+        hist_secs = sum(s for b, s in _completed_hist)
+        rate_bps = (hist_bytes / hist_secs) if hist_secs > 0 else (_rate_ema * 1048576)
+        if remaining == 0:
+            o["backup"]["eta_seconds"] = 0
+        elif rate_bps > 1e-6:
+            o["backup"]["eta_seconds"] = remaining / rate_bps
+        else:
+            o["backup"]["eta_seconds"] = None
+        o["backup"]["eta_samples"] = len(_completed_hist)
+
+    blob = tail_log()
+    comps = [l for l in blob.splitlines() if "Leaving bztrans_thread_push" in l]
+    times = [_secs(m.group(1)) for l in comps for m in [re.search(r'(\d\d:\d\d:\d\d)', l)] if m]
+    o["chunks"] = sum(1 for t in times if (times[-1] - t) % 86400 <= 60) if times else 0
+    sb = ss = 0
+    for l in comps[-20:]:
+        m = re.search(r'elapsedSec=(\d+).*?numBytes=(\d+) bytes', l)
+        if m:
+            ss += int(m.group(1))
+            sb += int(m.group(2))
+    ptbps = int(sb / ss) if ss > 0 else 175000
+
+    def newest_line(thr):
+        return next((l for l in reversed(comps)
+                     if thr >= 0 and re.search(r'which_threadStr=0*%d(?!\d)' % thr, l)), None)
+
+    files = []
+    cur = {}
+    for x in xmls:
+        xml = read(os.path.join(TDIR, x))
+        mp = re.search(r'numBytes_to_send_in_shm="(\d+)"', xml)
+        mg = re.search(r'gmt_started="(\d{14})"', xml)
+        mh = re.search(r'hex_encoded_bz_done_line="([0-9a-f]*)"', xml)
+        mw = re.search(r'which_thread="(\d+)"', xml)
+        if not (mp and mg and mh):
+            continue
+        try:
+            fields = bytes.fromhex(mh.group(1)).decode('utf-8', 'replace').rstrip("\n").split("\t")
+        except ValueError:
+            continue
+        win = fields[-1]
+        name = win.split("\\")[-1]
+        part = int(mp.group(1))
+        thr = int(mw.group(1)) if mw else -1
+        fsize = 0
+        if len(win) > 2 and win[1] == ":":
+            try:
+                fsize = os.path.getsize("/config/wine/dosdevices/%s:%s" % (win[0].lower(), win[2:].replace("\\", "/")))
+            except OSError:
+                pass
+        if fsize > part * 1.5 and name not in _logged:
+            _logged.add(name)
+            try:
+                with open(MPLOG, "a") as fh:
+                    fh.write("%s  file=%d part=%d ~parts=%d\n" % (time.strftime("%F %T"), fsize, part, -(-fsize // part)))
+                    for i, fl in enumerate(fields):
+                        fh.write("   [%02d] %r\n" % (i, fl))
+                    fh.write("\n")
+            except OSError:
+                pass
+        try:
+            el = ts - calendar.timegm(time.strptime(mg.group(1), "%Y%m%d%H%M%S"))
+        except ValueError:
+            el = 0
+        pct = min(99.0, max(0.0, el * ptbps / part * 100)) if part > 0 else 0
+        files.append((name, part, fsize, pct))
+        cur[x] = (name, fsize, part, thr, newest_line(thr))
+    o["files"] = files
+
+    for xb, (nm, fs, part, thr, seen) in _inflight.items():
+        if xb in cur and cur[xb][0] == nm:
+            continue
+        line = newest_line(thr)
+        if line is None or line == seen:
+            continue
+        m = re.search(r'(\d\d:\d\d:\d\d)', line)
+        fallback = m.group(1) if m else time.strftime("%H:%M:%S")
+        tstr, tstr_local = _local_hms(line, fallback)
+        end = _secs(tstr)
+        mn = re.search(r'elapsedSec=(\d+).*?numBytes=(\d+) bytes', line)
+        el = int(mn.group(1)) if mn else 0
+        nb = int(mn.group(2)) if mn else 0
+        if not nb:
+            mb = re.search(r'\((\d+) MBytes\)', line)
+            nb = int(mb.group(1)) * 1048576 if mb else 0
+        mk = re.search(r'kBitsPerSec=(\d+)', line)
+        kb = int(mk.group(1)) if mk else 0
+        if part > 0 and fs > part * 1.5:
+            b = next((r for r in _recent if r["chunked"] and r["name"] == nm and r["done"] < r["total"]), None)
+            if b is None:
+                b = {"chunked": True, "name": nm, "done": 0, "total": max(1, -(-fs // part)),
+                     "bytes": 0, "first": end - el, "last": end}
+                _recent.append(b)
+            b["done"] += 1
+            b["bytes"] += nb
+            b["t"] = tstr_local
+            b["first"] = min(b["first"], end - el)
+            b["last"] = max(b["last"], end)
+            _recent.remove(b)
+            _recent.append(b)
+            if b["done"] >= b["total"]:      # whole multi-part file now finished
+                span = b["last"] - b["first"]
+                if span < 0:
+                    span += 86400            # parts straddling midnight
+                if span > 0 and b["bytes"] > 0:
+                    _completed_hist.append((b["bytes"], span))
+        else:
+            _recent.append({"chunked": False, "name": nm, "thr": thr, "t": tstr_local,
+                             "bytes": fs or nb, "secs": el, "kbit": kb})
+            if el > 0 and (fs or nb) > 0:
+                _completed_hist.append((fs or nb, el))
+    del _recent[:-10]
+    _inflight = cur
+    o["recent"] = list(_recent)
+    return o
+
+
+# ---- JSON snapshot builder ------------------------------------------------
+def snapshot_to_json(d):
+    r = d["rate"]
+    mem = d["mem"]
+    swap = d["swap"]
+    files_out = []
+    for name, part, fsize, pct in d["files"]:
+        size_str = (human(fsize) + (" (chunked)" if fsize > part * 1.5 else "")) if fsize > 0 else "%d MB" % (part / 1048576)
+        files_out.append({"name": name, "pct": round(pct, 1), "size_str": size_str})
+    recent_out = []
+    for rr in d["recent"]:
+        th, size, rate = rec_cols(rr)
+        recent_out.append({"time": rr["t"], "thread": th, "size": size, "rate": rate, "name": rr["name"]})
+    return {
+        "ok": True,
+        "clock": time.strftime("%H:%M:%S"),
+        "threads": d["threads"],
+        "state": d["state"],
+        "rate_mb": round(r, 3),
+        "rate_str": "%.2f MB/s" % r,
+        "rate_mbit_str": "~%d Mbit/s" % (r * 8),
+        "chunks": d["chunks"],
+        "session_str": human(d["sess"]),
+        "mem": {"used_str": human(mem[0]), "total_str": human(mem[1]), "pct": round(mem[2], 1)} if mem else None,
+        "swap": {"used_str": human(swap[0]), "total_str": human(swap[1]), "pct": round(swap[2], 1)} if swap else None,
+        "backup": ({"used_str": human(d["backup"]["done"]), "total_str": human(d["backup"]["total"]),
+                     "pct": round(d["backup"]["pct"], 1),
+                     "files": ("%d/%d files" % (d["backup"]["done_files"], d["backup"]["total_files"]))
+                               if d["backup"]["done_files"] is not None else "",
+                     "eta": eta_str(d["backup"].get("eta_seconds")),
+                     "eta_samples": d["backup"].get("eta_samples", 0),
+                     "remaining_files": d["backup"].get("remaining_files")}
+                    if d.get("backup") else None),
+        "files": files_out,
+        "recent": recent_out,
+        "build_label": BUILD_LABEL,
+        "interval": INT,
+        "uptime": uptime_str(),
+        "about": ABOUT,
+    }
+
+
+def _loop():
+    prev = None
+    while True:
+        try:
+            d = gather(prev)
+            prev = d["_tx"]
+            js = snapshot_to_json(d)
+        except Exception as e:
+            js = {"ok": False, "error": str(e), "about": ABOUT}
+        with _lock:
+            global _latest
+            _latest = js
+        time.sleep(INT)
+
+
+# ---- HTTP server -----------------------------------------------------------
+INDEX_HTML = """<!doctype html>
+<html><head><meta charset="utf-8">
+<title>Backblaze 64 &bull; Upload Monitor</title>
+<link id="favicon" rel="icon" type="image/svg+xml" href="">
+<style>
+  :root{
+    /* Blue -- matches the original curses console */
+    --bg:#0a1830; --panel:#0e2148; --border:#39c5ff; --title:#39c5ff;
+    --text:#d7e6ff; --hi-bg:#d7e6ff; --hi-fg:#0a1830;
+    --good:#3ddc6b; --warn:#ffd23d; --bad:#ff5a5a;
+    --track-bg:#04101f; --track-border:#1c3a63; --scanline:0;
+  }
+  html[data-theme="dark"]{
+    --bg:#161616; --panel:#1e1e1e; --border:#6a9fd8; --title:#7fb2e5;
+    --text:#d4d4d4; --hi-bg:#d4d4d4; --hi-fg:#161616;
+    --good:#4ec9b0; --warn:#dcdcaa; --bad:#f14c4c;
+    --track-bg:#0c0c0c; --track-border:#3a3a3a; --scanline:0;
+  }
+  html[data-theme="matrix"]{
+    --bg:#000000; --panel:#020a02; --border:#00ff41; --title:#00ff41;
+    --text:#33ff66; --hi-bg:#00ff41; --hi-fg:#000000;
+    --good:#00ff41; --warn:#c6ff00; --bad:#ff3333;
+    --track-bg:#001400; --track-border:#0a4d1a; --scanline:1;
+  }
+  html[data-theme="amber"]{
+    --bg:#170f00; --panel:#1f1500; --border:#ffb000; --title:#ffb000;
+    --text:#ffbf33; --hi-bg:#ffb000; --hi-fg:#170f00;
+    --good:#ffb000; --warn:#ffcf5c; --bad:#ff5a3c;
+    --track-bg:#140d00; --track-border:#4d3600; --scanline:1;
+  }
+  html[data-theme="nord"]{
+    --bg:#2e3440; --panel:#333a48; --border:#88c0d0; --title:#8fbcbb;
+    --text:#e5e9f0; --hi-bg:#88c0d0; --hi-fg:#2e3440;
+    --good:#a3be8c; --warn:#ebcb8b; --bad:#bf616a;
+    --track-bg:#242933; --track-border:#4c566a; --scanline:0;
+  }
+  html[data-theme="dracula"]{
+    --bg:#282a36; --panel:#2f3140; --border:#bd93f9; --title:#ff79c6;
+    --text:#f8f8f2; --hi-bg:#bd93f9; --hi-fg:#282a36;
+    --good:#50fa7b; --warn:#f1fa8c; --bad:#ff5555;
+    --track-bg:#1e1f29; --track-border:#44475a; --scanline:0;
+  }
+  html[data-theme="solarized"]{
+    --bg:#002b36; --panel:#04333f; --border:#268bd2; --title:#2aa198;
+    --text:#93a1a1; --hi-bg:#268bd2; --hi-fg:#002b36;
+    --good:#859900; --warn:#b58900; --bad:#dc322f;
+    --track-bg:#00212a; --track-border:#0a4a5c; --scanline:0;
+  }
+  html[data-theme="gruvbox"]{
+    --bg:#282828; --panel:#32302f; --border:#fabd2f; --title:#fe8019;
+    --text:#ebdbb2; --hi-bg:#ebdbb2; --hi-fg:#282828;
+    --good:#b8bb26; --warn:#fabd2f; --bad:#fb4934;
+    --track-bg:#1d2021; --track-border:#504945; --scanline:0;
+  }
+  html[data-theme="onedark"]{
+    --bg:#282c34; --panel:#2c313c; --border:#61afef; --title:#c678dd;
+    --text:#abb2bf; --hi-bg:#abb2bf; --hi-fg:#282c34;
+    --good:#98c379; --warn:#e5c07b; --bad:#e06c75;
+    --track-bg:#21252b; --track-border:#3e4451; --scanline:0;
+  }
+  html[data-theme="tokyonight"]{
+    --bg:#1a1b26; --panel:#1f2335; --border:#7aa2f7; --title:#bb9af7;
+    --text:#c0caf5; --hi-bg:#c0caf5; --hi-fg:#1a1b26;
+    --good:#9ece6a; --warn:#e0af68; --bad:#f7768e;
+    --track-bg:#16161e; --track-border:#414868; --scanline:0;
+  }
+  html[data-theme="catppuccin"]{
+    --bg:#1e1e2e; --panel:#232634; --border:#89b4fa; --title:#cba6f7;
+    --text:#cdd6f4; --hi-bg:#cdd6f4; --hi-fg:#1e1e2e;
+    --good:#a6e3a1; --warn:#f9e2af; --bad:#f38ba8;
+    --track-bg:#181825; --track-border:#45475a; --scanline:0;
+  }
+  html[data-theme="monokai"]{
+    --bg:#272822; --panel:#2e2f26; --border:#66d9ef; --title:#a6e22e;
+    --text:#f8f8f2; --hi-bg:#f8f8f2; --hi-fg:#272822;
+    --good:#a6e22e; --warn:#e6db74; --bad:#f92672;
+    --track-bg:#1e1f1a; --track-border:#49483e; --scanline:0;
+  }
+  html[data-theme="cyberpunk"]{
+    --bg:#0d0221; --panel:#150a30; --border:#ff2ec4; --title:#05d9e8;
+    --text:#d1f7ff; --hi-bg:#05d9e8; --hi-fg:#0d0221;
+    --good:#39ff14; --warn:#ffe700; --bad:#ff2ec4;
+    --track-bg:#08011a; --track-border:#3d1b5c; --scanline:1;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:"Cascadia Mono","Consolas","Menlo",monospace;font-size:14px;
+       transition:background .25s,color .25s;position:relative;}
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:50;
+       opacity:var(--scanline);
+       background:repeating-linear-gradient(to bottom,rgba(255,255,255,0.035) 0px,rgba(255,255,255,0.035) 1px,transparent 1px,transparent 3px);}
+  #topbar,#footer{background:var(--hi-bg);color:var(--hi-fg);padding:4px 10px;
+       display:flex;justify-content:space-between;align-items:center;font-weight:bold;
+       transition:background .25s,color .25s;}
+  #footer{position:sticky;bottom:0;}
+  #topbar-right{display:flex;align-items:center;gap:12px;}
+  #theme-select{font-family:inherit;font-size:12px;font-weight:bold;background:var(--hi-fg);
+       color:var(--hi-bg);border:1px solid var(--hi-fg);border-radius:2px;padding:2px 4px;
+       cursor:pointer;}
+  main{padding:10px;max-width:1100px;margin:0 auto;}
+  .panel{border:1px solid var(--border);border-radius:2px;margin-bottom:12px;padding:10px 14px;
+       position:relative;background:var(--panel);transition:background .25s,border-color .25s;}
+  .panel > .ptitle{position:absolute;top:-10px;left:14px;background:var(--bg);
+       padding:0 6px;color:var(--title);font-weight:bold;transition:background .25s,color .25s;}
+  body.compact #panel-uploading,body.compact #panel-recent,
+  body.compact #topbar,body.compact #footer{display:none;}
+  body.compact main{padding:6px;max-width:none;}
+  body.compact #panel-status{margin-bottom:0;}
+  #status-grid{display:flex;flex-wrap:wrap;gap:6px 26px;padding-top:6px;}
+  .stat{white-space:nowrap;}
+  .good{color:var(--good);} .warn{color:var(--warn);} .bad{color:var(--bad);}
+  .gauge{display:inline-flex;align-items:center;gap:6px;}
+  .gauge .track{width:120px;height:12px;background:var(--track-bg);border:1px solid var(--track-border);position:relative;overflow:hidden;}
+  .spark{width:70px;height:16px;vertical-align:middle;margin-left:6px;}
+  .spark polyline{fill:none;stroke:var(--good);stroke-width:1.5;}
+  .dim{opacity:.65;font-weight:normal;}
+  .gauge .fill{display:block;height:100%;background:var(--good);transition:width .4s ease,background .25s;}
+  .gauge.warn .fill{background:var(--warn);}
+  .gauge.bad .fill{background:var(--bad);}
+  table{border-collapse:collapse;width:100%;table-layout:auto;}
+  th{text-align:left;color:var(--title);border-bottom:1px solid var(--border);padding:2px 8px 4px 0;
+     white-space:nowrap;}
+  th.col-time,td.col-time,th.col-thread,td.col-thread,
+  th.col-size,td.col-size,th.col-rate,td.col-rate{width:1%;white-space:nowrap;}
+  td{padding:2px 8px 2px 0;white-space:nowrap;}
+  td.col-file{white-space:normal;overflow-wrap:anywhere;word-break:break-word;width:auto;}
+  .file-row{margin-bottom:6px;}
+  .file-row .track{width:100%;height:14px;background:var(--track-bg);border:1px solid var(--track-border);position:relative;}
+  .file-row .fill{display:block;height:100%;background:var(--good);transition:width .4s ease,background .25s;}
+  .file-row .fill.warn{background:var(--warn);}
+  .file-row .fill.bad{background:var(--bad);}
+  .file-row .meta{font-size:12px;opacity:.9;margin-top:2px;display:flex;gap:14px;}
+  #empty{opacity:.6;}
+  #err{color:var(--bad);padding:10px;}
+  /* ---- settings modal ---------------------------------------------------- */
+  #settings-btn{font-family:inherit;font-size:15px;line-height:1;background:transparent;
+       color:var(--hi-fg);border:1px solid var(--hi-fg);border-radius:2px;padding:2px 7px;
+       cursor:pointer;font-weight:bold;transition:background .15s,color .15s;}
+  #settings-btn:hover,#settings-btn:focus{background:var(--hi-fg);color:var(--hi-bg);}
+  #backdrop{position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:100;
+       display:flex;align-items:center;justify-content:center;padding:16px;}
+  #backdrop[hidden]{display:none;}
+  #modal{background:var(--panel);border:1px solid var(--border);border-radius:3px;
+       width:100%;max-width:540px;max-height:88vh;display:flex;flex-direction:column;
+       box-shadow:0 10px 36px rgba(0,0,0,.55);}
+  #modal-head{display:flex;justify-content:space-between;align-items:center;
+       background:var(--hi-bg);color:var(--hi-fg);padding:6px 6px 6px 12px;font-weight:bold;}
+  #modal-close{background:transparent;border:0;color:var(--hi-fg);font-size:22px;
+       line-height:1;cursor:pointer;padding:0 8px;font-family:inherit;}
+  #modal-tabs{display:flex;border-bottom:1px solid var(--border);}
+  .mtab{flex:1;background:transparent;border:0;border-bottom:2px solid transparent;
+       color:var(--text);font-family:inherit;font-size:13px;font-weight:bold;
+       padding:9px 10px;cursor:pointer;opacity:.55;transition:opacity .15s;}
+  .mtab[aria-selected="true"]{opacity:1;color:var(--title);border-bottom-color:var(--border);}
+  .mpane{padding:14px;overflow-y:auto;}
+  .mpane[hidden]{display:none;}
+  .frow{display:flex;justify-content:space-between;align-items:center;gap:16px;}
+  .frow label{font-weight:bold;}
+  .fhint{font-size:12px;opacity:.6;margin:6px 0 0;}
+  #theme-select{font-family:inherit;font-size:13px;background:var(--bg);color:var(--text);
+       border:1px solid var(--border);border-radius:2px;padding:3px 6px;cursor:pointer;}
+  .adl{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;font-size:13px;margin:0;}
+  .adl dt{color:var(--title);font-weight:bold;}
+  .adl dd{margin:0;word-break:break-word;}
+  .asec{border-top:1px solid var(--track-border);padding-top:11px;margin-top:11px;}
+  .asec h3{margin:0 0 7px;font-size:13px;color:var(--title);}
+  .credit{font-size:13px;margin-bottom:5px;}
+  .credit .who{font-weight:bold;}
+  .credit .what{opacity:.7;}
+  #modal a{color:var(--title);}
+</style>
+</head>
+<body>
+<div id="topbar">
+  <span id="topbar-title">Backblaze 64 &bull; Upload Monitor</span>
+  <div id="topbar-right">
+    <span id="clock">--:--:--</span>
+    <button id="settings-btn" title="Settings" aria-haspopup="dialog">&#9881;</button>
+  </div>
+</div>
+<div id="backdrop" hidden>
+  <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div id="modal-head">
+      <span id="modal-title">Settings</span>
+      <button id="modal-close" title="Close" aria-label="Close">&times;</button>
+    </div>
+    <div id="modal-tabs" role="tablist">
+      <button class="mtab" role="tab" data-tab="prefs" aria-selected="true" aria-controls="pane-prefs">Preferences</button>
+      <button class="mtab" role="tab" data-tab="about" aria-selected="false" aria-controls="pane-about">About</button>
+    </div>
+    <div class="mpane" id="pane-prefs" role="tabpanel">
+      <div class="frow">
+        <label for="theme-select">Colour theme</label>
+        <select id="theme-select">
+          <option value="blue">Blue (Classic)</option>
+          <option value="dark">Dark</option>
+          <option value="matrix">Matrix</option>
+          <option value="amber">Amber</option>
+          <option value="nord">Nord</option>
+          <option value="dracula">Dracula</option>
+          <option value="solarized">Solarized Dark</option>
+          <option value="gruvbox">Gruvbox Dark</option>
+          <option value="onedark">One Dark</option>
+          <option value="tokyonight">Tokyo Night</option>
+          <option value="catppuccin">Catppuccin Mocha</option>
+          <option value="monokai">Monokai</option>
+          <option value="cyberpunk">Cyberpunk Neon</option>
+        </select>
+      </div>
+      <p class="fhint">Saved in this browser only. Each device keeps its own choice.
+         Add <code>?theme=matrix</code> or <code>?compact=1</code> to the URL to override,
+         which is how to embed a compact panel in a dashboard.</p>
+    </div>
+    <div class="mpane" id="pane-about" role="tabpanel" hidden></div>
+  </div>
+</div>
+<main>
+  <div id="err" style="display:none"></div>
+  <div class="panel" id="panel-status">
+    <span class="ptitle">Status</span>
+    <div id="status-grid"></div>
+  </div>
+  <div class="panel" id="panel-uploading">
+    <span class="ptitle" id="uploading-title">Uploading Now</span>
+    <div id="uploading"></div>
+  </div>
+  <div class="panel" id="panel-recent">
+    <span class="ptitle">Recently Completed</span>
+    <table>
+      <thead><tr><th class="col-time">Time</th><th class="col-thread">Thread</th><th class="col-size">Size</th><th class="col-rate">Rate</th><th>File</th></tr></thead>
+      <tbody id="recent-body"></tbody>
+    </table>
+  </div>
+</main>
+<div id="footer"><span>live, refreshing every 2s</span><span id="build"></span></div>
+<script>
+function pctClass(pct, invert){
+  // invert=true: higher is worse (mem/swap gauges). invert=false: higher is better (rate).
+  if(invert) return pct>=90?'bad':(pct>=70?'warn':'');
+  return '';
+}
+var rateHistory = [];
+function sparklineSvg(values, w, h){
+  if(values.length < 2) return '';
+  var max = Math.max(0.05, Math.max.apply(null, values));
+  var stepX = w / (values.length - 1);
+  var pts = values.map(function(v, i){
+    var x = i * stepX;
+    var y = h - (Math.min(v, max) / max) * (h - 1) - 0.5;
+    return x.toFixed(1) + ',' + y.toFixed(1);
+  }).join(' ');
+  return '<svg class="spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">' +
+         '<polyline points="'+pts+'" /></svg>';
+}
+function gaugeHtml(label, g, highIsGood, extra, suffix){
+  if(!g) return '<span class="stat">'+label+': n/a</span>';
+  var cls = highIsGood
+    ? (g.pct>=67 ? '' : (g.pct>=34 ? 'warn' : 'bad'))
+    : (g.pct>=90 ? 'bad' : (g.pct>=70 ? 'warn' : ''));
+  var tip = extra ? ' title="'+extra+'"' : '';
+  var suf = suffix ? ' <span class="dim">'+suffix+'</span>' : '';
+  return '<span class="stat gauge '+cls+'"'+tip+'>'+label+': '+g.used_str+'/'+g.total_str+
+         ' <span class="track"><span class="fill" style="width:'+Math.min(100,g.pct)+'%"></span></span> '+g.pct+'%'+suf+'</span>';
+}
+var lastState = null;
+function updateFavicon(state){
+  var cs = getComputedStyle(document.documentElement);
+  var color = '#888888';
+  if(state === 'Transmitting') color = cs.getPropertyValue('--good').trim() || '#3ddc6b';
+  else if(state === 'Scanning' || state === 'Preparing') color = cs.getPropertyValue('--warn').trim() || '#ffd23d';
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
+            '<circle cx="16" cy="16" r="13" fill="'+color+'" stroke="rgba(0,0,0,0.4)" stroke-width="2"/></svg>';
+  var link = document.getElementById('favicon');
+  if(link) link.href = 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+var aboutDone = false;
+function renderAbout(a){
+  if(aboutDone) return;          // build metadata never changes while we run
+  aboutDone = true;
+  var b = a.build || {}, rows = '';
+  function row(k, v){ if(v) rows += '<dt>'+esc(k)+'</dt><dd>'+esc(v)+'</dd>'; }
+  row('Version', b.version); row('Build', b.build);
+  row('Revision', b.revision); row('Variant', b.variant); row('Built', b.built);
+  var html =
+    '<div class="asec" style="border-top:0;padding-top:0;margin-top:0">' +
+      '<h3>'+esc(a.name)+' \u2022 '+esc(a.component)+'</h3>' +
+      (rows ? '<dl class="adl">'+rows+'</dl>'
+            : '<p class="fhint">No build stamp found (running outside a built image).</p>') +
+    '</div>' +
+    '<div class="asec"><h3>Licence</h3>' +
+      '<div class="credit">'+esc(a.copyright)+'</div>' +
+      '<div class="credit"><span class="what">'+esc(a.license)+'</span></div>' +
+      '<div class="credit"><a href="'+esc(a.url)+'" target="_blank" rel="noopener noreferrer">'+esc(a.url)+'</a></div>' +
+    '</div>';
+  if(a.credits && a.credits.length){
+    html += '<div class="asec"><h3>With thanks to</h3>' +
+      a.credits.map(function(c){
+        return '<div class="credit"><span class="who">'+esc(c.who)+'</span> \u2014 ' +
+               '<span class="what">'+esc(c.what)+'</span></div>';
+      }).join('') + '</div>';
+  }
+  document.getElementById('pane-about').innerHTML = html;
+}
+async function tick(){
+  try{
+    // Relative, so it resolves under /monitor/ when proxied and at / when standalone.
+    const res = await fetch('api/status', {cache:'no-store'});
+    const d = await res.json();
+    if(d.about) renderAbout(d.about);   // before the ok check: About must work when collection is broken
+    if(!d.ok){
+      document.getElementById('err').style.display='block';
+      document.getElementById('err').textContent = 'Waiting for data: ' + (d.error||'unknown');
+      document.title = 'Backblaze 64 \u2022 Upload Monitor';
+      return;
+    }
+    document.getElementById('err').style.display='none';
+    document.getElementById('clock').textContent = d.clock;
+    document.getElementById('build').textContent = d.build_label || '';
+    document.getElementById('topbar-title').textContent =
+      'Backblaze 64 \u2022 Upload Monitor' + (d.uptime ? ' \u2022 ' + d.uptime : '');
+
+    rateHistory.push(d.rate_mb);
+    if(rateHistory.length > 40) rateHistory.shift();
+
+    document.title = 'BB64 \u2022 ' + d.rate_str + ' \u2022 ' + (d.backup ? d.backup.pct+'%' : d.state);
+    lastState = d.state;
+    updateFavicon(d.state);
+
+    var rateCls = d.rate_mb>=1 ? 'good' : (d.rate_mb>0.05 ? 'warn' : 'bad');
+    var stateCls = d.state==='Transmitting' ? 'good' : (['Scanning','Preparing'].includes(d.state) ? 'warn' : '');
+    var grid = document.getElementById('status-grid');
+    grid.innerHTML =
+      '<span class="stat">Threads: '+d.threads+'</span>' +
+      '<span class="stat">Up: <span class="'+rateCls+'">'+d.rate_str+'</span> ('+d.rate_mbit_str+')'+sparklineSvg(rateHistory,70,16)+'</span>' +
+      '<span class="stat">Chunks/60s: '+d.chunks+'</span>' +
+      '<span class="stat">Session: '+d.session_str+'</span>' +
+      '<span class="stat">State: <span class="'+stateCls+'">'+d.state+'</span></span>' +
+      gaugeHtml('Mem', d.mem, false) +
+      gaugeHtml('Swap', d.swap, false) +
+      '<span class="stat">Files Remaining: '+(d.backup && d.backup.remaining_files!=null ? d.backup.remaining_files.toLocaleString() : 'n/a')+'</span>' +
+      gaugeHtml('Backup', d.backup, true,
+                d.backup ? (d.backup.files + ' \u2022 ETA based on last ' + d.backup.eta_samples + ' completed transfer' + (d.backup.eta_samples===1?'':'s')) : '',
+                d.backup ? ('ETA '+d.backup.eta) : '');
+
+    var up = document.getElementById('uploading');
+    document.getElementById('uploading-title').textContent = d.files.length
+      ? 'Uploading Now \u2022 ' + d.files.length + (d.files.length===1?' file':' files')
+      : 'Uploading Now';
+    if(!d.files.length){
+      up.innerHTML = '<div id="empty">(nothing in flight)</div>';
+    } else {
+      up.innerHTML = d.files.map(f=>{
+        var cls = f.pct>=67?'good':(f.pct>=34?'warn':'bad');
+        return '<div class="file-row"><div class="track"><span class="fill '+cls+'" style="width:'+f.pct+'%"></span></div>' +
+               '<div class="meta"><span>'+f.pct.toFixed(0)+'%</span><span>'+f.size_str+'</span><span>'+f.name+'</span></div></div>';
+      }).join('');
+    }
+
+    var tb = document.getElementById('recent-body');
+    if(!d.recent.length){
+      tb.innerHTML = '<tr><td colspan="5" id="empty">(watching for completions&hellip;)</td></tr>';
+    } else {
+      tb.innerHTML = d.recent.slice().reverse().map(r=>
+        '<tr><td class="col-time">'+r.time+'</td><td class="col-thread">'+r.thread+'</td>'+
+        '<td class="col-size">'+r.size+'</td><td class="col-rate">'+r.rate+'</td>'+
+        '<td class="col-file">'+r.name+'</td></tr>'
+      ).join('');
+    }
+  }catch(e){
+    document.getElementById('err').style.display='block';
+    document.getElementById('err').textContent = 'Fetch failed: ' + e;
+  }
+}
+(function(){
+  var params = new URLSearchParams(location.search);
+  if(params.get('compact') === '1' || params.get('compact') === 'true'){
+    document.body.classList.add('compact');
+  }
+  var sel = document.getElementById('theme-select');
+  var themeParam = params.get('theme');
+  var saved = themeParam || (function(){
+    try { return localStorage.getItem('bbMonitorTheme'); } catch(e){ return null; }
+  })() || 'blue';
+  document.documentElement.setAttribute('data-theme', saved);
+  sel.value = saved;
+  updateFavicon(lastState);
+  sel.addEventListener('change', function(){
+    document.documentElement.setAttribute('data-theme', sel.value);
+    try { localStorage.setItem('bbMonitorTheme', sel.value); } catch(e){}
+    updateFavicon(lastState);
+  });
+
+  var backdrop = document.getElementById('backdrop');
+  var openBtn  = document.getElementById('settings-btn');
+  var tabs     = Array.prototype.slice.call(document.querySelectorAll('.mtab'));
+  function setTab(name){
+    tabs.forEach(function(t){
+      t.setAttribute('aria-selected', t.getAttribute('data-tab') === name ? 'true' : 'false');
+    });
+    document.getElementById('pane-prefs').hidden = (name !== 'prefs');
+    document.getElementById('pane-about').hidden = (name !== 'about');
+  }
+  function openModal(){
+    backdrop.hidden = false;
+    setTab('prefs');
+    document.getElementById('modal-close').focus();
+  }
+  function closeModal(){
+    backdrop.hidden = true;
+    openBtn.focus();
+  }
+  openBtn.addEventListener('click', openModal);
+  document.getElementById('modal-close').addEventListener('click', closeModal);
+  backdrop.addEventListener('click', function(e){ if(e.target === backdrop) closeModal(); });
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && !backdrop.hidden) closeModal();
+  });
+  tabs.forEach(function(t){
+    t.addEventListener('click', function(){ setTab(t.getAttribute('data-tab')); });
+  });
+})();
+tick();
+setInterval(tick, 2000);
+</script>
+</body></html>
+"""
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        pass  # keep the container log quiet
+
+    def do_GET(self):
+        path = urlsplit(self.path).path   # strip any ?query string before routing
+        if path == "/api/status":
+            with _lock:
+                payload = json.dumps(_latest).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(payload)
+        elif path in ("/", "/index.html"):
+            payload = INDEX_HTML.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--port", type=int, default=8099)
+    # Loopback by default: nginx fronts this, and binding 0.0.0.0 would put
+    # the names of every backed-up file on the LAN with no authentication.
+    ap.add_argument("--host", default="127.0.0.1")
+    args = ap.parse_args()
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+
+    srv = ThreadingHTTPServer((args.host, args.port), Handler)
+    print("bb-monitor-web listening on http://%s:%d/" % (args.host, args.port))
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `bb-monitor-web`, the upload dashboard served over HTTP instead of the terminal, so a
+  session survives the console window closing. Adds overall backup progress with an ETA
+  weighted by completed transfers, files remaining, a live rate sparkline, uptime, and a
+  compact mode (`?compact=1`) for embedding a status tile in a dashboard such as Homarr.
+  Concept contributed by rogman.
+- The dashboard is served through the existing web interface at `/monitor/` rather than on
+  a second port, so it inherits whatever `WEB_AUTHENTICATION` and `SECURE_CONNECTION` are
+  configured for the GUI. The service itself binds loopback only. A second open port would
+  have published the name of every file being backed up to anyone on the LAN.
+- A settings dialog holding the thirteen colour themes and an About tab reporting the
+  running build, licence and credits. About is served with every payload including the
+  error ones, so it still answers "which build is this" when data collection is broken.
+
 ## [beta] - 2026-08-07
 
 Beta channel only (`:beta` tag), carrying everything in 10.2.1 plus the patch below. The

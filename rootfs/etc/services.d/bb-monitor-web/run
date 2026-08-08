@@ -1,0 +1,18 @@
+#!/bin/sh
+# Supervised wrapper for the web dashboard.
+#
+# Bound to loopback on purpose. nginx proxies /monitor/ to it on the existing
+# web port, so the dashboard inherits whatever authentication and HTTPS the user
+# has configured for the GUI. Binding 0.0.0.0 would hand the name of every file
+# being backed up to anyone on the LAN, with no login in front of it.
+#
+# This directory alone does not make the service run. The base image's
+# supervisor starts only services reachable from the "default" group, so the
+# empty marker ../default/bb-monitor-web.dep is what registers it. Without the
+# marker the directory is ignored with no error. Same trap as bb-watchdog.
+#
+# The port is fixed rather than configurable: it is never reachable from outside
+# the container, so there is nothing for a user to avoid colliding with.
+set -u
+
+exec /usr/local/bin/bb-monitor-web --host 127.0.0.1 --port 8099
