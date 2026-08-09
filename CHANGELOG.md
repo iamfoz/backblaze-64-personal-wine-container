@@ -80,6 +80,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   256-colour terminal and are hidden otherwise.
 
 ### Fixed
+- The project URL in `bb-monitor`'s About tab was clipped by a fixed-width panel, so the
+  link looked complete but led to a 404. The panel now sizes itself to its content.
 - Opening the monitor shortly after a container start gave a bare 502 that stayed until the
   page was reloaded by hand, because the shell loads the frame once and nothing retried.
   nginx now serves a holding page for the few seconds before the service is listening; it

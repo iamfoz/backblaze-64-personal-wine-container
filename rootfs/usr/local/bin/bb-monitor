@@ -69,7 +69,7 @@ APP_COMPONENT = "Upload Monitor"
 APP_COPYRIGHT = "Copyright \u00a9 2026 Martyn Forryan"
 APP_LICENSE = "GNU Affero General Public License v3.0"
 APP_URL = "https://github.com/iamfoz/backblaze-64-personal-wine-container"
-CREDITS = [("rogman", "web monitor and theming concept")]
+CREDITS = [("rogman", "web monitor, themes & features")]
 
 PREF_FILE = "/config/bb-monitor.conf"   # under /config so it survives a recreate
 
@@ -315,7 +315,11 @@ def draw_overlay(scr, st):
 
     names = theme_names()
     bh = min(max(12, len(names) + 8), h - 2)
-    bw = min(62, w - 2)
+    # Width follows the content rather than a fixed 62. The project URL is 62
+    # characters on its own, so a fixed box clipped the last six and left a link
+    # that looked complete but 404s when clicked.
+    widest = max([len(t) for t, _ in _about_lines()] + [len(n) for n in names] + [40])
+    bw = min(max(62, widest + 6), w - 2)
     by = max(0, (h - bh) // 2); bx = max(0, (w - bw) // 2)
     for y in range(by, min(h, by + bh)):                    # blank the area first
         aw(scr, y, bx, " " * bw, NORM)

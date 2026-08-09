@@ -40,7 +40,7 @@ APP_URL = "https://github.com/iamfoz/backblaze-64-personal-wine-container"
 # Contributed work credited in the About tab: (forum handle, one-line description).
 # An empty list hides the Thanks section, so a missing handle never ships as
 # placeholder text.
-CREDITS = [("rogman", "web monitor and theming concept")]
+CREDITS = [("rogman", "web monitor, themes & features")]
 
 
 
