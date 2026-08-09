@@ -42,11 +42,15 @@
   <span id="brand">Backblaze 64</span>
 </div>
 
-<!-- The desktop iframe is created once and only ever hidden, never removed and
-     never re-pointed. Tearing it down would drop the VNC session and the Wine
-     desktop would reconnect from scratch every time someone glanced at the
-     monitor. Hiding keeps the socket and the running session intact. -->
-<iframe id="pane-desktop" class="pane" role="tabpanel" src="/index.html"
+<!-- /desktop/ rather than /index.html on purpose. noVNC appends "websockify" to
+     location.pathname to build its websocket URL, so serving it from a file path
+     produces /index.htmlwebsockify and the viewer never connects. A directory
+     path gives /desktop/websockify, which nginx routes correctly.
+
+     The iframe is created once and only ever hidden, never removed and never
+     re-pointed. Tearing it down would drop the VNC session and the Wine desktop
+     would reconnect from scratch every time someone glanced at the monitor. -->
+<iframe id="pane-desktop" class="pane" role="tabpanel" src="/desktop/"
         allow="fullscreen; clipboard-read; clipboard-write"
         title="Wine desktop"></iframe>
 

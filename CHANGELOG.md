@@ -68,7 +68,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wraps rather than pushing the page sideways, and the tabs and settings button get proper
   touch targets. Verified at 375px with long real-world paths.
 
+- `bb-monitor` gains the upload sparkline and a settings dialog, so it matches the web
+  dashboard rather than trailing it. `s` opens it, `Tab` switches between Preferences and
+  About, `Enter` opens the theme chooser, arrows move through it with a live preview, and
+  `Esc` backs out. The thirteen colour themes are the same ones by the same names, and the
+  choice is remembered in `/config/bb-monitor.conf`. Themes beyond the first two need a
+  256-colour terminal and are hidden otherwise.
+
 ### Fixed
+- The desktop tab never got past "connecting". noVNC builds its websocket URL by appending
+  `websockify` to `location.pathname`, so framing it at `/index.html` asked for
+  `/index.htmlwebsockify`, which matches no route. It is now served from `/desktop/`, giving
+  `/desktop/websockify` as the base image expects.
 - A long file path made the whole page scroll sideways at any window width. Flex items
   default to `min-width:auto` and so refuse to shrink below their content, which let one
   path in the in-flight list widen everything around it.

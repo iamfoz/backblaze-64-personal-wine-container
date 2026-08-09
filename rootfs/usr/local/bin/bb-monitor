@@ -15,6 +15,7 @@ Needs a terminal:  docker exec -it <container> bb-monitor
 """
 import locale; locale.setlocale(locale.LC_ALL, "")
 import curses, os, sys, time, unicodedata
+from collections import deque
 
 # ---- shared data layer ----------------------------------------------------
 # Everything that reads /proc, the cgroups and Backblaze's own files lives in
@@ -23,8 +24,114 @@ import curses, os, sys, time, unicodedata
 # round-trip time while this one kept the original narrower view. A feature
 # added to bbdata now shows up in both. This file owns curses and nothing else.
 sys.path.insert(0, "/usr/local/lib/bb-monitor")
-from bbdata import (BUILD_LABEL, INT, eta_str, gather, human, rec_cols,
-                     uptime_str, _upload_rtt)
+from bbdata import (BUILD_INFO, BUILD_LABEL, INT, eta_str, gather, human,
+                     rec_cols, uptime_str, _upload_rtt)
+
+
+# ---- themes -------------------------------------------------------------------
+# The web dashboard carries these as CSS variables; here they are colour numbers.
+# Same names and the same intent, so a screenshot of either is recognisably the
+# same tool. Order matches the web's dropdown.
+#
+# Fields: bg, text, title, hi_bg, hi_fg, good, warn, bad, trough_g, trough_y, trough_r
+THEMES = [
+    ("Blue (Classic)", (4, 7, 6, 7, 0, 2, 3, 1, 22, 58, 52)),
+    ("Dark",           (0, 7, 4, 7, 0, 2, 3, 1, 22, 58, 52)),
+    ("Matrix",         (0, 46, 46, 46, 0, 46, 190, 196, 22, 58, 52)),
+    ("Amber",          (0, 214, 214, 214, 0, 214, 220, 202, 58, 58, 52)),
+    ("Nord",           (236, 253, 110, 110, 236, 150, 222, 167, 23, 58, 52)),
+    ("Dracula",        (235, 255, 212, 141, 235, 84, 228, 203, 22, 58, 52)),
+    ("Solarized Dark", (23, 245, 37, 33, 23, 64, 136, 160, 22, 58, 52)),
+    ("Gruvbox Dark",   (235, 223, 208, 223, 235, 142, 214, 167, 22, 58, 52)),
+    ("One Dark",       (236, 145, 170, 145, 236, 114, 180, 168, 22, 58, 52)),
+    ("Tokyo Night",    (234, 146, 141, 146, 234, 150, 180, 210, 22, 58, 52)),
+    ("Catppuccin",     (235, 189, 183, 189, 235, 151, 223, 211, 22, 58, 52)),
+    ("Monokai",        (235, 255, 148, 255, 235, 148, 186, 197, 22, 58, 52)),
+    ("Cyberpunk Neon", (233, 195, 51, 51, 233, 118, 226, 201, 22, 58, 52)),
+]
+# Anything past the first two needs a 256-colour terminal. Offering a theme that
+# renders as mud is worse than not offering it.
+def theme_names():
+    return [n for i,(n,_) in enumerate(THEMES) if i < 2 or curses.COLORS >= 256]
+
+APP_NAME = "Backblaze 64"
+APP_COMPONENT = "Upload Monitor"
+APP_COPYRIGHT = "Copyright \u00a9 2026 Martyn Forryan"
+APP_LICENSE = "GNU Affero General Public License v3.0"
+APP_URL = "https://github.com/iamfoz/backblaze-64-personal-wine-container"
+CREDITS = [("rogman", "web monitor and theming concept")]
+
+PREF_FILE = "/config/bb-monitor.conf"   # under /config so it survives a recreate
+
+def load_pref(key, default=""):
+    try:
+        with open(PREF_FILE) as fh:
+            for line in fh:
+                k, _, v = line.partition("=")
+                if k.strip() == key:
+                    return v.strip()
+    except OSError:
+        pass
+    return default
+
+def save_pref(key, value):
+    prefs = {}
+    try:
+        with open(PREF_FILE) as fh:
+            for line in fh:
+                k, _, v = line.partition("=")
+                if k.strip():
+                    prefs[k.strip()] = v.strip()
+    except OSError:
+        pass
+    prefs[key] = value
+    try:
+        tmp = PREF_FILE + ".tmp"
+        with open(tmp, "w") as fh:
+            for k, v in sorted(prefs.items()):
+                fh.write("%s=%s\n" % (k, v))
+        os.replace(tmp, PREF_FILE)     # atomic, so a crash cannot leave it half-written
+    except OSError:
+        pass
+
+def apply_theme(scr, name):
+    """Re-point the colour pairs. curses lets pairs be redefined at runtime, so a
+    theme change repaints on the next draw with no restart."""
+    entry = next((t for t in THEMES if t[0] == name), THEMES[0])
+    bg, text, title, hib, hif, good, warn, bad, tg, ty, tr = entry[1]
+    if curses.COLORS < 256:
+        bg, text, title, hib, hif = (curses.COLOR_BLUE, curses.COLOR_WHITE,
+                                      curses.COLOR_CYAN, curses.COLOR_WHITE, curses.COLOR_BLACK)
+        good, warn, bad = curses.COLOR_GREEN, curses.COLOR_YELLOW, curses.COLOR_RED
+        tg = ty = tr = (8 if curses.COLORS >= 16 else curses.COLOR_BLUE)
+    curses.init_pair(1, text, bg)
+    curses.init_pair(2, hif, hib)
+    curses.init_pair(3, warn, bg)
+    curses.init_pair(4, good, bg)
+    curses.init_pair(5, bad, bg)
+    curses.init_pair(6, title, bg)
+    curses.init_pair(7, good, tg)
+    curses.init_pair(8, warn, ty)
+    curses.init_pair(9, bad, tr)
+    scr.bkgd(' ', curses.color_pair(1))
+
+# ---- rate history for the sparkline -------------------------------------------
+# Same 40-sample window the web dashboard keeps.
+_rate_hist = deque(maxlen=40)
+SPARK = " \u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
+
+def spark(values, width):
+    """Block-character sparkline. The web draws an SVG polyline from the same
+    series; this is the terminal's version of the same picture."""
+    if len(values) < 2 or width < 2:
+        return ""
+    vals = list(values)[-width:]
+    top = max(vals + [0.05])
+    out = []
+    for v in vals:
+        idx = int(round(min(v, top) / top * (len(SPARK) - 1)))
+        out.append(SPARK[idx])
+    return "".join(out)
 
 # ---- curses-only helper -------------------------------------------------------
 def wclip(s,width):
@@ -92,7 +199,8 @@ def draw(scr,d,st):
         return {"w":len(pre)+12+len(suf),"draw":dr}
     chunks=[
         txt([("Threads: ",NORM),("%d"%d["threads"],NORM)]),
-        txt([("Up: ",NORM),("%.2f MB/s"%r,rcol),(" (~%d Mbit/s)"%(r*8),NORM)]),
+        txt([("Up: ",NORM),("%.2f MB/s"%r,rcol),(" (~%d Mbit/s) "%(r*8),NORM),
+              (spark(_rate_hist,14),GOOD)]),
         txt([("Chunks/60s: ",NORM),("%d"%d["chunks"],NORM)]),
         txt([("Session: ",NORM),(human(d["sess"]),NORM)]),
         txt([("State: ",NORM),(stt,scol)]),
@@ -149,40 +257,155 @@ def draw(scr,d,st):
             aw(scr,yy,2,wclip("%-8s  %-6s  %-9s  %-12s    %s"%(r["t"],th,size,rate,r["name"]),w-4),NORM); yy+=1
         box(scr,rec_top,0,rec_h,w,"Recently Completed",BORD,TIT)
     aw(scr,foot,0," "*w,HI)
-    ft="q Quit • ↑ ↓ PgUp PgDn Scroll • live every %gs"%INT
+    ft="q Quit • s Settings • ↑ ↓ PgUp PgDn Scroll • live every %gs"%INT
     aw(scr,foot,1,ft,HI)
     # Build identifier on the right, so a screenshot of the monitor says which image
     # produced it. Dropped rather than overlapped when the terminal is too narrow.
     if BUILD_LABEL and w >= len(ft)+len(BUILD_LABEL)+5:
         aw(scr,foot,w-len(BUILD_LABEL)-2,BUILD_LABEL,HI)
+    if st.get("ui"): draw_overlay(scr,st)      # over the dashboard, drawn last
     scr.refresh()
 
+
+# ---- settings / about overlay --------------------------------------------------
+# The web dashboard has this behind the gear icon. Here it is a centred panel over
+# the dashboard, driven entirely from the keyboard because there is no pointer:
+#
+#   S        open        Tab / Shift-Tab   switch tab
+#   Up/Down  move        Enter             open a chooser, or pick the highlighted
+#   Esc      close, or back out of an open chooser
+def _about_lines():
+    b = BUILD_INFO
+    out = [("%s \u2022 %s" % (APP_NAME, APP_COMPONENT), True)]
+    for label, key in (("Version","version"), ("Build","build"), ("Revision","revision"),
+                        ("Variant","variant"), ("Built","built")):
+        if b.get(key):
+            out.append(("  %-9s %s" % (label + ":", b[key]), False))
+    if not any(b.get(k) for k in ("version","build","revision","variant","built")):
+        out.append(("  no build stamp (running outside a built image)", False))
+    out += [("", False), ("Licence", True),
+            ("  " + APP_COPYRIGHT, False), ("  " + APP_LICENSE, False),
+            ("  " + APP_URL, False)]
+    if CREDITS:
+        out += [("", False), ("With thanks to", True)]
+        out += [("  %s \u2014 %s" % (who, what), False) for who, what in CREDITS]
+    return out
+
+
+def draw_overlay(scr, st):
+    ui = st["ui"]
+    h, w = scr.getmaxyx()
+    NORM = curses.color_pair(1); HI = curses.color_pair(2) | curses.A_BOLD
+    BORD = curses.color_pair(6) | curses.A_BOLD
+    TIT  = curses.color_pair(2) | curses.A_BOLD
+    DIM  = curses.color_pair(1)
+
+    names = theme_names()
+    bh = min(max(12, len(names) + 6), h - 2)
+    bw = min(62, w - 2)
+    by = max(0, (h - bh) // 2); bx = max(0, (w - bw) // 2)
+    for y in range(by, min(h, by + bh)):                    # blank the area first
+        aw(scr, y, bx, " " * bw, NORM)
+    box(scr, by, bx, bh, bw, "Settings", BORD, TIT)
+
+    tabs = ["Preferences", "About"]
+    cx = bx + 2
+    for i, t in enumerate(tabs):
+        aw(scr, by + 1, cx, " %s " % t, HI if i == ui["tab"] else DIM)
+        cx += len(t) + 3
+
+    top = by + 3
+    if ui["tab"] == 0:
+        picking = ui["picker"] is not None
+        cur = ui["theme"]
+        aw(scr, top, bx + 2, "Colour theme", NORM | (0 if picking else curses.A_BOLD))
+        aw(scr, top, bx + 20, "< %s >" % cur, NORM if picking else HI)
+        if picking:
+            for i, n in enumerate(names):
+                y = top + 2 + i
+                if y >= by + bh - 2:
+                    break
+                aw(scr, y, bx + 4, "%-*s" % (bw - 8, n), HI if i == ui["picker"] else NORM)
+            hint = "Up/Down choose \u2022 Enter apply \u2022 Esc cancel"
+        else:
+            aw(scr, top + 2, bx + 2,
+               wclip("Applies immediately and is remembered in %s" % PREF_FILE, bw - 4), DIM)
+            hint = "Enter change theme \u2022 Tab About \u2022 Esc close"
+    else:
+        y = top
+        for text, bold in _about_lines():
+            if y >= by + bh - 2:
+                break
+            aw(scr, y, bx + 2, wclip(text, bw - 4), NORM | (curses.A_BOLD if bold else 0))
+            y += 1
+        hint = "Tab Preferences \u2022 Esc close"
+    aw(scr, by + bh - 2, bx + 2, wclip(hint, bw - 4), DIM)
+
+
+def overlay_key(scr, st, ch):
+    """Returns True when the key was consumed by the overlay."""
+    ui = st["ui"]
+    names = theme_names()
+    if ch == 27:                                   # Esc: back out one level
+        if ui["picker"] is not None:
+            apply_theme(scr, ui["theme"])          # undo any live preview
+            ui["picker"] = None
+        else:
+            st["ui"] = None
+        return True
+    if ui["picker"] is not None:
+        if ch in (curses.KEY_UP, ord('k')):
+            ui["picker"] = (ui["picker"] - 1) % len(names)
+        elif ch in (curses.KEY_DOWN, ord('j')):
+            ui["picker"] = (ui["picker"] + 1) % len(names)
+        elif ch in (curses.KEY_ENTER, 10, 13):
+            ui["theme"] = names[ui["picker"]]
+            save_pref("theme", ui["theme"])
+            ui["picker"] = None
+            return True
+        # preview as the selection moves, so the choice is visible before committing
+        apply_theme(scr, names[ui["picker"]])
+        return True
+    if ch == ord('\t'):
+        ui["tab"] = (ui["tab"] + 1) % 2
+    elif ch == curses.KEY_BTAB:
+        ui["tab"] = (ui["tab"] - 1) % 2
+    elif ch in (curses.KEY_ENTER, 10, 13) and ui["tab"] == 0:
+        ui["picker"] = max(0, names.index(ui["theme"]) if ui["theme"] in names else 0)
+    return True
+
 def main(scr):
+    # apply_theme() owns every colour pair now, so there is nothing to set up here
+    # beyond starting colour support and restoring the saved choice.
     curses.curs_set(0); curses.start_color()
-    if   curses.COLORS>=256: tg,ty,tr=22,58,52     # dark green / olive / red troughs
-    elif curses.COLORS>=16:  tg=ty=tr=8
-    else:                    tg=ty=tr=curses.COLOR_BLUE
-    curses.init_pair(1,curses.COLOR_WHITE,curses.COLOR_BLUE)   # normal grey-on-blue
-    curses.init_pair(2,curses.COLOR_BLACK,curses.COLOR_WHITE)  # highlight black-on-grey
-    curses.init_pair(3,curses.COLOR_YELLOW,curses.COLOR_BLUE)
-    curses.init_pair(4,curses.COLOR_GREEN,curses.COLOR_BLUE)
-    curses.init_pair(5,curses.COLOR_RED,curses.COLOR_BLUE)
-    curses.init_pair(6,curses.COLOR_CYAN,curses.COLOR_BLUE)
-    curses.init_pair(7,curses.COLOR_GREEN,tg)
-    curses.init_pair(8,curses.COLOR_YELLOW,ty)
-    curses.init_pair(9,curses.COLOR_RED,tr)
-    scr.bkgd(' ',curses.color_pair(1)); scr.keypad(True); scr.timeout(50)
-    st={"soff":0,"cap":1}; prev=None; d=None; last=0
+    names=theme_names()
+    theme=load_pref("theme", names[0])
+    if theme not in names: theme=names[0]
+    apply_theme(scr,theme)
+    scr.keypad(True); scr.timeout(50)
+    st={"soff":0,"cap":1,"ui":None}; prev=None; d=None; last=0
     while True:
         ch=scr.getch()
-        if ch in (ord('q'),ord('Q')): break
-        elif ch in (curses.KEY_UP,ord('k')): st["soff"]-=1
-        elif ch in (curses.KEY_DOWN,ord('j')): st["soff"]+=1
-        elif ch==curses.KEY_PPAGE: st["soff"]-=st["cap"]
-        elif ch==curses.KEY_NPAGE: st["soff"]+=st["cap"]
-        if ch!=-1 and d is not None: draw(scr,d,st)
+        if st["ui"] is not None:
+            # The overlay owns the keyboard while open, so q does not quit from
+            # under it and the scroll keys drive the chooser instead of the list.
+            if ch!=-1:
+                overlay_key(scr,st,ch)
+                if st["ui"] is None: theme=load_pref("theme",theme)
+                if d is not None: draw(scr,d,st)
+        else:
+            if ch in (ord('q'),ord('Q')): break
+            elif ch in (ord('s'),ord('S')):
+                st["ui"]={"tab":0,"row":0,"picker":None,"theme":theme}
+            elif ch in (curses.KEY_UP,ord('k')): st["soff"]-=1
+            elif ch in (curses.KEY_DOWN,ord('j')): st["soff"]+=1
+            elif ch==curses.KEY_PPAGE: st["soff"]-=st["cap"]
+            elif ch==curses.KEY_NPAGE: st["soff"]+=st["cap"]
+            if ch!=-1 and d is not None: draw(scr,d,st)
         if d is None or time.time()-last>=INT:
-            d=gather(prev); prev=d["_tx"]; last=time.time(); draw(scr,d,st)
+            d=gather(prev); prev=d["_tx"]; last=time.time()
+            _rate_hist.append(d["rate"])
+            draw(scr,d,st)
 
 def _print_version():
     """Which image build this came from - the identifier worth having in a bug report."""
