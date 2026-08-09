@@ -34,32 +34,33 @@ from bbdata import (BUILD_INFO, BUILD_LABEL, INT, eta_str, gather, human,
 # same tool. Order matches the web's dropdown.
 #
 # Fields: bg, text, title, hi_bg, hi_fg, good, warn, bad, trough_g, trough_y, trough_r
+# Fields: bg, text, title, hi_bg, hi_fg, good, warn, bad, trough_g, trough_y, trough_r
+# Two palettes each. The 256-colour one is the real thing; the second is what the
+# theme becomes on a terminal that only has the basic eight, which still keeps
+# Matrix green and Amber amber rather than collapsing everything into the same
+# blue. Some do converge down there, because eight colours will not carry
+# thirteen distinct looks, and the settings pane says so rather than pretending.
 THEMES = [
-    ("Blue (Classic)", (4, 7, 6, 7, 0, 2, 3, 1, 22, 58, 52)),
-    ("Dark",           (0, 7, 4, 7, 0, 2, 3, 1, 22, 58, 52)),
-    ("Matrix",         (0, 46, 46, 46, 0, 46, 190, 196, 22, 58, 52)),
-    ("Amber",          (0, 214, 214, 214, 0, 214, 220, 202, 58, 58, 52)),
-    ("Nord",           (236, 253, 110, 110, 236, 150, 222, 167, 23, 58, 52)),
-    ("Dracula",        (235, 255, 212, 141, 235, 84, 228, 203, 22, 58, 52)),
-    ("Solarized Dark", (23, 245, 37, 33, 23, 64, 136, 160, 22, 58, 52)),
-    ("Gruvbox Dark",   (235, 223, 208, 223, 235, 142, 214, 167, 22, 58, 52)),
-    ("One Dark",       (236, 145, 170, 145, 236, 114, 180, 168, 22, 58, 52)),
-    ("Tokyo Night",    (234, 146, 141, 146, 234, 150, 180, 210, 22, 58, 52)),
-    ("Catppuccin",     (235, 189, 183, 189, 235, 151, 223, 211, 22, 58, 52)),
-    ("Monokai",        (235, 255, 148, 255, 235, 148, 186, 197, 22, 58, 52)),
-    ("Cyberpunk Neon", (233, 195, 51, 51, 233, 118, 226, 201, 22, 58, 52)),
+    ("Blue (Classic)", (4, 7, 6, 7, 0, 2, 3, 1, 22, 58, 52),   (4, 7, 6, 7, 0, 2, 3, 1, 0, 0, 0)),
+    ("Dark",           (0, 7, 4, 7, 0, 2, 3, 1, 22, 58, 52),   (0, 7, 4, 7, 0, 2, 3, 1, 0, 0, 0)),
+    ("Matrix",         (0, 46, 46, 46, 0, 46, 190, 196, 22, 58, 52), (0, 2, 2, 2, 0, 2, 3, 1, 0, 0, 0)),
+    ("Amber",          (0, 214, 214, 214, 0, 214, 220, 202, 58, 58, 52), (0, 3, 3, 3, 0, 3, 3, 1, 0, 0, 0)),
+    ("Nord",           (236, 253, 110, 110, 236, 150, 222, 167, 23, 58, 52), (0, 7, 6, 6, 0, 2, 3, 1, 0, 0, 0)),
+    ("Dracula",        (235, 255, 212, 141, 235, 84, 228, 203, 22, 58, 52), (0, 7, 5, 5, 0, 2, 3, 1, 0, 0, 0)),
+    ("Solarized Dark", (23, 245, 37, 33, 23, 64, 136, 160, 22, 58, 52), (4, 6, 6, 6, 0, 2, 3, 1, 0, 0, 0)),
+    ("Gruvbox Dark",   (235, 223, 208, 223, 235, 142, 214, 167, 22, 58, 52), (0, 3, 3, 7, 0, 2, 3, 1, 0, 0, 0)),
+    ("One Dark",       (236, 145, 170, 145, 236, 114, 180, 168, 22, 58, 52), (0, 7, 5, 7, 0, 2, 3, 1, 0, 0, 0)),
+    ("Tokyo Night",    (234, 146, 141, 146, 234, 150, 180, 210, 22, 58, 52), (0, 6, 4, 6, 0, 2, 3, 1, 0, 0, 0)),
+    ("Catppuccin",     (235, 189, 183, 189, 235, 151, 223, 211, 22, 58, 52), (0, 5, 5, 7, 0, 2, 3, 1, 0, 0, 0)),
+    ("Monokai",        (235, 255, 148, 255, 235, 148, 186, 197, 22, 58, 52), (0, 7, 2, 7, 0, 2, 3, 1, 0, 0, 0)),
+    ("Cyberpunk Neon", (233, 195, 51, 51, 233, 118, 226, 201, 22, 58, 52), (0, 6, 6, 6, 0, 2, 3, 1, 0, 0, 0)),
 ]
-# Anything past the first two needs a 256-colour terminal. Offering a theme that
-# renders as mud is worse than not offering it.
-def theme_names():
-    return [n for i,(n,_) in enumerate(THEMES) if i < 2 or curses.COLORS >= 256]
 
-APP_NAME = "Backblaze 64"
-APP_COMPONENT = "Upload Monitor"
-APP_COPYRIGHT = "Copyright \u00a9 2026 Martyn Forryan"
-APP_LICENSE = "GNU Affero General Public License v3.0"
-APP_URL = "https://github.com/iamfoz/backblaze-64-personal-wine-container"
-CREDITS = [("rogman", "web monitor and theming concept")]
+def theme_names():
+    # Every theme is offered on every terminal now. A low-colour terminal gets a
+    # reduced rendering rather than a shorter list, which is less confusing than
+    # options silently going missing.
+    return [n for n, _, _ in THEMES]
 
 PREF_FILE = "/config/bb-monitor.conf"   # under /config so it survives a recreate
 
@@ -95,15 +96,15 @@ def save_pref(key, value):
         pass
 
 def apply_theme(scr, name):
-    """Re-point the colour pairs. curses lets pairs be redefined at runtime, so a
-    theme change repaints on the next draw with no restart."""
+    """Re-point the colour pairs. curses allows pairs to be redefined at runtime,
+    so a theme change repaints on the next draw with no restart."""
     entry = next((t for t in THEMES if t[0] == name), THEMES[0])
-    bg, text, title, hib, hif, good, warn, bad, tg, ty, tr = entry[1]
-    if curses.COLORS < 256:
-        bg, text, title, hib, hif = (curses.COLOR_BLUE, curses.COLOR_WHITE,
-                                      curses.COLOR_CYAN, curses.COLOR_WHITE, curses.COLOR_BLACK)
-        good, warn, bad = curses.COLOR_GREEN, curses.COLOR_YELLOW, curses.COLOR_RED
-        tg = ty = tr = (8 if curses.COLORS >= 16 else curses.COLOR_BLUE)
+    # Pick the palette for what the terminal actually has, rather than picking the
+    # rich one and then flattening it, which is what made every theme look blue.
+    bg, text, title, hib, hif, good, warn, bad, tg, ty, tr = (
+        entry[1] if curses.COLORS >= 256 else entry[2])
+    if curses.COLORS < 16:
+        tg = ty = tr = bg          # no dim trough colour to be had
     curses.init_pair(1, text, bg)
     curses.init_pair(2, hif, hib)
     curses.init_pair(3, warn, bg)
@@ -115,23 +116,26 @@ def apply_theme(scr, name):
     curses.init_pair(9, bad, tr)
     scr.bkgd(' ', curses.color_pair(1))
 
+
 # ---- rate history for the sparkline -------------------------------------------
 # Same 40-sample window the web dashboard keeps.
 _rate_hist = deque(maxlen=40)
 SPARK = " \u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
 
 def spark(values, width):
-    """Block-character sparkline. The web draws an SVG polyline from the same
-    series; this is the terminal's version of the same picture."""
-    if len(values) < 2 or width < 2:
+    """Block-character sparkline, always exactly `width` characters wide.
+
+    Constant width matters: the status bar lays chunks out by measured length, so
+    a strip that grew as the history filled pushed everything to its right along
+    by a character on every refresh until the buffer was full."""
+    if width < 2:
         return ""
     vals = list(values)[-width:]
+    if len(vals) < 2:
+        return " " * width
     top = max(vals + [0.05])
-    out = []
-    for v in vals:
-        idx = int(round(min(v, top) / top * (len(SPARK) - 1)))
-        out.append(SPARK[idx])
-    return "".join(out)
+    out = [SPARK[int(round(min(v, top) / top * (len(SPARK) - 1)))] for v in vals]
+    return "".join(out).rjust(width)
 
 # ---- curses-only helper -------------------------------------------------------
 def wclip(s,width):
@@ -301,7 +305,7 @@ def draw_overlay(scr, st):
     DIM  = curses.color_pair(1)
 
     names = theme_names()
-    bh = min(max(12, len(names) + 6), h - 2)
+    bh = min(max(12, len(names) + 8), h - 2)
     bw = min(62, w - 2)
     by = max(0, (h - bh) // 2); bx = max(0, (w - bw) // 2)
     for y in range(by, min(h, by + bh)):                    # blank the area first
@@ -321,15 +325,32 @@ def draw_overlay(scr, st):
         aw(scr, top, bx + 2, "Colour theme", NORM | (0 if picking else curses.A_BOLD))
         aw(scr, top, bx + 20, "< %s >" % cur, NORM if picking else HI)
         if picking:
-            for i, n in enumerate(names):
-                y = top + 2 + i
-                if y >= by + bh - 2:
-                    break
-                aw(scr, y, bx + 4, "%-*s" % (bw - 8, n), HI if i == ui["picker"] else NORM)
-            hint = "Up/Down choose \u2022 Enter apply \u2022 Esc cancel"
+            # Scroll rather than truncate. On a short terminal the list will not
+            # fit, and silently dropping the last few themes is how Cyberpunk Neon
+            # became unreachable.
+            avail = max(1, (by + bh - 2) - (top + 2))
+            sel = ui["picker"]
+            off = 0
+            if len(names) > avail:
+                off = min(max(0, sel - avail // 2), len(names) - avail)
+            for i, n in enumerate(names[off:off + avail]):
+                mark = "\u2022 " if (i + off) == sel else "  "
+                aw(scr, top + 2 + i, bx + 4, "%-*s" % (bw - 8, mark + n),
+                   HI if (i + off) == sel else NORM)
+            more = " (%d/%d)" % (sel + 1, len(names)) if len(names) > avail else ""
+            hint = "Up/Down choose \u2022 Enter apply \u2022 Esc cancel" + more
         else:
             aw(scr, top + 2, bx + 2,
                wclip("Applies immediately and is remembered in %s" % PREF_FILE, bw - 4), DIM)
+            # Say what the terminal can actually do. Without this, a theme that
+            # renders almost identically to another looks like a broken setting
+            # rather than a limit of the terminal.
+            if curses.COLORS < 256:
+                aw(scr, top + 4, bx + 2, wclip(
+                    "Terminal reports %d colours: themes are approximated"
+                    % curses.COLORS, bw - 4), DIM)
+                aw(scr, top + 5, bx + 2, wclip(
+                    "For the full set, run with TERM=xterm-256color", bw - 4), DIM)
             hint = "Enter change theme \u2022 Tab About \u2022 Esc close"
     else:
         y = top

@@ -68,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wraps rather than pushing the page sideways, and the tabs and settings button get proper
   touch targets. Verified at 375px with long real-world paths.
 
+- All thirteen themes are offered in `bb-monitor` on any terminal, each with its own
+  low-colour rendering rather than every one collapsing to the same blue. Where eight
+  colours cannot tell two themes apart, the settings pane says so and gives the `TERM`
+  setting that fixes it.
 - `bb-monitor` gains the upload sparkline and a settings dialog, so it matches the web
   dashboard rather than trailing it. `s` opens it, `Tab` switches between Preferences and
   About, `Enter` opens the theme chooser, arrows move through it with a live preview, and
