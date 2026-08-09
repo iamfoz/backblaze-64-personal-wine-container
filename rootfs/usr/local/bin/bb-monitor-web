@@ -266,13 +266,21 @@ INDEX_HTML = """<!doctype html>
   th.col-size,td.col-size,th.col-rate,td.col-rate{width:1%;white-space:nowrap;}
   td{padding:2px 8px 2px 0;white-space:nowrap;}
   td.col-file{white-space:normal;overflow-wrap:anywhere;word-break:break-word;width:auto;}
-  .file-row{margin-bottom:6px;}
-  .file-row .track{width:100%;height:14px;background:var(--track-bg);border:1px solid var(--track-border);position:relative;}
+  /* Bar on the left, details to its right, one row per file. This mirrors the
+     terminal monitor, which draws the bar at a fixed column width and then the
+     percentage, size and name immediately to its right on the same line
+     (bb-monitor: draw_bar at x=2, text at x=2+bw). The two are the same tool
+     and should not look like different ones. Narrow screens stack instead,
+     see the media query at the end. */
+  .file-row{margin-bottom:6px;display:flex;align-items:center;gap:10px;}
+  /* Prefers 260px and gives way when the name needs the room, the same trade
+     the terminal makes with bw=max(10,min(40,iw-42)). */
+  .file-row .track{flex:0 1 260px;min-width:120px;height:14px;background:var(--track-bg);border:1px solid var(--track-border);position:relative;}
   .file-row .fill{display:block;height:100%;background:var(--good);transition:width .4s ease,background .25s;}
   .file-row .fill.warn{background:var(--warn);}
   .file-row .fill.bad{background:var(--bad);}
-  .file-row .meta{font-size:12px;opacity:.9;margin-top:2px;display:flex;
-       flex-wrap:wrap;gap:4px 14px;}
+  .file-row .meta{font-size:12px;opacity:.9;display:flex;
+       flex:1 1 auto;min-width:0;flex-wrap:wrap;gap:4px 14px;}
   /* min-width:0 because a flex item defaults to min-width:auto and so refuses
      to shrink below its content, which let one long path widen the page. */
   .file-row .meta > span{min-width:0;overflow-wrap:anywhere;}
@@ -342,7 +350,11 @@ INDEX_HTML = """<!doctype html>
        dropping it gives the filename the room it actually needs. */
     th.col-thread,td.col-thread{display:none;}
     th,td{padding-right:6px;}
-    .file-row .meta{gap:4px 10px;}
+    /* Not enough width for bar and details side by side, so stack them the
+       way this page did before. */
+    .file-row{display:block;}
+    .file-row .track{width:100%;flex:none;}
+    .file-row .meta{margin-top:2px;gap:4px 10px;}
     /* The Backup gauge carries a label, a bar, a percentage and an ETA, which
        is more than fits on one line here. Let it wrap instead of pushing the
        page sideways. */

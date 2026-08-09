@@ -57,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `bb-monitor` gains everything the web dashboard had first: overall backup progress with
   its ETA, files remaining, round-trip time to the storage pod, and uptime.
 
+- The in-flight file rows in the web dashboard now match the terminal one: progress bar on
+  the left, then percentage, size and file name to its right, one row per file. The web
+  version had stacked them, bar above details, so the same tool looked like two. Below 560px
+  it still stacks, because there is not room for both.
 - The dashboard and the shell now work on a phone. The dashboard had no viewport meta, so
   a mobile browser laid it out at around 980px and scaled it down to something unreadable;
   an iframe does not inherit its parent's. Below 560px the thread column, the uptime in the
