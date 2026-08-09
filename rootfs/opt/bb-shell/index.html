@@ -26,6 +26,13 @@
   .pane{flex:1 1 auto;border:0;width:100%;display:block;background:#0a1830;}
   .pane[hidden]{display:none;}
   #fallback{padding:14px;color:#ff5a5a;}
+  /* On a phone the two tabs should own the width and be comfortably tappable.
+     44px is the usual floor for a finger target; the default padding gives
+     about 30. */
+  @media (max-width:560px){
+    #brand{display:none;}
+    #tabs button{flex:1 1 0;padding:12px 8px;min-height:44px;}
+  }
 </style>
 </head>
 <body>

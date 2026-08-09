@@ -130,6 +130,7 @@ def _loop():
 # ---- HTTP server -----------------------------------------------------------
 INDEX_HTML = """<!doctype html>
 <html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Backblaze 64 &bull; Upload Monitor</title>
 <link id="favicon" rel="icon" type="image/svg+xml" href="">
 <style>
@@ -270,13 +271,18 @@ INDEX_HTML = """<!doctype html>
   .file-row .fill{display:block;height:100%;background:var(--good);transition:width .4s ease,background .25s;}
   .file-row .fill.warn{background:var(--warn);}
   .file-row .fill.bad{background:var(--bad);}
-  .file-row .meta{font-size:12px;opacity:.9;margin-top:2px;display:flex;gap:14px;}
+  .file-row .meta{font-size:12px;opacity:.9;margin-top:2px;display:flex;
+       flex-wrap:wrap;gap:4px 14px;}
+  /* min-width:0 because a flex item defaults to min-width:auto and so refuses
+     to shrink below its content, which let one long path widen the page. */
+  .file-row .meta > span{min-width:0;overflow-wrap:anywhere;}
   #empty{opacity:.6;}
   #err{color:var(--bad);padding:10px;}
   /* ---- settings modal ---------------------------------------------------- */
   #settings-btn{font-family:inherit;font-size:15px;line-height:1;background:transparent;
        color:var(--hi-fg);border:1px solid var(--hi-fg);border-radius:2px;padding:2px 7px;
-       cursor:pointer;font-weight:bold;transition:background .15s,color .15s;}
+       cursor:pointer;font-weight:bold;transition:background .15s,color .15s;
+       min-width:34px;min-height:30px;}
   #settings-btn:hover,#settings-btn:focus{background:var(--hi-fg);color:var(--hi-bg);}
   #backdrop{position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:100;
        display:flex;align-items:center;justify-content:center;padding:16px;}
@@ -309,6 +315,47 @@ INDEX_HTML = """<!doctype html>
   .credit .who{font-weight:bold;}
   .credit .what{opacity:.7;}
   #modal a{color:var(--title);}
+
+  /* Media queries live at the end deliberately: they carry the same
+     specificity as the rules they override, so anything declared after
+     them silently wins. That is exactly what happened to the settings
+     button's larger touch target. */
+
+  /* ---- narrow screens ---------------------------------------------------
+     Tested at 375px. The status row already wraps on its own; what needs help
+     is everything with a fixed or nowrap width. */
+  @media (max-width:560px){
+    body{font-size:13px;}
+    main{padding:7px;}
+    .panel{padding:9px 10px;}
+    #status-grid{gap:5px 16px;}
+    #topbar,#footer{padding:7px 10px;}
+    #settings-btn{min-width:40px;min-height:36px;}
+    /* The uptime is the least useful thing in the title bar and the first to
+       push it onto a second line. The footer keeps it on the monitor's own
+       page, and the shell tab shows it too. */
+    #topbar-title .uptime{display:none;}
+    /* The gauge track is fixed at 120px, which leaves too little for the label
+       once two gauges share a row. */
+    .gauge .track{width:76px;}
+    /* Thread number is the least informative column and the easiest to lose;
+       dropping it gives the filename the room it actually needs. */
+    th.col-thread,td.col-thread{display:none;}
+    th,td{padding-right:6px;}
+    .file-row .meta{gap:4px 10px;}
+    /* The Backup gauge carries a label, a bar, a percentage and an ETA, which
+       is more than fits on one line here. Let it wrap instead of pushing the
+       page sideways. */
+    .stat.gauge{white-space:normal;flex-wrap:wrap;}
+    /* "live, refreshing every 2s" is the least useful thing in the footer */
+    #footer-live{display:none;}
+    #footer{grid-template-columns:1fr auto;}
+  }
+  @media (max-width:380px){
+    /* At this width the pod hostname is longer than the space for it and
+       pushes the build label off the row. */
+    #footer-server{display:none;}
+  }
 </style>
 </head>
 <body>
@@ -373,7 +420,7 @@ INDEX_HTML = """<!doctype html>
     </table>
   </div>
 </main>
-<div id="footer"><span>live, refreshing every 2s</span><span id="footer-server"></span><span id="build"></span></div>
+<div id="footer"><span id="footer-live">live, refreshing every 2s</span><span id="footer-server"></span><span id="build"></span></div>
 <script>
 function pctClass(pct, invert){
   // invert=true: higher is worse (mem/swap gauges). invert=false: higher is better (rate).
@@ -485,8 +532,9 @@ async function tick(){
     document.getElementById('build').textContent = d.build_label || '';
     document.getElementById('footer-server').textContent =
       d.upload_pod ? ('Upload server: ' + d.upload_pod) : '';
-    document.getElementById('topbar-title').textContent =
-      'Backblaze 64 \u2022 Upload Monitor' + (d.uptime ? ' \u2022 ' + d.uptime : '');
+    document.getElementById('topbar-title').innerHTML =
+      'Backblaze 64 \u2022 Upload Monitor' +
+      (d.uptime ? '<span class="uptime"> \u2022 ' + esc(d.uptime) + '</span>' : '');
 
     rateHistory.push(d.rate_mb);
     if(rateHistory.length > 40) rateHistory.shift();

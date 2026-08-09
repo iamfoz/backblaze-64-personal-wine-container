@@ -57,7 +57,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `bb-monitor` gains everything the web dashboard had first: overall backup progress with
   its ETA, files remaining, round-trip time to the storage pod, and uptime.
 
+- The dashboard and the shell now work on a phone. The dashboard had no viewport meta, so
+  a mobile browser laid it out at around 980px and scaled it down to something unreadable;
+  an iframe does not inherit its parent's. Below 560px the thread column, the uptime in the
+  title bar and the refresh notice are dropped, the progress gauges narrow, the backup gauge
+  wraps rather than pushing the page sideways, and the tabs and settings button get proper
+  touch targets. Verified at 375px with long real-world paths.
+
 ### Fixed
+- A long file path made the whole page scroll sideways at any window width. Flex items
+  default to `min-width:auto` and so refuse to shrink below their content, which let one
+  path in the in-flight list widen everything around it.
 - File names were written into the page without HTML escaping, so a backed-up file whose
   name contained markup could inject it into the dashboard. Everything derived from
   Backblaze data is now escaped before rendering. Names come off a Linux array through
