@@ -15,6 +15,18 @@ that way until this has run without problems for a while, at which point it move
 stable release.
 
 ### Added
+- A second Wine patch, `patches/wine-fdwrite-rearm.patch`, re-arming FD_WRITE after a
+  poll observes that a socket cannot accept a send. Once FD_WRITE has been reported,
+  Wine masks POLLOUT for that socket and suppresses further notification, so an
+  application waiting on the event sleeps until its own timeout even though the socket
+  drained milliseconds later. Measured against the existing writability patch alone on a
+  live backup: aggregate upload rose from 13.0-13.9 Mbit/s to 40.9, at an unchanged
+  per-connection ceiling, so the gain is recovered idle time rather than a faster pipe.
+  **This is a workaround, not a fix.** It diverges from Windows, which does not re-signal
+  FD_WRITE on a poll-observed not-writable, and it is deliberately not being submitted
+  upstream. The upstream work is a larger redesign being discussed with the Wine
+  maintainers; this patch will be dropped as soon as that lands. Only `Dockerfile.beta`
+  applies it, and CI fails a stable build if a patched `wineserver` ever appears in one.
 - `bb-monitor` gains what the web dashboard had first: overall backup progress with its ETA,
   files remaining, round-trip time, uptime, and the assigned upload server.
 - A settings dialog in `bb-monitor` too: `s` opens it, `Tab` switches between Preferences
@@ -75,18 +87,6 @@ stable release.
   default to `min-width:auto` and so refuse to shrink below their content, which let one
   path in the in-flight list widen everything around it.
 
-- A second Wine patch, `patches/wine-fdwrite-rearm.patch`, re-arming FD_WRITE after a
-  poll observes that a socket cannot accept a send. Once FD_WRITE has been reported,
-  Wine masks POLLOUT for that socket and suppresses further notification, so an
-  application waiting on the event sleeps until its own timeout even though the socket
-  drained milliseconds later. Measured against the existing writability patch alone on a
-  live backup: aggregate upload rose from 13.0-13.9 Mbit/s to 40.9, at an unchanged
-  per-connection ceiling, so the gain is recovered idle time rather than a faster pipe.
-  **This is a workaround, not a fix.** It diverges from Windows, which does not re-signal
-  FD_WRITE on a poll-observed not-writable, and it is deliberately not being submitted
-  upstream. The upstream work is a larger redesign being discussed with the Wine
-  maintainers; this patch will be dropped as soon as that lands. Only `Dockerfile.beta`
-  applies it, and CI fails a stable build if a patched `wineserver` ever appears in one.
 
 ## [10.2.1] - 2026-08-07
 
