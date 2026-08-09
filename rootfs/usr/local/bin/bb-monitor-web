@@ -16,7 +16,7 @@ open port.
 Standalone, for testing:
     python3 bb-monitor-web --host 127.0.0.1 --port 8099
 """
-import argparse, calendar, json, os, re, sys, threading, time, unicodedata
+import argparse, calendar, json, os, re, socket, sys, threading, time, unicodedata
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
@@ -45,6 +45,120 @@ _rate_ema = 0.0
 # in). Weighting by actual bytes/duration over the last several completions
 # is far steadier than the live 2s network-counter sample.
 _completed_hist = deque(maxlen=10)
+
+# ---- round-trip time to the storage pod ----------------------------------
+# TCP connect time rather than ICMP: containers do not get the privileges for a
+# raw socket, and a handshake against port 443 measures the path the uploads
+# actually take. Worth showing because per-connection throughput is bounded by
+# send buffer divided by RTT, so this number plus the 64 KB buffer tells you the
+# per-thread ceiling to expect. Runs on its own slow cadence, off the 2s loop.
+#
+# Contributed by rogman.
+BZDC_SYNCHOSTINFO = BZ + "/bzreports/bzdc_synchostinfo.xml"
+FALLBACK_HOST = "www.backblaze.com"
+LATENCY_INTERVAL = 10.0
+LATENCY_TIMEOUT = 3.0
+_latency_lock = threading.Lock()
+_latency_ms = None
+_latency_host = None
+
+
+def _upload_host():
+    m = re.search(r'bz_upload_url="https?://([^/"]+)', read(BZDC_SYNCHOSTINFO))
+    return m.group(1) if m else None
+
+
+def _uid_for_pid(pid):
+    """Real UID of a process from /proc/<pid>/status. Readable without any
+    capability, unlike /proc/<pid>/fd."""
+    try:
+        with open(os.path.join(PROC, pid, "status")) as fh:
+            for line in fh:
+                if line.startswith("Uid:"):
+                    return line.split()[1]
+    except OSError:
+        pass
+    return None
+
+
+def _live_backblaze_ip():
+    """The address the upload threads are connected to right now, read from the
+    kernel's connection table. No DNS involved.
+
+    Matched by the socket's owning uid, which /proc/net/tcp reports directly,
+    rather than by walking the threads' own file descriptors: reading another
+    process's /proc/<pid>/fd needs CAP_SYS_PTRACE, which Docker does not grant
+    by default even to root. Reading uids needs nothing."""
+    uid = None
+    try:
+        entries = os.listdir(PROC)
+    except OSError:
+        return None
+    for pid in entries:
+        if not pid.isdigit():
+            continue
+        try:
+            with open(os.path.join(PROC, pid, "cmdline"), "rb") as fh:
+                if b"-threadpush" not in fh.read():
+                    continue
+        except OSError:
+            continue
+        uid = _uid_for_pid(pid)
+        if uid:
+            break
+    if uid is None:
+        return None
+    counts = {}
+    try:
+        with open(PROC + "/net/tcp") as fh:
+            lines = fh.read().splitlines()[1:]
+    except OSError:
+        return None
+    for line in lines:
+        f = line.split()
+        if len(f) < 8 or f[7] != uid or f[3] != "01":     # 01 = ESTABLISHED
+            continue
+        ip_hex, port_hex = f[2].split(":")
+        if port_hex.upper() != "01BB":                     # 443
+            continue
+        ip = ".".join(str(x) for x in bytes.fromhex(ip_hex)[::-1])
+        counts[ip] = counts.get(ip, 0) + 1
+    return max(counts, key=counts.get) if counts else None
+
+
+def _tcp_connect_ms(host, timeout):
+    try:
+        t0 = time.monotonic()
+        with socket.create_connection((host, 443), timeout=timeout):
+            return (time.monotonic() - t0) * 1000.0
+    except OSError:
+        return None
+
+
+def _latency_loop():
+    """Prefer the pod an upload is already talking to. The client's own
+    bz_upload_url hostname does not resolve from inside the container, so when
+    nothing is uploading this falls back to the public site, which may be a CDN
+    edge and therefore closer than the real pod. The UI labels which host was
+    measured so a low idle figure is not mistaken for the upload path."""
+    global _latency_ms, _latency_host
+    while True:
+        ms = used = None
+        live = _live_backblaze_ip()
+        if live:
+            ms = _tcp_connect_ms(live, LATENCY_TIMEOUT)
+            if ms is not None:
+                used = live
+        if ms is None:
+            for host in [h for h in (_upload_host(), FALLBACK_HOST) if h]:
+                ms = _tcp_connect_ms(host, LATENCY_TIMEOUT)
+                if ms is not None:
+                    used = host
+                    break
+        with _latency_lock:
+            _latency_ms, _latency_host = ms, used
+        time.sleep(LATENCY_INTERVAL)
+
 
 _lock = threading.Lock()
 _latest = {"ok": False, "error": "warming up"}
@@ -457,6 +571,8 @@ def snapshot_to_json(d):
     r = d["rate"]
     mem = d["mem"]
     swap = d["swap"]
+    with _latency_lock:
+        lat_ms, lat_host = _latency_ms, _latency_host
     files_out = []
     for name, part, fsize, pct in d["files"]:
         size_str = (human(fsize) + (" (chunked)" if fsize > part * 1.5 else "")) if fsize > 0 else "%d MB" % (part / 1048576)
@@ -490,6 +606,9 @@ def snapshot_to_json(d):
         "build_label": BUILD_LABEL,
         "interval": INT,
         "uptime": uptime_str(),
+        "latency_ms": (round(lat_ms, 1) if lat_ms is not None else None),
+        "latency_host": lat_host,
+        "upload_pod": _upload_host(),
         "about": ABOUT,
     }
 
@@ -605,7 +724,12 @@ INDEX_HTML = """<!doctype html>
   #topbar,#footer{background:var(--hi-bg);color:var(--hi-fg);padding:4px 10px;
        display:flex;justify-content:space-between;align-items:center;font-weight:bold;
        transition:background .25s,color .25s;}
-  #footer{position:sticky;bottom:0;}
+  /* three columns so the measured host sits centre and the build stays right,
+     regardless of how long the pod hostname is */
+  #footer{position:sticky;bottom:0;display:grid;
+       grid-template-columns:1fr auto 1fr;gap:10px;}
+  #footer-server{justify-self:center;text-align:center;overflow-wrap:anywhere;}
+  #build{justify-self:end;}
   #topbar-right{display:flex;align-items:center;gap:12px;}
   #theme-select{font-family:inherit;font-size:12px;font-weight:bold;background:var(--hi-fg);
        color:var(--hi-bg);border:1px solid var(--hi-fg);border-radius:2px;padding:2px 4px;
@@ -745,7 +869,7 @@ INDEX_HTML = """<!doctype html>
     </table>
   </div>
 </main>
-<div id="footer"><span>live, refreshing every 2s</span><span id="build"></span></div>
+<div id="footer"><span>live, refreshing every 2s</span><span id="footer-server"></span><span id="build"></span></div>
 <script>
 function pctClass(pct, invert){
   // invert=true: higher is worse (mem/swap gauges). invert=false: higher is better (rate).
@@ -765,6 +889,17 @@ function sparklineSvg(values, w, h){
   return '<svg class="spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">' +
          '<polyline points="'+pts+'" /></svg>';
 }
+function pingHtml(d){
+  // TCP handshake time, not ICMP. The tooltip names the host actually measured:
+  // with no upload running this falls back to the public site, which can be a
+  // CDN edge and read far lower than the real storage pod.
+  var tip = ' title="TCP connect time to ' + esc(d.latency_host || 'n/a') +
+            ' (not ICMP; measures the upload path only while uploading)"';
+  if(d.latency_ms == null) return '<span class="stat dim"'+tip+'>RTT: n/a</span>';
+  var cls = d.latency_ms < 80 ? 'good' : (d.latency_ms < 200 ? 'warn' : 'bad');
+  return '<span class="stat"'+tip+'>RTT: <span class="'+cls+'">' +
+         Math.round(d.latency_ms) + 'ms</span></span>';
+}
 function gaugeHtml(label, g, highIsGood, extra, suffix){
   if(!g) return '<span class="stat">'+label+': n/a</span>';
   var cls = highIsGood
@@ -772,7 +907,7 @@ function gaugeHtml(label, g, highIsGood, extra, suffix){
     : (g.pct>=90 ? 'bad' : (g.pct>=70 ? 'warn' : ''));
   var tip = extra ? ' title="'+extra+'"' : '';
   var suf = suffix ? ' <span class="dim">'+suffix+'</span>' : '';
-  return '<span class="stat gauge '+cls+'"'+tip+'>'+label+': '+g.used_str+'/'+g.total_str+
+  return '<span class="stat gauge '+cls+'"'+tip+'>'+label+': '+esc(g.used_str)+'/'+esc(g.total_str)+
          ' <span class="track"><span class="fill" style="width:'+Math.min(100,g.pct)+'%"></span></span> '+g.pct+'%'+suf+'</span>';
 }
 var lastState = null;
@@ -786,6 +921,10 @@ function updateFavicon(state){
   var link = document.getElementById('favicon');
   if(link) link.href = 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
+// Defined before first use by hoisting; called from every path that puts
+// Backblaze-derived text into innerHTML. Filenames come off a Linux array
+// mapped into Wine's drive-letter view, so they carry no guarantee of avoiding
+// HTML-special characters the way native Windows names would.
 function esc(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
@@ -834,6 +973,8 @@ async function tick(){
     document.getElementById('err').style.display='none';
     document.getElementById('clock').textContent = d.clock;
     document.getElementById('build').textContent = d.build_label || '';
+    document.getElementById('footer-server').textContent =
+      d.upload_pod ? ('Upload server: ' + d.upload_pod) : '';
     document.getElementById('topbar-title').textContent =
       'Backblaze 64 \u2022 Upload Monitor' + (d.uptime ? ' \u2022 ' + d.uptime : '');
 
@@ -853,6 +994,7 @@ async function tick(){
       '<span class="stat">Chunks/60s: '+d.chunks+'</span>' +
       '<span class="stat">Session: '+d.session_str+'</span>' +
       '<span class="stat">State: <span class="'+stateCls+'">'+d.state+'</span></span>' +
+      pingHtml(d) +
       gaugeHtml('Mem', d.mem, false) +
       gaugeHtml('Swap', d.swap, false) +
       '<span class="stat">Files Remaining: '+(d.backup && d.backup.remaining_files!=null ? d.backup.remaining_files.toLocaleString() : 'n/a')+'</span>' +
@@ -870,7 +1012,7 @@ async function tick(){
       up.innerHTML = d.files.map(f=>{
         var cls = f.pct>=67?'good':(f.pct>=34?'warn':'bad');
         return '<div class="file-row"><div class="track"><span class="fill '+cls+'" style="width:'+f.pct+'%"></span></div>' +
-               '<div class="meta"><span>'+f.pct.toFixed(0)+'%</span><span>'+f.size_str+'</span><span>'+f.name+'</span></div></div>';
+               '<div class="meta"><span>'+f.pct.toFixed(0)+'%</span><span>'+esc(f.size_str)+'</span><span>'+esc(f.name)+'</span></div></div>';
       }).join('');
     }
 
@@ -879,9 +1021,9 @@ async function tick(){
       tb.innerHTML = '<tr><td colspan="5" id="empty">(watching for completions&hellip;)</td></tr>';
     } else {
       tb.innerHTML = d.recent.slice().reverse().map(r=>
-        '<tr><td class="col-time">'+r.time+'</td><td class="col-thread">'+r.thread+'</td>'+
-        '<td class="col-size">'+r.size+'</td><td class="col-rate">'+r.rate+'</td>'+
-        '<td class="col-file">'+r.name+'</td></tr>'
+        '<tr><td class="col-time">'+esc(r.time)+'</td><td class="col-thread">'+esc(r.thread)+'</td>'+
+        '<td class="col-size">'+esc(r.size)+'</td><td class="col-rate">'+esc(r.rate)+'</td>'+
+        '<td class="col-file">'+esc(r.name)+'</td></tr>'
       ).join('');
     }
   }catch(e){
@@ -979,8 +1121,8 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()
 
-    t = threading.Thread(target=_loop, daemon=True)
-    t.start()
+    threading.Thread(target=_loop, daemon=True).start()
+    threading.Thread(target=_latency_loop, daemon=True).start()
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print("bb-monitor-web listening on http://%s:%d/" % (args.host, args.port))

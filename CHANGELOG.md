@@ -19,6 +19,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A settings dialog holding the thirteen colour themes and an About tab reporting the
   running build, licence and credits. About is served with every payload including the
   error ones, so it still answers "which build is this" when data collection is broken.
+- Round-trip time to the storage pod in the status row, measured by TCP handshake rather
+  than ICMP because a container is not given the privileges for a raw socket. It reads the
+  address the upload threads are connected to out of the kernel's connection table, matched
+  by the socket's owning uid rather than by walking another process's file descriptors,
+  which would need `CAP_SYS_PTRACE`. Worth having because per-connection throughput is
+  bounded by send buffer divided by RTT, so this plus the buffer size gives the per-thread
+  ceiling to expect. The tooltip names the host measured: with nothing uploading it falls
+  back to the public site, which can be a CDN edge and read lower than the real pod.
+  Contributed by rogman.
+- The assigned upload server shown in the footer.
+
+### Fixed
+- File names were written into the page without HTML escaping, so a backed-up file whose
+  name contained markup could inject it into the dashboard. Everything derived from
+  Backblaze data is now escaped before rendering. Names come off a Linux array through
+  Wine's drive-letter view, so they carry none of the character restrictions a native
+  Windows path would. Found by rogman.
 
 ## [beta] - 2026-08-07
 
