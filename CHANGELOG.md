@@ -25,12 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by the socket's owning uid rather than by walking another process's file descriptors,
   which would need `CAP_SYS_PTRACE`. Worth having because per-connection throughput is
   bounded by send buffer divided by RTT, so this plus the buffer size gives the per-thread
-  ceiling to expect. It measures only while an upload is actually running, and only against
-  the pod that upload is already using, so an idle container makes no connections at all
-  and a settled one makes a few hundred a day rather than thousands. There is deliberately
-  no fallback to Backblaze's public website: it would measure the wrong path and put a
-  recurring pattern on infrastructure that has nothing to do with backups.
-  Contributed by rogman.
+  ceiling to expect. The figure is read out of the kernel rather than measured: every
+  established connection already carries a smoothed round-trip time, and `NETLINK_SOCK_DIAG`
+  exposes it for sockets this process does not own, which is the same interface `ss -ti`
+  uses. So nothing extra is ever sent to Backblaze, there is no traffic at all when idle,
+  and the number describes the upload connections themselves rather than a separate probe
+  that merely resembles them. `bb-monitor-web --dump-rtt` prints what the kernel reports,
+  for checking it inside a container. Contributed in concept by rogman.
 - The assigned upload server shown in the footer.
 
 ### Fixed

@@ -16,7 +16,7 @@ open port.
 Standalone, for testing:
     python3 bb-monitor-web --host 127.0.0.1 --port 8099
 """
-import argparse, calendar, json, os, re, socket, sys, threading, time, unicodedata
+import argparse, calendar, json, os, re, socket, struct, sys, threading, time, unicodedata
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
@@ -47,24 +47,32 @@ _rate_ema = 0.0
 _completed_hist = deque(maxlen=10)
 
 # ---- round-trip time to the storage pod ----------------------------------
-# TCP connect time rather than ICMP: containers do not get the privileges for a
-# raw socket, and a handshake against port 443 measures the path the uploads
-# actually take. Worth showing because per-connection throughput is bounded by
-# send buffer divided by RTT, so this number plus the 64 KB buffer tells you the
-# per-thread ceiling to expect. Runs on its own slow cadence, off the 2s loop.
+# Read from the kernel, not measured by us. Every established TCP connection
+# already carries a smoothed RTT the kernel maintains from its own ACK timing,
+# and NETLINK_SOCK_DIAG exposes it for sockets this process does not own. That
+# is the same interface `ss -ti` uses.
 #
-# Contributed by rogman.
+# So the figure comes from the upload connections themselves rather than from a
+# probe of our own: nothing extra is sent to Backblaze, there is no traffic when
+# idle, and the number describes the actual upload path rather than a separate
+# handshake that merely resembles it. An earlier version opened its own TCP
+# connection every ten seconds; this replaced it.
+#
+# Contributed in concept by rogman; reworked to read the kernel instead.
 BZDC_SYNCHOSTINFO = BZ + "/bzreports/bzdc_synchostinfo.xml"
-# Deliberately no fallback host. The obvious candidate, www.backblaze.com, is
-# their public website and very likely CDN-fronted, so probing it would measure
-# the wrong path AND put a recurring pattern on infrastructure that has nothing
-# to do with backups. If no upload connection is live there is nothing worth
-# measuring, so the UI says so instead.
-LATENCY_INTERVAL = 60.0     # RTT to a datacentre does not move minute to minute
-LATENCY_TIMEOUT = 3.0
-_latency_lock = threading.Lock()
-_latency_ms = None
-_latency_host = None
+
+NETLINK_SOCK_DIAG = 4
+SOCK_DIAG_BY_FAMILY = 20
+NLM_F_REQUEST = 0x001
+NLM_F_DUMP = 0x300
+NLMSG_ERROR = 0x2
+NLMSG_DONE = 0x3
+INET_DIAG_INFO = 2
+TCP_ESTABLISHED = 1
+# struct tcp_info: eight u8 fields, then u32s. tcpi_rtt is the 16th u32, so it
+# sits at 8 + 15*4. Microseconds, smoothed. This offset has been stable across
+# the whole 3.x/4.x/5.x/6.x series because fields are only ever appended.
+TCPI_RTT_OFFSET = 68
 
 
 def _upload_host():
@@ -72,28 +80,10 @@ def _upload_host():
     return m.group(1) if m else None
 
 
-def _uid_for_pid(pid):
-    """Real UID of a process from /proc/<pid>/status. Readable without any
-    capability, unlike /proc/<pid>/fd."""
-    try:
-        with open(os.path.join(PROC, pid, "status")) as fh:
-            for line in fh:
-                if line.startswith("Uid:"):
-                    return line.split()[1]
-    except OSError:
-        pass
-    return None
-
-
-def _live_backblaze_ip():
-    """The address the upload threads are connected to right now, read from the
-    kernel's connection table. No DNS involved.
-
-    Matched by the socket's owning uid, which /proc/net/tcp reports directly,
-    rather than by walking the threads' own file descriptors: reading another
-    process's /proc/<pid>/fd needs CAP_SYS_PTRACE, which Docker does not grant
-    by default even to root. Reading uids needs nothing."""
-    uid = None
+def _threadpush_uid():
+    """UID owning the -threadpush upload processes, or None when nothing is
+    uploading. Read from /proc/<pid>/status, which needs no capability, unlike
+    /proc/<pid>/fd."""
     try:
         entries = os.listdir(PROC)
     except OSError:
@@ -105,66 +95,86 @@ def _live_backblaze_ip():
             with open(os.path.join(PROC, pid, "cmdline"), "rb") as fh:
                 if b"-threadpush" not in fh.read():
                     continue
+            with open(os.path.join(PROC, pid, "status")) as fh:
+                for line in fh:
+                    if line.startswith("Uid:"):
+                        return line.split()[1]
         except OSError:
             continue
-        uid = _uid_for_pid(pid)
-        if uid:
-            break
+    return None
+
+
+def _diag_dump(family):
+    """One NETLINK_SOCK_DIAG dump of established TCP sockets for a family,
+    yielding (peer_ip, uid, rtt_us) per socket that reported tcp_info."""
+    req = struct.pack("=BBBBI", family, socket.IPPROTO_TCP,
+                       1 << (INET_DIAG_INFO - 1), 0, 1 << TCP_ESTABLISHED)
+    req += bytes(48)                       # inet_diag_sockid: all-zero = match any
+    hdr = struct.pack("=IHHII", 16 + len(req), SOCK_DIAG_BY_FAMILY,
+                       NLM_F_REQUEST | NLM_F_DUMP, 1, 0)
+    sk = socket.socket(socket.AF_NETLINK, socket.SOCK_DGRAM, NETLINK_SOCK_DIAG)
+    try:
+        sk.settimeout(2.0)
+        sk.send(hdr + req)
+        while True:
+            buf = sk.recv(1 << 17)
+            off = 0
+            while off + 16 <= len(buf):
+                mlen, mtype = struct.unpack_from("=IH", buf, off)
+                if mlen < 16 or off + mlen > len(buf):
+                    return
+                if mtype in (NLMSG_DONE, NLMSG_ERROR):
+                    return
+                body = off + 16
+                # inet_diag_msg: 4 bytes, then a 48-byte sockid, then five u32s.
+                dport = struct.unpack_from("!H", buf, body + 6)[0]
+                dst = buf[body + 24:body + 40]
+                uid = struct.unpack_from("=I", buf, body + 52 + 12)[0]
+                rtt_us = None
+                apos = body + 72
+                while apos + 4 <= off + mlen:
+                    rta_len, rta_type = struct.unpack_from("=HH", buf, apos)
+                    if rta_len < 4:
+                        break
+                    if rta_type == INET_DIAG_INFO and rta_len - 4 > TCPI_RTT_OFFSET:
+                        rtt_us = struct.unpack_from("=I", buf, apos + 4 + TCPI_RTT_OFFSET)[0]
+                    apos += (rta_len + 3) & ~3
+                if rtt_us:
+                    raw = dst[:4] if family == socket.AF_INET else dst
+                    try:
+                        yield socket.inet_ntop(family, raw), uid, dport, rtt_us
+                    except (ValueError, OSError):
+                        pass
+                off += (mlen + 3) & ~3
+    finally:
+        sk.close()
+
+
+def _upload_rtt():
+    """(rtt_ms, peer) for the upload connections, or (None, None).
+
+    Median across the live upload sockets, which is steadier than any single
+    connection and unaffected by one thread that has just opened. Returns None
+    whenever nothing is uploading, which is the honest answer: there is no
+    upload path to describe at that point."""
+    if not hasattr(socket, "AF_NETLINK"):
+        return None, None          # not Linux; no kernel table to read
+    uid = _threadpush_uid()
     if uid is None:
-        return None
-    counts = {}
-    try:
-        with open(PROC + "/net/tcp") as fh:
-            lines = fh.read().splitlines()[1:]
-    except OSError:
-        return None
-    for line in lines:
-        f = line.split()
-        if len(f) < 8 or f[7] != uid or f[3] != "01":     # 01 = ESTABLISHED
-            continue
-        ip_hex, port_hex = f[2].split(":")
-        if port_hex.upper() != "01BB":                     # 443
-            continue
-        ip = ".".join(str(x) for x in bytes.fromhex(ip_hex)[::-1])
-        counts[ip] = counts.get(ip, 0) + 1
-    return max(counts, key=counts.get) if counts else None
-
-
-def _tcp_connect_ms(host, timeout):
-    try:
-        t0 = time.monotonic()
-        with socket.create_connection((host, 443), timeout=timeout):
-            return (time.monotonic() - t0) * 1000.0
-    except OSError:
-        return None
-
-
-def _latency_loop():
-    """Measure only while an upload is actually running, and only against the
-    pod that upload is already talking to.
-
-    Being a good guest matters more here than a always-populated number. A
-    settled backup is idle most of the time, and probing on a timer regardless
-    would mean thousands of connections a day per container, every one of them
-    opening 443 and closing without a ClientHello, which looks like scanning
-    rather than like a client. So: no upload in flight, no probe, and the panel
-    reads n/a. There is nothing meaningful to measure at that point anyway.
-
-    The probe itself is a bare handshake with no TLS negotiation and no request,
-    so it costs the far end no crypto. At a minute apart, alongside the many
-    long-lived TLS connections the client is already holding open, it is not a
-    measurable addition to their load."""
-    global _latency_ms, _latency_host
-    while True:
-        ms = used = None
-        live = _live_backblaze_ip()          # None unless -threadpush is running
-        if live:
-            ms = _tcp_connect_ms(live, LATENCY_TIMEOUT)
-            if ms is not None:
-                used = live
-        with _latency_lock:
-            _latency_ms, _latency_host = ms, used
-        time.sleep(LATENCY_INTERVAL)
+        return None, None
+    samples = []
+    for family in (socket.AF_INET, socket.AF_INET6):
+        try:
+            for peer, sock_uid, dport, rtt_us in _diag_dump(family):
+                if dport == 443 and str(sock_uid) == uid:
+                    samples.append((rtt_us / 1000.0, peer))
+        except OSError:
+            continue               # netlink unavailable in this container
+    if not samples:
+        return None, None
+    samples.sort()
+    ms, peer = samples[len(samples) // 2]
+    return ms, peer
 
 
 _lock = threading.Lock()
@@ -578,8 +588,7 @@ def snapshot_to_json(d):
     r = d["rate"]
     mem = d["mem"]
     swap = d["swap"]
-    with _latency_lock:
-        lat_ms, lat_host = _latency_ms, _latency_host
+    lat_ms, lat_host = _upload_rtt()
     files_out = []
     for name, part, fsize, pct in d["files"]:
         size_str = (human(fsize) + (" (chunked)" if fsize > part * 1.5 else "")) if fsize > 0 else "%d MB" % (part / 1048576)
@@ -1125,14 +1134,38 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--dump-rtt", action="store_true",
+                     help="Print what the kernel reports for the live upload "
+                          "connections, then exit. For checking the netlink read "
+                          "inside the container without going through the UI.")
     ap.add_argument("--port", type=int, default=8099)
     # Loopback by default: nginx fronts this, and binding 0.0.0.0 would put
     # the names of every backed-up file on the LAN with no authentication.
     ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()
 
+    if args.dump_rtt:
+        uid = _threadpush_uid()
+        print("threadpush uid:  %s" % (uid if uid else "none (nothing uploading)"))
+        if hasattr(socket, "AF_NETLINK"):
+            rows = []
+            for fam in (socket.AF_INET, socket.AF_INET6):
+                try:
+                    rows += [(p, u, d, r) for p, u, d, r in _diag_dump(fam)]
+                except OSError as e:
+                    print("netlink dump failed for family %s: %s" % (fam, e))
+            print("established TCP sockets reporting tcp_info: %d" % len(rows))
+            for peer, u, dport, rtt in rows:
+                mark = " <- upload" if (dport == 443 and str(u) == str(uid)) else ""
+                print("  %-40s uid=%-6s dport=%-5d rtt=%.1f ms%s"
+                      % (peer, u, dport, rtt / 1000.0, mark))
+        else:
+            print("no AF_NETLINK on this platform")
+        ms, peer = _upload_rtt()
+        print("reported: %s" % ("n/a" if ms is None else "%.1f ms via %s" % (ms, peer)))
+        return
+
     threading.Thread(target=_loop, daemon=True).start()
-    threading.Thread(target=_latency_loop, daemon=True).start()
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print("bb-monitor-web listening on http://%s:%d/" % (args.host, args.port))
