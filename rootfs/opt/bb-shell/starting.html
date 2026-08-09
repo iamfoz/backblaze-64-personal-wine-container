@@ -1,0 +1,63 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upload Monitor &bull; starting</title>
+<style>
+  /* Deliberately close to the dashboard's default theme so the transition to the
+     real page is not a jolt. */
+  html,body{height:100%;margin:0;}
+  body{background:#0a1830;color:#d7e6ff;display:flex;align-items:center;
+       justify-content:center;text-align:center;padding:20px;
+       font-family:"Cascadia Mono","Consolas","Menlo",monospace;font-size:14px;}
+  .card{max-width:460px;}
+  h1{font-size:15px;color:#39c5ff;margin:0 0 10px;}
+  p{margin:0 0 8px;line-height:1.5;}
+  .dim{opacity:.6;font-size:13px;}
+  .bad{color:#ff5a5a;}
+  #dots::after{content:"";animation:d 1.2s steps(4,end) infinite;}
+  @keyframes d{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+</style>
+</head><body>
+<div class="card">
+  <h1>Upload Monitor</h1>
+  <p id="msg">Waiting for the monitor service<span id="dots"></span></p>
+  <p class="dim" id="detail">The container is still starting up. This page will
+     load the dashboard as soon as it is ready.</p>
+</div>
+<script>
+// Served by nginx when the dashboard's own service is not listening yet, which
+// happens for a few seconds after the container starts. Without this the tab
+// showed a bare 502 and stayed there: the shell loads the frame once, so nothing
+// retried until the whole page was reloaded by hand.
+//
+// Polls the same relative path the dashboard uses, so it works both inside the
+// shell's tab and when /monitor/ is opened directly.
+(function(){
+  var tries = 0, MAX = 150;              // 150 x 2s = five minutes
+  function attempt(){
+    tries++;
+    fetch('api/status', {cache:'no-store'})
+      .then(function(r){
+        if(!r.ok) throw new Error(r.status);
+        location.reload();               // service is up: swap in the real page
+      })
+      .catch(function(){
+        if(tries >= MAX){
+          document.getElementById('msg').innerHTML =
+            '<span class="bad">The monitor service did not start.</span>';
+          document.getElementById('detail').textContent =
+            'Check the container log, or run: docker exec <container> pgrep -af bb-monitor-web';
+          return;
+        }
+        if(tries === 5){                 // only after it stops looking routine
+          document.getElementById('detail').textContent =
+            'Still waiting after ' + (tries * 2) + ' seconds. Backblaze itself is '
+            + 'unaffected; this is only the dashboard.';
+        }
+        setTimeout(attempt, 2000);
+      });
+  }
+  attempt();
+})();
+</script>
+</body></html>

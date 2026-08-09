@@ -80,6 +80,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   256-colour terminal and are hidden otherwise.
 
 ### Fixed
+- Opening the monitor shortly after a container start gave a bare 502 that stayed until the
+  page was reloaded by hand, because the shell loads the frame once and nothing retried.
+  nginx now serves a holding page for the few seconds before the service is listening; it
+  polls and loads the dashboard itself once ready, and says so plainly if the service never
+  comes up. Applies to `/monitor/` opened directly as much as to the tab.
 - The desktop tab never got past "connecting". noVNC builds its websocket URL by appending
   `websockify` to `location.pathname`, so framing it at `/index.html` asked for
   `/index.htmlwebsockify`, which matches no route. It is now served from `/desktop/`, giving
