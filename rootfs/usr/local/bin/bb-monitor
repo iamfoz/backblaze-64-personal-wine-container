@@ -349,8 +349,13 @@ def draw_overlay(scr, st):
                 aw(scr, top + 4, bx + 2, wclip(
                     "Terminal reports %d colours: themes are approximated"
                     % curses.COLORS, bw - 4), DIM)
+                # Point at the route that already works rather than asking for a
+                # docker exec line to be reconstructed: `docker exec -t` sets
+                # TERM=xterm regardless of the client, while Unraid's own console
+                # popup arrives with 256 colours already.
                 aw(scr, top + 5, bx + 2, wclip(
-                    "For the full set, run with TERM=xterm-256color", bw - 4), DIM)
+                    "Unraid's container Console gives full colour, or pass "
+                    "-e TERM=xterm-256color", bw - 4), DIM)
             hint = "Enter change theme \u2022 Tab About \u2022 Esc close"
     else:
         y = top
