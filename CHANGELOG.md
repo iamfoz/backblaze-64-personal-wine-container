@@ -25,8 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by the socket's owning uid rather than by walking another process's file descriptors,
   which would need `CAP_SYS_PTRACE`. Worth having because per-connection throughput is
   bounded by send buffer divided by RTT, so this plus the buffer size gives the per-thread
-  ceiling to expect. The tooltip names the host measured: with nothing uploading it falls
-  back to the public site, which can be a CDN edge and read lower than the real pod.
+  ceiling to expect. It measures only while an upload is actually running, and only against
+  the pod that upload is already using, so an idle container makes no connections at all
+  and a settled one makes a few hundred a day rather than thousands. There is deliberately
+  no fallback to Backblaze's public website: it would measure the wrong path and put a
+  recurring pattern on infrastructure that has nothing to do with backups.
   Contributed by rogman.
 - The assigned upload server shown in the footer.
 

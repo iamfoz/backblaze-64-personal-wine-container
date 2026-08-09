@@ -55,8 +55,12 @@ _completed_hist = deque(maxlen=10)
 #
 # Contributed by rogman.
 BZDC_SYNCHOSTINFO = BZ + "/bzreports/bzdc_synchostinfo.xml"
-FALLBACK_HOST = "www.backblaze.com"
-LATENCY_INTERVAL = 10.0
+# Deliberately no fallback host. The obvious candidate, www.backblaze.com, is
+# their public website and very likely CDN-fronted, so probing it would measure
+# the wrong path AND put a recurring pattern on infrastructure that has nothing
+# to do with backups. If no upload connection is live there is nothing worth
+# measuring, so the UI says so instead.
+LATENCY_INTERVAL = 60.0     # RTT to a datacentre does not move minute to minute
 LATENCY_TIMEOUT = 3.0
 _latency_lock = threading.Lock()
 _latency_ms = None
@@ -136,25 +140,28 @@ def _tcp_connect_ms(host, timeout):
 
 
 def _latency_loop():
-    """Prefer the pod an upload is already talking to. The client's own
-    bz_upload_url hostname does not resolve from inside the container, so when
-    nothing is uploading this falls back to the public site, which may be a CDN
-    edge and therefore closer than the real pod. The UI labels which host was
-    measured so a low idle figure is not mistaken for the upload path."""
+    """Measure only while an upload is actually running, and only against the
+    pod that upload is already talking to.
+
+    Being a good guest matters more here than a always-populated number. A
+    settled backup is idle most of the time, and probing on a timer regardless
+    would mean thousands of connections a day per container, every one of them
+    opening 443 and closing without a ClientHello, which looks like scanning
+    rather than like a client. So: no upload in flight, no probe, and the panel
+    reads n/a. There is nothing meaningful to measure at that point anyway.
+
+    The probe itself is a bare handshake with no TLS negotiation and no request,
+    so it costs the far end no crypto. At a minute apart, alongside the many
+    long-lived TLS connections the client is already holding open, it is not a
+    measurable addition to their load."""
     global _latency_ms, _latency_host
     while True:
         ms = used = None
-        live = _live_backblaze_ip()
+        live = _live_backblaze_ip()          # None unless -threadpush is running
         if live:
             ms = _tcp_connect_ms(live, LATENCY_TIMEOUT)
             if ms is not None:
                 used = live
-        if ms is None:
-            for host in [h for h in (_upload_host(), FALLBACK_HOST) if h]:
-                ms = _tcp_connect_ms(host, LATENCY_TIMEOUT)
-                if ms is not None:
-                    used = host
-                    break
         with _latency_lock:
             _latency_ms, _latency_host = ms, used
         time.sleep(LATENCY_INTERVAL)
@@ -893,9 +900,12 @@ function pingHtml(d){
   // TCP handshake time, not ICMP. The tooltip names the host actually measured:
   // with no upload running this falls back to the public site, which can be a
   // CDN edge and read far lower than the real storage pod.
-  var tip = ' title="TCP connect time to ' + esc(d.latency_host || 'n/a') +
-            ' (not ICMP; measures the upload path only while uploading)"';
-  if(d.latency_ms == null) return '<span class="stat dim"'+tip+'>RTT: n/a</span>';
+  if(d.latency_ms == null){
+    return '<span class="stat dim" title="Measured only while an upload is ' +
+           'running, against the pod that upload is using">RTT: n/a</span>';
+  }
+  var tip = ' title="TCP handshake to ' + esc(d.latency_host) +
+            ', the pod your uploads are using (not ICMP)"';
   var cls = d.latency_ms < 80 ? 'good' : (d.latency_ms < 200 ? 'warn' : 'bad');
   return '<span class="stat"'+tip+'>RTT: <span class="'+cls+'">' +
          Math.round(d.latency_ms) + 'ms</span></span>';
