@@ -39,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   container. Contributed in concept by rogman.
 - The assigned upload server shown in the footer.
 
+- The web interface now opens on a tabbed shell offering the Wine desktop and the upload
+  monitor, so the WebUI button reaches both rather than only the desktop. Switching tabs
+  hides the desktop rather than unloading it, so the VNC session and the running desktop
+  survive a look at the monitor. The monitor frame is loaded on first use, so its polling
+  never starts for someone who does not open it. The desktop remains directly reachable at
+  `/index.html` if the shell itself is ever the problem.
+
 ### Changed
 - `bb-monitor` and `bb-monitor-web` now share one data layer, `/usr/local/lib/bb-monitor/bbdata.py`.
   Each previously carried its own copy of the code that reads `/proc`, the cgroups and

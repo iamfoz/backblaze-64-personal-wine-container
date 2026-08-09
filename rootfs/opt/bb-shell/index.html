@@ -1,0 +1,86 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backblaze 64</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+  /* Deliberately plain and thin. The desktop and the monitor each have their own
+     look, and the monitor has thirteen themes; a shell with opinions of its own
+     would clash with whichever one is picked. */
+  :root{ --bar:#0e2148; --bar-fg:#d7e6ff; --accent:#39c5ff; --edge:#1c3a63; }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;background:#0a1830;}
+  body{display:flex;flex-direction:column;
+       font-family:"Cascadia Mono","Consolas","Menlo",monospace;font-size:13px;}
+  #tabs{display:flex;align-items:stretch;background:var(--bar);color:var(--bar-fg);
+        border-bottom:1px solid var(--edge);flex:0 0 auto;}
+  #tabs button{appearance:none;background:transparent;border:0;
+        border-bottom:2px solid transparent;color:var(--bar-fg);font:inherit;
+        font-weight:bold;padding:7px 18px;cursor:pointer;opacity:.6;
+        transition:opacity .15s,border-color .15s;}
+  #tabs button:hover{opacity:.9;}
+  #tabs button[aria-selected="true"]{opacity:1;color:var(--accent);
+        border-bottom-color:var(--accent);}
+  #brand{margin-left:auto;display:flex;align-items:center;padding:0 12px;
+        opacity:.45;font-weight:bold;letter-spacing:.02em;}
+  .pane{flex:1 1 auto;border:0;width:100%;display:block;background:#0a1830;}
+  .pane[hidden]{display:none;}
+  #fallback{padding:14px;color:#ff5a5a;}
+</style>
+</head>
+<body>
+<div id="tabs" role="tablist">
+  <button role="tab" data-pane="desktop" aria-controls="pane-desktop" aria-selected="true">Desktop</button>
+  <button role="tab" data-pane="monitor" aria-controls="pane-monitor" aria-selected="false">Upload Monitor</button>
+  <span id="brand">Backblaze 64</span>
+</div>
+
+<!-- The desktop iframe is created once and only ever hidden, never removed and
+     never re-pointed. Tearing it down would drop the VNC session and the Wine
+     desktop would reconnect from scratch every time someone glanced at the
+     monitor. Hiding keeps the socket and the running session intact. -->
+<iframe id="pane-desktop" class="pane" role="tabpanel" src="/index.html"
+        allow="fullscreen; clipboard-read; clipboard-write"
+        title="Wine desktop"></iframe>
+
+<!-- The monitor is loaded lazily: its page polls every two seconds, so there is
+     no reason to start that before anyone has asked to see it. -->
+<iframe id="pane-monitor" class="pane" role="tabpanel" hidden
+        title="Upload monitor"></iframe>
+
+<script>
+(function(){
+  var MON = '/monitor/';
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('#tabs button'));
+  var panes = { desktop: document.getElementById('pane-desktop'),
+                monitor: document.getElementById('pane-monitor') };
+  var loaded = { desktop: true, monitor: false };
+
+  function show(name){
+    if(!panes[name]) name = 'desktop';
+    if(name === 'monitor' && !loaded.monitor){
+      panes.monitor.src = MON;      // first activation only
+      loaded.monitor = true;
+    }
+    tabs.forEach(function(t){
+      var on = t.getAttribute('data-pane') === name;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      panes[t.getAttribute('data-pane')].hidden = !on;
+    });
+    try { localStorage.setItem('bbShellTab', name); } catch(e){}
+    // Keep the address bar honest without reloading, so a refresh or a shared
+    // link lands on the same tab.
+    try { history.replaceState(null, '', name === 'desktop' ? '/' : '/?tab=monitor'); } catch(e){}
+  }
+
+  tabs.forEach(function(t){
+    t.addEventListener('click', function(){ show(t.getAttribute('data-pane')); });
+  });
+
+  var q = new URLSearchParams(location.search).get('tab');
+  var saved = null;
+  try { saved = localStorage.getItem('bbShellTab'); } catch(e){}
+  show(q || saved || 'desktop');
+})();
+</script>
+</body></html>
