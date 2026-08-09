@@ -25,7 +25,7 @@ from collections import deque
 # added to bbdata now shows up in both. This file owns curses and nothing else.
 sys.path.insert(0, "/usr/local/lib/bb-monitor")
 from bbdata import (BUILD_INFO, BUILD_LABEL, INT, eta_str, gather, human,
-                     rec_cols, uptime_str, _upload_rtt)
+                     rec_cols, uptime_str, _upload_host, _upload_rtt)
 
 
 # ---- themes -------------------------------------------------------------------
@@ -235,6 +235,13 @@ def draw(scr,d,st):
         chunks.append(gauge("Backup:",human(b["done"]),human(b["total"]),b["pct"],
                              high_is_good=True,note="ETA "+eta_str(b.get("eta_seconds"))))
     chunks.append(txt([("Uptime: ",NORM),(uptime_str(),NORM)]))
+    # The web dashboard has this in its footer, which has the width for it. Here
+    # the footer already carries the key hints and the build label, and a 29
+    # character hostname does not fit alongside both below about 120 columns. The
+    # status grid wraps whole items to whatever width there is, so it shows up on
+    # an 80 column terminal instead of silently vanishing.
+    pod=_upload_host()
+    if pod: chunks.append(txt([("Server: ",NORM),(pod,NORM)]))
     SEP=3; inner=max(1,w-4); placements=[]; line=0; cx=0
     for c in chunks:
         if cx==0: placements.append((c,line,0)); cx=c["w"]

@@ -8,97 +8,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `bb-monitor-web`, the upload dashboard served over HTTP instead of the terminal, so a
-  session survives the console window closing. Adds overall backup progress with an ETA
-  weighted by completed transfers, files remaining, a live rate sparkline, uptime, and a
-  compact mode (`?compact=1`) for embedding a status tile in a dashboard such as Homarr.
-  Concept contributed by rogman.
+  session survives the console window closing. Shows overall backup progress with an ETA
+  weighted by completed transfers, files remaining, a live rate sparkline and uptime. 
+  Contributed by rogman.
 - The dashboard is served through the existing web interface at `/monitor/` rather than on
   a second port, so it inherits whatever `WEB_AUTHENTICATION` and `SECURE_CONNECTION` are
-  configured for the GUI. The service itself binds loopback only. A second open port would
-  have published the name of every file being backed up to anyone on the LAN.
-- A settings dialog holding the thirteen colour themes and an About tab reporting the
-  running build, licence and credits. About is served with every payload including the
-  error ones, so it still answers "which build is this" when data collection is broken.
-- Round-trip time to the storage pod in the status row, measured by TCP handshake rather
-  than ICMP because a container is not given the privileges for a raw socket. It reads the
-  address the upload threads are connected to out of the kernel's connection table, matched
-  by the socket's owning uid rather than by walking another process's file descriptors,
-  which would need `CAP_SYS_PTRACE`. Worth having because per-connection throughput is
-  bounded by send buffer divided by RTT, so this plus the buffer size gives the per-thread
-  ceiling to expect. The figure is read out of the kernel rather than measured: every
-  established connection already carries a smoothed round-trip time, and `NETLINK_SOCK_DIAG`
-  exposes it for sockets this process does not own, which is the same interface `ss -ti`
-  uses. So nothing extra is ever sent to Backblaze, there is no traffic at all when idle,
-  and the number describes the upload connections themselves rather than a separate probe
-  that merely resembles them. It reads n/a rather than guessing, and says which reason
-  applies: nothing uploading, no kernel socket table, or a connection that terminates
-  locally instead of at the pod. That last case covers Docker Desktop on Mac and Windows,
-  where container traffic passes through a proxy on the host that can end the connection
-  before it leaves the machine, and any transparent proxy that does the same.
-  `bb-monitor-web --dump-rtt` prints what the kernel reports, for checking it inside a
-  container. Contributed in concept by rogman.
-- The assigned upload server shown in the footer.
-
-- The web interface now opens on a tabbed shell offering the Wine desktop and the upload
+  configured for the GUI. The service itself binds loopback only.
+- The web interface opens on a tabbed shell offering the Wine desktop and the upload
   monitor, so the WebUI button reaches both rather than only the desktop. Switching tabs
-  hides the desktop rather than unloading it, so the VNC session and the running desktop
-  survive a look at the monitor. The monitor frame is loaded on first use, so its polling
-  never starts for someone who does not open it. The desktop remains directly reachable at
-  `/index.html` if the shell itself is ever the problem.
+  hides the desktop rather than unloading it, so the VNC session survives a look at the
+  monitor. The monitor frame loads on first use, so its polling never starts for someone
+  who does not open it. The desktop stays directly reachable at `/desktop/` if the shell
+  itself is ever a problem.
+- Round-trip time to the storage pod, in both monitors. The figure is read from the kernel
+  rather than measured: every established connection already carries a smoothed round-trip
+  time, and `NETLINK_SOCK_DIAG`. There is no traffic when idle, and the number describes the
+  upload connections themselves. Sockets are matched on the owning uid of the `-threadpush`
+  processes rather than by walking another process's file descriptors, which would need
+  `CAP_SYS_PTRACE`. It reads n/a rather than guessing, and says which reason applies:
+  nothing uploading, no kernel socket table, or a connection that terminates locally instead
+  of at the pod. That last case covers Docker Desktop on Mac and Windows, where container
+  traffic passes through a proxy on the host that can end the connection before it leaves
+  the machine. `bb-monitor-web --dump-rtt` prints what the kernel reports, for checking it
+  inside a container. Original concept contributed by rogman.
+
+  Round-trip time is useful to read with transfer rate because per-connection
+  throughput is bounded by send buffer divided by RTT, so the two together give the
+  per-thread ceiling to expect.
+- A settings dialog in the monitors, holding the thirteen colour themes and an About tab
+  reporting the running build, licence and credits. The terminal's theme choice is remembered
+  in `/config/bb-monitor.conf`.
+- The upload sparkline in `bb-monitor`, drawn in block characters over the same forty-sample
+  window the web dashboard uses.
+- `bb-monitor` gains what the web dashboard had first: overall backup progress with its ETA,
+  files remaining, round-trip time and uptime.
+- The assigned upload server, in both monitors: the web dashboard's footer, and
+  `bb-monitor`'s status row rather than its footer, which already carries the key hints and
+  the build label and has no room for a hostname below about 120 columns.
 
 ### Changed
-- `bb-monitor` and `bb-monitor-web` now share one data layer, `/usr/local/lib/bb-monitor/bbdata.py`.
-  Each previously carried its own copy of the code that reads `/proc`, the cgroups and
-  Backblaze's own files, and they drifted: the web dashboard gained overall backup progress,
-  an ETA, files remaining and round-trip time while the terminal one kept the original
-  narrower view. Collection now lives in one place and a feature appears in both or neither.
-
-### Added
-- `bb-monitor` gains everything the web dashboard had first: overall backup progress with
-  its ETA, files remaining, round-trip time to the storage pod, and uptime.
-
-- The in-flight file rows in the web dashboard now match the terminal one: progress bar on
-  the left, then percentage, size and file name to its right, one row per file. The web
-  version had stacked them, bar above details, so the same tool looked like two. Below 560px
-  it still stacks, because there is not room for both.
-- The dashboard and the shell now work on a phone. The dashboard had no viewport meta, so
-  a mobile browser laid it out at around 980px and scaled it down to something unreadable;
-  an iframe does not inherit its parent's. Below 560px the thread column, the uptime in the
-  title bar and the refresh notice are dropped, the progress gauges narrow, the backup gauge
-  wraps rather than pushing the page sideways, and the tabs and settings button get proper
-  touch targets. Verified at 375px with long real-world paths.
-
+- `bb-monitor` and `bb-monitor-web` share one data layer, `/usr/local/lib/bb-monitor/bbdata.py`.
+- The web dashboard is mobile-friendly.
 - All thirteen themes are offered in `bb-monitor` on any terminal, each with its own
-  low-colour rendering rather than every one collapsing to the same blue. Where eight
-  colours cannot tell two themes apart, the settings pane says so and gives the `TERM`
-  setting that fixes it.
-- `bb-monitor` gains the upload sparkline and a settings dialog, so it matches the web
-  dashboard rather than trailing it. `s` opens it, `Tab` switches between Preferences and
-  About, `Enter` opens the theme chooser, arrows move through it with a live preview, and
-  `Esc` backs out. The thirteen colour themes are the same ones by the same names, and the
-  choice is remembered in `/config/bb-monitor.conf`. Themes beyond the first two need a
-  256-colour terminal and are hidden otherwise.
+  low-colour rendering.
 
 ### Fixed
-- The project URL in `bb-monitor`'s About tab was clipped by a fixed-width panel, so the
-  link looked complete but led to a 404. The panel now sizes itself to its content.
-- Opening the monitor shortly after a container start gave a bare 502 that stayed until the
-  page was reloaded by hand, because the shell loads the frame once and nothing retried.
-  nginx now serves a holding page for the few seconds before the service is listening; it
-  polls and loads the dashboard itself once ready, and says so plainly if the service never
-  comes up. Applies to `/monitor/` opened directly as much as to the tab.
-- The desktop tab never got past "connecting". noVNC builds its websocket URL by appending
-  `websockify` to `location.pathname`, so framing it at `/index.html` asked for
-  `/index.htmlwebsockify`, which matches no route. It is now served from `/desktop/`, giving
-  `/desktop/websockify` as the base image expects.
-- A long file path made the whole page scroll sideways at any window width. Flex items
-  default to `min-width:auto` and so refuse to shrink below their content, which let one
-  path in the in-flight list widen everything around it.
 - File names were written into the page without HTML escaping, so a backed-up file whose
   name contained markup could inject it into the dashboard. Everything derived from
   Backblaze data is now escaped before rendering. Names come off a Linux array through
   Wine's drive-letter view, so they carry none of the character restrictions a native
   Windows path would. Found by rogman.
+- The dashboard had no viewport meta, so a mobile browser laid it out at around 980px and
+  scaled it down to something unreadable. An iframe does not inherit its parent's.
+- The desktop tab never got past "connecting". noVNC builds its websocket URL by appending
+  `websockify` to `location.pathname`, so framing it at `/index.html` asked for
+  `/index.htmlwebsockify`, which matches no route. It is now served from `/desktop/`, giving
+  `/desktop/websockify` as the base image expects.
+- Opening the monitor shortly after a container start gave a bare 502 that stayed until the
+  page was reloaded by hand, because the shell loads the frame once and nothing retried.
+  nginx now serves a holding page for the few seconds before the service is listening; it
+  polls and loads the dashboard itself once ready, and says so plainly if the service never
+  comes up. Applies to `/monitor/` opened directly as much as to the tab.
+- A long file path made the whole page scroll sideways at any window width. Flex items
+  default to `min-width:auto` and so refuse to shrink below their content, which let one
+  path in the in-flight list widen everything around it.
+- The project URL in `bb-monitor`'s About tab was clipped by a fixed-width panel, so the
+  link looked complete but led to a 404. The panel now sizes itself to its content.
 
 ## [beta] - 2026-08-07
 
@@ -159,8 +134,8 @@ and the monitors show it as `beta+<n>`. Quote that number in a bug report.
   every few seconds a new pass exits with "Failed to grab fourHourLock", and the
   constant respawns keep every log and file mtime fresh, so the previous stall
   heuristics reported a wedged container as healthy. `bb-health` now corroborates by
-  process age instead — a lock older than a small grace window cannot belong to a pass
-  younger than it — and reports the loop as `WEDGE`, so the health status goes red and
+  process age instead, since a lock older than a small grace window cannot belong to a
+  pass younger than it, and reports the loop as `WEDGE`, so the health status goes red and
   the watchdog clears it. `bb-doctor` diagnoses the same signature independently of
   the tunable thresholds, and `bb-doctor --fix` removes the lock only while the full
   signature holds: a `bztransmit` past the grace window, or one whose age cannot be
@@ -173,14 +148,14 @@ and the monitors show it as `beta+<n>`. Quote that number in a bug report.
   rotates the salt to break that link when a user wants to.
 - Every `bb-*` tool accepts `--version`, reporting the image version, git revision,
   LTS variant and build date from a stamp written at build time. The tools only ever
-  ship together inside an image, so the build is the identifier worth having in a bug
+  ship together inside an image, so the build is the identifier to quote in a bug
   report, and a single stamp cannot drift out of step with the tools it describes.
 - CI tests `bb-report`'s sanitiser on every change, using the real data shapes found
   in this container. A sanitiser bug does not crash anything; it quietly publishes
   private data in a bundle meant for a public issue tracker, so the check is gated
   rather than left to be run by hand.
 - A CI smoke test that boots each built image and verifies the Wine prefix builds, the
-  drive mapping reaches into the prefix, and the bundled tools run — before anything is
+  drive mapping reaches into the prefix, and the bundled tools run, all before anything is
   published. Images are now pushed only if that passes.
 - Host sizing guidance in the README: Backblaze's memory use tracks file count rather
   than data volume, with measured figures and the reason swap matters.
