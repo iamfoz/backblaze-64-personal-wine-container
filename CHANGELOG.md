@@ -30,8 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exposes it for sockets this process does not own, which is the same interface `ss -ti`
   uses. So nothing extra is ever sent to Backblaze, there is no traffic at all when idle,
   and the number describes the upload connections themselves rather than a separate probe
-  that merely resembles them. `bb-monitor-web --dump-rtt` prints what the kernel reports,
-  for checking it inside a container. Contributed in concept by rogman.
+  that merely resembles them. It reads n/a rather than guessing, and says which reason
+  applies: nothing uploading, no kernel socket table, or a connection that terminates
+  locally instead of at the pod. That last case covers Docker Desktop on Mac and Windows,
+  where container traffic passes through a proxy on the host that can end the connection
+  before it leaves the machine, and any transparent proxy that does the same.
+  `bb-monitor-web --dump-rtt` prints what the kernel reports, for checking it inside a
+  container. Contributed in concept by rogman.
 - The assigned upload server shown in the footer.
 
 ### Fixed

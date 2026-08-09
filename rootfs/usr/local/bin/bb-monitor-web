@@ -16,7 +16,7 @@ open port.
 Standalone, for testing:
     python3 bb-monitor-web --host 127.0.0.1 --port 8099
 """
-import argparse, calendar, json, os, re, socket, struct, sys, threading, time, unicodedata
+import argparse, calendar, ipaddress, json, os, re, socket, struct, sys, threading, time, unicodedata
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
@@ -74,6 +74,17 @@ TCP_ESTABLISHED = 1
 # the whole 3.x/4.x/5.x/6.x series because fields are only ever appended.
 TCPI_RTT_OFFSET = 68
 
+# Below this, a connection to a public address is not crossing the internet.
+# Docker Desktop on Mac and Windows routes container traffic through a userspace
+# proxy on the host, and where that proxy terminates the TCP connection the
+# socket the kernel reports on ends at the proxy rather than at Backblaze. Its
+# round-trip time is then a fraction of a millisecond and describes nothing
+# useful. Real paths to a storage pod are milliseconds at best, so anything this
+# low means something local is answering, and n/a is the honest reading. Costs
+# nothing on Unraid, where containers get real routed networking and this never
+# fires. Also catches a transparent proxy on someone's own network.
+IMPLAUSIBLE_RTT_MS = 1.0
+
 
 def _upload_host():
     m = re.search(r'bz_upload_url="https?://([^/"]+)', read(BZDC_SYNCHOSTINFO))
@@ -127,6 +138,9 @@ def _diag_dump(family):
                     return
                 body = off + 16
                 # inet_diag_msg: 4 bytes, then a 48-byte sockid, then five u32s.
+                # Take the family from the record rather than from the request,
+                # so the address is always decoded as whatever it actually is.
+                msg_family = buf[body]
                 dport = struct.unpack_from("!H", buf, body + 6)[0]
                 dst = buf[body + 24:body + 40]
                 uid = struct.unpack_from("=I", buf, body + 52 + 12)[0]
@@ -140,9 +154,9 @@ def _diag_dump(family):
                         rtt_us = struct.unpack_from("=I", buf, apos + 4 + TCPI_RTT_OFFSET)[0]
                     apos += (rta_len + 3) & ~3
                 if rtt_us:
-                    raw = dst[:4] if family == socket.AF_INET else dst
+                    raw = dst[:4] if msg_family == socket.AF_INET else dst
                     try:
-                        yield socket.inet_ntop(family, raw), uid, dport, rtt_us
+                        yield socket.inet_ntop(msg_family, raw), uid, dport, rtt_us
                     except (ValueError, OSError):
                         pass
                 off += (mlen + 3) & ~3
@@ -150,31 +164,42 @@ def _diag_dump(family):
         sk.close()
 
 
+def _is_public(ip):
+    try:
+        return ipaddress.ip_address(ip).is_global
+    except ValueError:
+        return False
+
+
 def _upload_rtt():
-    """(rtt_ms, peer) for the upload connections, or (None, None).
+    """(rtt_ms, peer, note) for the upload connections. rtt_ms is None when
+    there is nothing trustworthy to report, and note says why.
 
     Median across the live upload sockets, which is steadier than any single
-    connection and unaffected by one thread that has just opened. Returns None
-    whenever nothing is uploading, which is the honest answer: there is no
-    upload path to describe at that point."""
+    connection and unaffected by one thread that has just opened."""
     if not hasattr(socket, "AF_NETLINK"):
-        return None, None          # not Linux; no kernel table to read
+        return None, None, "not available on this platform"
     uid = _threadpush_uid()
     if uid is None:
-        return None, None
+        return None, None, "nothing uploading"
     samples = []
+    reached_kernel = False
     for family in (socket.AF_INET, socket.AF_INET6):
         try:
             for peer, sock_uid, dport, rtt_us in _diag_dump(family):
+                reached_kernel = True
                 if dport == 443 and str(sock_uid) == uid:
                     samples.append((rtt_us / 1000.0, peer))
         except OSError:
-            continue               # netlink unavailable in this container
+            continue
     if not samples:
-        return None, None
+        return None, None, ("no upload connections found" if reached_kernel
+                             else "kernel socket table unavailable")
     samples.sort()
     ms, peer = samples[len(samples) // 2]
-    return ms, peer
+    if ms < IMPLAUSIBLE_RTT_MS and _is_public(peer):
+        return None, None, "connection appears to terminate locally, not at the pod"
+    return ms, peer, None
 
 
 _lock = threading.Lock()
@@ -588,7 +613,7 @@ def snapshot_to_json(d):
     r = d["rate"]
     mem = d["mem"]
     swap = d["swap"]
-    lat_ms, lat_host = _upload_rtt()
+    lat_ms, lat_host, lat_note = _upload_rtt()
     files_out = []
     for name, part, fsize, pct in d["files"]:
         size_str = (human(fsize) + (" (chunked)" if fsize > part * 1.5 else "")) if fsize > 0 else "%d MB" % (part / 1048576)
@@ -624,6 +649,7 @@ def snapshot_to_json(d):
         "uptime": uptime_str(),
         "latency_ms": (round(lat_ms, 1) if lat_ms is not None else None),
         "latency_host": lat_host,
+        "latency_note": lat_note,
         "upload_pod": _upload_host(),
         "about": ABOUT,
     }
@@ -910,8 +936,11 @@ function pingHtml(d){
   // with no upload running this falls back to the public site, which can be a
   // CDN edge and read far lower than the real storage pod.
   if(d.latency_ms == null){
-    return '<span class="stat dim" title="Measured only while an upload is ' +
-           'running, against the pod that upload is using">RTT: n/a</span>';
+    // The note says which of the several reasons applies, so n/a is never a
+    // mystery: nothing uploading, no netlink, or a locally-terminated connection.
+    var why = d.latency_note ? esc(d.latency_note)
+                              : 'measured only while an upload is running';
+    return '<span class="stat dim" title="RTT: '+why+'">RTT: n/a</span>';
   }
   var tip = ' title="TCP handshake to ' + esc(d.latency_host) +
             ', the pod your uploads are using (not ICMP)"';
@@ -1161,8 +1190,9 @@ def main():
                       % (peer, u, dport, rtt / 1000.0, mark))
         else:
             print("no AF_NETLINK on this platform")
-        ms, peer = _upload_rtt()
-        print("reported: %s" % ("n/a" if ms is None else "%.1f ms via %s" % (ms, peer)))
+        ms, peer, note = _upload_rtt()
+        print("reported: %s" % ("n/a (%s)" % note if ms is None
+                                 else "%.1f ms via %s" % (ms, peer)))
         return
 
     threading.Thread(target=_loop, daemon=True).start()
