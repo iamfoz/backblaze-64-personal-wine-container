@@ -1,0 +1,471 @@
+#!/usr/bin/env python3
+"""Live upload dashboard, run from the container console."""
+
+HELP = """\
+Displays live upload activity.
+
+BB-MONITOR [--version]
+
+  q            Quits.
+  Up, Down     Scrolls the file list.
+  PgUp, PgDn   Scrolls one page.
+
+Shows the transfer rate, the files being sent, and recently completed files.
+Needs a terminal:  docker exec -it <container> bb-monitor
+"""
+import locale; locale.setlocale(locale.LC_ALL, "")
+import curses, os, sys, time, unicodedata
+from collections import deque
+
+# ---- shared data layer ----------------------------------------------------
+# Everything that reads /proc, the cgroups and Backblaze's own files lives in
+# bbdata, shared with bb-monitor-web. The two used to carry separate copies and
+# drifted: the web one gained overall progress, an ETA, files remaining and
+# round-trip time while this one kept the original narrower view. A feature
+# added to bbdata now shows up in both. This file owns curses and nothing else.
+sys.path.insert(0, "/usr/local/lib/bb-monitor")
+from bbdata import (BUILD_INFO, BUILD_LABEL, INT, eta_str, gather, human,
+                     rec_cols, uptime_str, _upload_host, _upload_rtt)
+
+
+# ---- themes -------------------------------------------------------------------
+# The web dashboard carries these as CSS variables; here they are colour numbers.
+# Same names and the same intent, so a screenshot of either is recognisably the
+# same tool. Order matches the web's dropdown.
+#
+# Fields: bg, text, title, hi_bg, hi_fg, good, warn, bad, trough_g, trough_y, trough_r
+# Fields: bg, text, title, hi_bg, hi_fg, good, warn, bad, trough_g, trough_y, trough_r
+# Two palettes each. The 256-colour one is the real thing; the second is what the
+# theme becomes on a terminal that only has the basic eight, which still keeps
+# Matrix green and Amber amber rather than collapsing everything into the same
+# blue. Some do converge down there, because eight colours will not carry
+# thirteen distinct looks, and the settings pane says so rather than pretending.
+THEMES = [
+    ("Blue (Classic)", (4, 7, 6, 7, 0, 2, 3, 1, 22, 58, 52),   (4, 7, 6, 7, 0, 2, 3, 1, 0, 0, 0)),
+    ("Dark",           (0, 7, 4, 7, 0, 2, 3, 1, 22, 58, 52),   (0, 7, 4, 7, 0, 2, 3, 1, 0, 0, 0)),
+    ("Matrix",         (0, 46, 46, 46, 0, 46, 190, 196, 22, 58, 52), (0, 2, 2, 2, 0, 2, 3, 1, 0, 0, 0)),
+    ("Amber",          (0, 214, 214, 214, 0, 214, 220, 202, 58, 58, 52), (0, 3, 3, 3, 0, 3, 3, 1, 0, 0, 0)),
+    ("Nord",           (236, 253, 110, 110, 236, 150, 222, 167, 23, 58, 52), (0, 7, 6, 6, 0, 2, 3, 1, 0, 0, 0)),
+    ("Dracula",        (235, 255, 212, 141, 235, 84, 228, 203, 22, 58, 52), (0, 7, 5, 5, 0, 2, 3, 1, 0, 0, 0)),
+    ("Solarized Dark", (23, 245, 37, 33, 23, 64, 136, 160, 22, 58, 52), (4, 6, 6, 6, 0, 2, 3, 1, 0, 0, 0)),
+    ("Gruvbox Dark",   (235, 223, 208, 223, 235, 142, 214, 167, 22, 58, 52), (0, 3, 3, 7, 0, 2, 3, 1, 0, 0, 0)),
+    ("One Dark",       (236, 145, 170, 145, 236, 114, 180, 168, 22, 58, 52), (0, 7, 5, 7, 0, 2, 3, 1, 0, 0, 0)),
+    ("Tokyo Night",    (234, 146, 141, 146, 234, 150, 180, 210, 22, 58, 52), (0, 6, 4, 6, 0, 2, 3, 1, 0, 0, 0)),
+    ("Catppuccin",     (235, 189, 183, 189, 235, 151, 223, 211, 22, 58, 52), (0, 5, 5, 7, 0, 2, 3, 1, 0, 0, 0)),
+    ("Monokai",        (235, 255, 148, 255, 235, 148, 186, 197, 22, 58, 52), (0, 7, 2, 7, 0, 2, 3, 1, 0, 0, 0)),
+    ("Cyberpunk Neon", (233, 195, 51, 51, 233, 118, 226, 201, 22, 58, 52), (0, 6, 6, 6, 0, 2, 3, 1, 0, 0, 0)),
+]
+
+def theme_names():
+    # Every theme is offered on every terminal now. A low-colour terminal gets a
+    # reduced rendering rather than a shorter list, which is less confusing than
+    # options silently going missing.
+    return [n for n, _, _ in THEMES]
+
+# ---- identity (About tab) -----------------------------------------------------
+# Same strings the web dashboard shows, so the two agree about what they are.
+APP_NAME = "Backblaze 64"
+APP_COMPONENT = "Upload Monitor"
+APP_COPYRIGHT = "Copyright \u00a9 2026 Martyn Forryan"
+APP_LICENSE = "GNU Affero General Public License v3.0"
+APP_URL = "https://github.com/iamfoz/backblaze-64-personal-wine-container"
+CREDITS = [("rogman", "web monitor, themes & features")]
+
+PREF_FILE = "/config/bb-monitor.conf"   # under /config so it survives a recreate
+
+def load_pref(key, default=""):
+    try:
+        with open(PREF_FILE) as fh:
+            for line in fh:
+                k, _, v = line.partition("=")
+                if k.strip() == key:
+                    return v.strip()
+    except OSError:
+        pass
+    return default
+
+def save_pref(key, value):
+    prefs = {}
+    try:
+        with open(PREF_FILE) as fh:
+            for line in fh:
+                k, _, v = line.partition("=")
+                if k.strip():
+                    prefs[k.strip()] = v.strip()
+    except OSError:
+        pass
+    prefs[key] = value
+    try:
+        tmp = PREF_FILE + ".tmp"
+        with open(tmp, "w") as fh:
+            for k, v in sorted(prefs.items()):
+                fh.write("%s=%s\n" % (k, v))
+        os.replace(tmp, PREF_FILE)     # atomic, so a crash cannot leave it half-written
+    except OSError:
+        pass
+
+def apply_theme(scr, name):
+    """Re-point the colour pairs. curses allows pairs to be redefined at runtime,
+    so a theme change repaints on the next draw with no restart."""
+    entry = next((t for t in THEMES if t[0] == name), THEMES[0])
+    # Pick the palette for what the terminal actually has, rather than picking the
+    # rich one and then flattening it, which is what made every theme look blue.
+    bg, text, title, hib, hif, good, warn, bad, tg, ty, tr = (
+        entry[1] if curses.COLORS >= 256 else entry[2])
+    if curses.COLORS < 16:
+        tg = ty = tr = bg          # no dim trough colour to be had
+    curses.init_pair(1, text, bg)
+    curses.init_pair(2, hif, hib)
+    curses.init_pair(3, warn, bg)
+    curses.init_pair(4, good, bg)
+    curses.init_pair(5, bad, bg)
+    curses.init_pair(6, title, bg)
+    curses.init_pair(7, good, tg)
+    curses.init_pair(8, warn, ty)
+    curses.init_pair(9, bad, tr)
+    scr.bkgd(' ', curses.color_pair(1))
+
+
+# ---- rate history for the sparkline -------------------------------------------
+# Same 40-sample window the web dashboard keeps.
+_rate_hist = deque(maxlen=40)
+SPARK = " \u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
+
+def spark(values, width):
+    """Block-character sparkline, always exactly `width` characters wide.
+
+    Constant width matters: the status bar lays chunks out by measured length, so
+    a strip that grew as the history filled pushed everything to its right along
+    by a character on every refresh until the buffer was full."""
+    if width < 2:
+        return ""
+    vals = list(values)[-width:]
+    if len(vals) < 2:
+        return " " * width
+    top = max(vals + [0.05])
+    out = [SPARK[int(round(min(v, top) / top * (len(SPARK) - 1)))] for v in vals]
+    return "".join(out).rjust(width)
+
+# ---- curses-only helper -------------------------------------------------------
+def wclip(s,width):
+    """Clip to terminal cells, not codepoints (CJK/emoji are 2 cells wide)."""
+    out=[]; cw=0
+    for ch in s:
+        w=2 if unicodedata.east_asian_width(ch) in "WF" else 1
+        if cw+w>width: break
+        out.append(ch); cw+=w
+    return "".join(out)
+
+# ---- dashboard ------------------------------------------------------------------
+def aw(scr,y,x,s,attr=0):
+    h,w=scr.getmaxyx()
+    if not(0<=y<h) or x>=w: return
+    if x<0: s=s[-x:]; x=0
+    s=s[:w-x]
+    if y==h-1 and x+len(s)>=w: s=s[:w-x-1]
+    try: scr.addstr(y,x,s,attr)
+    except (curses.error,ValueError): pass
+
+def box(scr,y,x,hh,ww,title,bord,tit):
+    """Frame is drawn AFTER panel content, so borders always paint over overflow."""
+    if hh<2 or ww<2: return
+    aw(scr,y,x,"╔"+"═"*(ww-2)+"╗",bord); aw(scr,y+hh-1,x,"╚"+"═"*(ww-2)+"╝",bord)
+    for i in range(1,hh-1): aw(scr,y+i,x,"║",bord); aw(scr,y+i,x+ww-1,"║",bord)
+    if title: aw(scr,y,x+2," "+title[:max(0,ww-6)]+" ",tit)
+
+def draw_bar(scr,y,x,w,pct,pair):
+    """Solid coloured fill + smooth edge over a dark-tone trough of the same colour."""
+    f=max(0.0,min(1.0,pct/100))*w; n=int(f); frac=f-n
+    aw(scr,y,x," "*w,pair)
+    if n>0: aw(scr,y,x," "*n,pair|curses.A_REVERSE)
+    if n<w and frac>=1/8:
+        aw(scr,y,x+n,"▏▎▍▌▋▊▉"[int(frac*8)-1],pair|curses.A_BOLD)
+
+def draw(scr,d,st):
+    h,w=scr.getmaxyx(); scr.erase()
+    NORM=curses.color_pair(1); HI=curses.color_pair(2)|curses.A_BOLD
+    BORD=curses.color_pair(6)|curses.A_BOLD; TIT=curses.color_pair(2)|curses.A_BOLD
+    GOOD=curses.color_pair(4)|curses.A_BOLD; WARN=curses.color_pair(3)|curses.A_BOLD; BAD=curses.color_pair(5)|curses.A_BOLD
+    hdr="Backblaze 64 • Upload Monitor"; clk=time.strftime("%H:%M:%S")
+    aw(scr,0,0," "*w,HI); aw(scr,0,1,hdr,HI)
+    if w>=len(hdr)+len(clk)+4: aw(scr,0,w-len(clk)-2,clk,HI)
+
+    # ---- Status: whole chunks wrap to width, never split ----
+    r=d["rate"]; rcol=GOOD if r>=1 else (WARN if r>0.05 else BAD)
+    stt=d["state"]; scol=GOOD if stt=="Transmitting" else (WARN if stt in("Scanning","Preparing") else NORM)
+    def txt(parts):
+        wd=sum(len(p[0]) for p in parts)
+        def dr(y,x):
+            cx=x
+            for s,a in parts: aw(scr,y,cx,s,a); cx+=len(s)
+        return {"w":wd,"draw":dr}
+    def gauge(label,us,ts_,pct,high_is_good=False,note=""):
+        # Mem and Swap are bad when full; Backup is good when full. Same widget,
+        # opposite reading, so the direction has to be told rather than assumed.
+        pre="%s %s/%s "%(label,us,ts_); suf=" %d%%"%int(pct)+(" %s"%note if note else "")
+        if high_is_good: sev=0 if pct>=67 else (1 if pct>=34 else 2)
+        else:            sev=2 if pct>=90 else (1 if pct>=70 else 0)
+        def dr(y,x):
+            aw(scr,y,x,pre,NORM)
+            draw_bar(scr,y,x+len(pre),12,pct,curses.color_pair((7,8,9)[sev]))
+            aw(scr,y,x+len(pre)+12,suf,(GOOD,WARN,BAD)[sev])
+        return {"w":len(pre)+12+len(suf),"draw":dr}
+    chunks=[
+        txt([("Threads: ",NORM),("%d"%d["threads"],NORM)]),
+        txt([("Up: ",NORM),("%.2f MB/s"%r,rcol),(" (~%d Mbit/s) "%(r*8),NORM),
+              (spark(_rate_hist,14),GOOD)]),
+        txt([("Chunks/60s: ",NORM),("%d"%d["chunks"],NORM)]),
+        txt([("Session: ",NORM),(human(d["sess"]),NORM)]),
+        txt([("State: ",NORM),(stt,scol)]),
+        gauge("Mem:",human(d["mem"][0]),human(d["mem"][1]),d["mem"][2]) if d["mem"] else txt([("Mem: n/a",NORM)]),
+        gauge("Swap:",human(d["swap"][0]),human(d["swap"][1]),d["swap"][2]) if d["swap"] else txt([("Swap: off",NORM)]),
+    ]
+    # Everything below reached the web dashboard first. Both read the same
+    # bbdata.gather(), so they stay in step from here.
+    rtt_ms,rtt_peer,_=_upload_rtt()
+    if rtt_ms is None: chunks.append(txt([("RTT: n/a",NORM)]))
+    else:
+        rc=GOOD if rtt_ms<80 else (WARN if rtt_ms<200 else BAD)
+        chunks.append(txt([("RTT: ",NORM),("%dms"%round(rtt_ms),rc)]))
+    b=d.get("backup")
+    if b:
+        fr=b.get("remaining_files")
+        if fr is not None:
+            chunks.append(txt([("Files Remaining: ",NORM),("{:,}".format(fr),NORM)]))
+        chunks.append(gauge("Backup:",human(b["done"]),human(b["total"]),b["pct"],
+                             high_is_good=True,note="ETA "+eta_str(b.get("eta_seconds"))))
+    chunks.append(txt([("Uptime: ",NORM),(uptime_str(),NORM)]))
+    # The web dashboard has this in its footer, which has the width for it. Here
+    # the footer already carries the key hints and the build label, and a 29
+    # character hostname does not fit alongside both below about 120 columns. The
+    # status grid wraps whole items to whatever width there is, so it shows up on
+    # an 80 column terminal instead of silently vanishing.
+    pod=_upload_host()
+    if pod: chunks.append(txt([("Server: ",NORM),(pod,NORM)]))
+    SEP=3; inner=max(1,w-4); placements=[]; line=0; cx=0
+    for c in chunks:
+        if cx==0: placements.append((c,line,0)); cx=c["w"]
+        elif cx+SEP+c["w"]<=inner: placements.append((c,line,cx+SEP)); cx+=SEP+c["w"]
+        else: line+=1; placements.append((c,line,0)); cx=c["w"]
+    statusH=line+3
+    for c,ln,rx in placements: c["draw"](2+ln,2+rx)
+    box(scr,1,0,statusH,w,"Status",BORD,TIT)
+
+    # ---- regions below the (variable-height) Status box ----
+    up_top=1+statusH; foot=h-1; avail=foot-up_top
+    if avail>=8: rec_h=min(11,max(4,avail//3)); rec_top=foot-rec_h; up_h=rec_top-up_top
+    else: rec_h=0; rec_top=foot; up_h=max(0,avail)
+    files=d["files"]; n=len(files); cap=max(1,up_h-2); st["cap"]=cap
+    soff=min(max(0,st.get("soff",0)),max(0,n-cap)); st["soff"]=soff
+    if up_h>=3:
+        iw=w-4; bw=max(10,min(40,iw-42)); yy=up_top+1
+        if not files: aw(scr,yy,2,"(nothing in flight)",NORM)
+        for name,part,fsize,pct in files[soff:soff+cap]:
+            bp=curses.color_pair(7 if pct>=67 else (8 if pct>=34 else 9))
+            draw_bar(scr,yy,2,bw,pct,bp)
+            sz=(human(fsize)+(" (chunked)" if fsize>part*1.5 else "")) if fsize>0 else "%d MB"%(part/1048576)
+            aw(scr,yy,2+bw,wclip(" %3.0f%%  %-12s %s"%(pct,sz,name),iw-bw),NORM); yy+=1
+        t="Uploading Now"
+        if n>cap: t+=" • %d-%d/%d"%(soff+1,min(n,soff+cap),n)
+        box(scr,up_top,0,up_h,w,t,BORD,TIT)
+    if rec_h>=4:
+        aw(scr,rec_top+1,2,"%-8s  %-6s  %-9s  %-12s    %s"%("Time","Thread","Size","Rate","File"),NORM|curses.A_BOLD)
+        yy=rec_top+2; rows=d["recent"][-(rec_h-3):]
+        if not rows: aw(scr,yy,2,"(watching for completions…)",NORM)
+        for r in rows:
+            th,size,rate=rec_cols(r)
+            aw(scr,yy,2,wclip("%-8s  %-6s  %-9s  %-12s    %s"%(r["t"],th,size,rate,r["name"]),w-4),NORM); yy+=1
+        box(scr,rec_top,0,rec_h,w,"Recently Completed",BORD,TIT)
+    aw(scr,foot,0," "*w,HI)
+    ft="q Quit • s Settings • ↑ ↓ PgUp PgDn Scroll • live every %gs"%INT
+    aw(scr,foot,1,ft,HI)
+    # Build identifier on the right, so a screenshot of the monitor says which image
+    # produced it. Dropped rather than overlapped when the terminal is too narrow.
+    if BUILD_LABEL and w >= len(ft)+len(BUILD_LABEL)+5:
+        aw(scr,foot,w-len(BUILD_LABEL)-2,BUILD_LABEL,HI)
+    if st.get("ui"): draw_overlay(scr,st)      # over the dashboard, drawn last
+    scr.refresh()
+
+
+# ---- settings / about overlay --------------------------------------------------
+# The web dashboard has this behind the gear icon. Here it is a centred panel over
+# the dashboard, driven entirely from the keyboard because there is no pointer:
+#
+#   S        open        Tab / Shift-Tab   switch tab
+#   Up/Down  move        Enter             open a chooser, or pick the highlighted
+#   Esc      close, or back out of an open chooser
+def _about_lines():
+    b = BUILD_INFO
+    out = [("%s \u2022 %s" % (APP_NAME, APP_COMPONENT), True)]
+    for label, key in (("Version","version"), ("Build","build"), ("Revision","revision"),
+                        ("Variant","variant"), ("Built","built")):
+        if b.get(key):
+            out.append(("  %-9s %s" % (label + ":", b[key]), False))
+    if not any(b.get(k) for k in ("version","build","revision","variant","built")):
+        out.append(("  no build stamp (running outside a built image)", False))
+    out += [("", False), ("Licence", True),
+            ("  " + APP_COPYRIGHT, False), ("  " + APP_LICENSE, False),
+            ("  " + APP_URL, False)]
+    if CREDITS:
+        out += [("", False), ("With thanks to", True)]
+        out += [("  %s \u2014 %s" % (who, what), False) for who, what in CREDITS]
+    return out
+
+
+def draw_overlay(scr, st):
+    ui = st["ui"]
+    h, w = scr.getmaxyx()
+    NORM = curses.color_pair(1); HI = curses.color_pair(2) | curses.A_BOLD
+    BORD = curses.color_pair(6) | curses.A_BOLD
+    TIT  = curses.color_pair(2) | curses.A_BOLD
+    DIM  = curses.color_pair(1)
+
+    names = theme_names()
+    bh = min(max(12, len(names) + 8), h - 2)
+    # Width follows the content rather than a fixed 62. The project URL is 62
+    # characters on its own, so a fixed box clipped the last six and left a link
+    # that looked complete but 404s when clicked.
+    widest = max([len(t) for t, _ in _about_lines()] + [len(n) for n in names] + [40])
+    bw = min(max(62, widest + 6), w - 2)
+    by = max(0, (h - bh) // 2); bx = max(0, (w - bw) // 2)
+    for y in range(by, min(h, by + bh)):                    # blank the area first
+        aw(scr, y, bx, " " * bw, NORM)
+    box(scr, by, bx, bh, bw, "Settings", BORD, TIT)
+
+    tabs = ["Preferences", "About"]
+    cx = bx + 2
+    for i, t in enumerate(tabs):
+        aw(scr, by + 1, cx, " %s " % t, HI if i == ui["tab"] else DIM)
+        cx += len(t) + 3
+
+    top = by + 3
+    if ui["tab"] == 0:
+        picking = ui["picker"] is not None
+        cur = ui["theme"]
+        aw(scr, top, bx + 2, "Colour theme", NORM | (0 if picking else curses.A_BOLD))
+        aw(scr, top, bx + 20, "< %s >" % cur, NORM if picking else HI)
+        if picking:
+            # Scroll rather than truncate. On a short terminal the list will not
+            # fit, and silently dropping the last few themes is how Cyberpunk Neon
+            # became unreachable.
+            avail = max(1, (by + bh - 2) - (top + 2))
+            sel = ui["picker"]
+            off = 0
+            if len(names) > avail:
+                off = min(max(0, sel - avail // 2), len(names) - avail)
+            for i, n in enumerate(names[off:off + avail]):
+                mark = "\u2022 " if (i + off) == sel else "  "
+                aw(scr, top + 2 + i, bx + 4, "%-*s" % (bw - 8, mark + n),
+                   HI if (i + off) == sel else NORM)
+            more = " (%d/%d)" % (sel + 1, len(names)) if len(names) > avail else ""
+            hint = "Up/Down choose \u2022 Enter apply \u2022 Esc cancel" + more
+        else:
+            aw(scr, top + 2, bx + 2,
+               wclip("Applies immediately and is remembered in %s" % PREF_FILE, bw - 4), DIM)
+            # Say what the terminal can actually do. Without this, a theme that
+            # renders almost identically to another looks like a broken setting
+            # rather than a limit of the terminal.
+            if curses.COLORS < 256:
+                aw(scr, top + 4, bx + 2, wclip(
+                    "Terminal reports %d colours: themes are approximated"
+                    % curses.COLORS, bw - 4), DIM)
+                # Point at the route that already works rather than asking for a
+                # docker exec line to be reconstructed: `docker exec -t` sets
+                # TERM=xterm regardless of the client, while Unraid's own console
+                # popup arrives with 256 colours already.
+                aw(scr, top + 5, bx + 2, wclip(
+                    "Unraid's container Console gives full colour, or pass "
+                    "-e TERM=xterm-256color", bw - 4), DIM)
+            hint = "Enter change theme \u2022 Tab About \u2022 Esc close"
+    else:
+        y = top
+        for text, bold in _about_lines():
+            if y >= by + bh - 2:
+                break
+            aw(scr, y, bx + 2, wclip(text, bw - 4), NORM | (curses.A_BOLD if bold else 0))
+            y += 1
+        hint = "Tab Preferences \u2022 Esc close"
+    aw(scr, by + bh - 2, bx + 2, wclip(hint, bw - 4), DIM)
+
+
+def overlay_key(scr, st, ch):
+    """Returns True when the key was consumed by the overlay."""
+    ui = st["ui"]
+    names = theme_names()
+    if ch == 27:                                   # Esc: back out one level
+        if ui["picker"] is not None:
+            apply_theme(scr, ui["theme"])          # undo any live preview
+            ui["picker"] = None
+        else:
+            st["ui"] = None
+        return True
+    if ui["picker"] is not None:
+        if ch in (curses.KEY_UP, ord('k')):
+            ui["picker"] = (ui["picker"] - 1) % len(names)
+        elif ch in (curses.KEY_DOWN, ord('j')):
+            ui["picker"] = (ui["picker"] + 1) % len(names)
+        elif ch in (curses.KEY_ENTER, 10, 13):
+            ui["theme"] = names[ui["picker"]]
+            save_pref("theme", ui["theme"])
+            ui["picker"] = None
+            return True
+        # preview as the selection moves, so the choice is visible before committing
+        apply_theme(scr, names[ui["picker"]])
+        return True
+    if ch == ord('\t'):
+        ui["tab"] = (ui["tab"] + 1) % 2
+    elif ch == curses.KEY_BTAB:
+        ui["tab"] = (ui["tab"] - 1) % 2
+    elif ch in (curses.KEY_ENTER, 10, 13) and ui["tab"] == 0:
+        ui["picker"] = max(0, names.index(ui["theme"]) if ui["theme"] in names else 0)
+    return True
+
+def main(scr):
+    # apply_theme() owns every colour pair now, so there is nothing to set up here
+    # beyond starting colour support and restoring the saved choice.
+    curses.curs_set(0); curses.start_color()
+    names=theme_names()
+    theme=load_pref("theme", names[0])
+    if theme not in names: theme=names[0]
+    apply_theme(scr,theme)
+    scr.keypad(True); scr.timeout(50)
+    st={"soff":0,"cap":1,"ui":None}; prev=None; d=None; last=0
+    while True:
+        ch=scr.getch()
+        if st["ui"] is not None:
+            # The overlay owns the keyboard while open, so q does not quit from
+            # under it and the scroll keys drive the chooser instead of the list.
+            if ch!=-1:
+                overlay_key(scr,st,ch)
+                if st["ui"] is None: theme=load_pref("theme",theme)
+                if d is not None: draw(scr,d,st)
+        else:
+            if ch in (ord('q'),ord('Q')): break
+            elif ch in (ord('s'),ord('S')):
+                st["ui"]={"tab":0,"row":0,"picker":None,"theme":theme}
+            elif ch in (curses.KEY_UP,ord('k')): st["soff"]-=1
+            elif ch in (curses.KEY_DOWN,ord('j')): st["soff"]+=1
+            elif ch==curses.KEY_PPAGE: st["soff"]-=st["cap"]
+            elif ch==curses.KEY_NPAGE: st["soff"]+=st["cap"]
+            if ch!=-1 and d is not None: draw(scr,d,st)
+        if d is None or time.time()-last>=INT:
+            d=gather(prev); prev=d["_tx"]; last=time.time()
+            _rate_hist.append(d["rate"])
+            draw(scr,d,st)
+
+def _print_version():
+    """Which image build this came from - the identifier worth having in a bug report."""
+    print("bb-monitor (Backblaze 64 container)")
+    try:
+        with open("/etc/bb-build") as fh: sys.stdout.write(fh.read())
+    except OSError:
+        print("version=unknown (no build stamp)")
+
+if __name__=="__main__":
+    if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-V"):
+        _print_version(); sys.exit(0)
+    if len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h"):
+        print(HELP, end=""); sys.exit(0)
+    if os.environ.get("TERM") in (None,"","dumb","unknown"):
+        os.environ["TERM"]="xterm-256color"   # sane default for `docker exec` consoles
+    curses.wrapper(main)

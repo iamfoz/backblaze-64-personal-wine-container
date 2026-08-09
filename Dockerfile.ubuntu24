@@ -99,48 +99,10 @@ RUN printf 'version=%s\nrevision=%s\nbuild=%s\nvariant=%s\nbuilt=%s\n' \
 EXPOSE 5900
 
 COPY rootfs/ /
-RUN chmod +x /startapp.sh /usr/local/bin/bb-monitor /usr/local/bin/bb-monitor-web \
-        /usr/local/bin/bb-health \
+RUN chmod +x /startapp.sh /usr/local/bin/bb-monitor /usr/local/bin/bb-health \
         /usr/local/bin/bb-watchdog /usr/local/bin/bb-version \
         /usr/local/bin/bb-doctor /usr/local/bin/bb-report \
-        /etc/services.d/bb-watchdog/run /etc/services.d/bb-monitor-web/run
-
-# Wire the upload dashboard into the base image's nginx server block. The base
-# includes default_site.conf directly from nginx.conf (not via /var/tmp/nginx),
-# so a build-time edit survives; it is not regenerated at container start.
-#
-# The grep before the edit is the guard: if a base-image bump moves or renames
-# that include line, the build fails here with the anchor named, rather than
-# silently producing an image whose /monitor/ 404s. The grep after confirms the
-# edit actually landed.
-RUN python3 - <<'PATCH'
-# Wire the upload dashboard into the base image's nginx server block.
-#
-# default_site.conf is included directly from nginx.conf and is NOT regenerated
-# at container start (only the optional /var/tmp/nginx/*.conf fragments are), so
-# a build-time edit survives. Done in python rather than sed because embedding a
-# newline in a sed replacement is GNU-specific, and this needs to be obvious to
-# whoever reads it next.
-#
-# The anchor check is the guard: if a base-image bump moves or renames that
-# include line, the build fails here naming the anchor, rather than silently
-# producing an image whose /monitor/ returns 404.
-import sys
-site = "/opt/base/etc/nginx/default_site.conf"
-anchor = "include /var/tmp/nginx/term[.]conf;"
-add = """
-
-        # Upload dashboard (bb-monitor-web), proxied from loopback.
-        include /etc/nginx-bb-monitor.conf;"""
-s = open(site).read()
-if anchor not in s:
-    sys.exit("FAIL: nginx anchor %r not found in %s; base image changed" % (anchor, site))
-if "nginx-bb-monitor.conf" in s:
-    sys.exit("FAIL: bb-monitor include already present; patch would double-apply")
-open(site, "w").write(s.replace(anchor, anchor + add, 1))
-print("nginx: bb-monitor include added after the terminal include")
-PATCH
-
+        /etc/services.d/bb-watchdog/run
 
 # Report the backup itself as the container's health, rather than just whether a
 # process is alive. bb-health only reports unhealthy on a corroborated stall (see

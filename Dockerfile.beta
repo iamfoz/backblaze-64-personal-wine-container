@@ -173,6 +173,14 @@ RUN printf 'version=%s\nrevision=%s\nbuild=%s\nvariant=%s\nbuilt=%s\n' \
 EXPOSE 5900
 
 COPY rootfs/ /
+
+# Beta-only overlay. Everything in this branch's monitor work lands here rather
+# than in rootfs/, so the stable images stay exactly as 10.2.1 shipped while the
+# HTTP dashboard, the tabbed interface and the nginx change get exercised on the
+# :beta channel. It overlays rootfs/, so the bb-monitor here replaces the released
+# one; when this work reaches a stable release the two merge back and this
+# directory goes away.
+COPY rootfs-beta/ /
 RUN chmod +x /startapp.sh /usr/local/bin/bb-monitor /usr/local/bin/bb-monitor-web \
         /usr/local/bin/bb-health /usr/local/bin/bb-watchdog /usr/local/bin/bb-version \
         /usr/local/bin/bb-doctor /usr/local/bin/bb-report \

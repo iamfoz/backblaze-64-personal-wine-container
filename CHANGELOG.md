@@ -4,9 +4,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [beta] - 2026-08-09
+
+Beta channel only (`:beta` tag), carrying everything in 10.2.1 plus the additions below. The
+`:beta` tag is mutable, so each published build stamps a number: `bb-version` reports it
+and the monitors show it as `beta+<n>`. Quote that number in a bug report.
+
+Everything below is beta only. The stable images are unchanged from 10.2.1 and will stay
+that way until this has run without problems for a while, at which point it moves into a
+stable release.
 
 ### Added
+- `bb-monitor` gains what the web dashboard had first: overall backup progress with its ETA,
+  files remaining, round-trip time, uptime, and the assigned upload server.
+- A settings dialog in `bb-monitor` too: `s` opens it, `Tab` switches between Preferences
+  and About, `Enter` opens the theme chooser, the arrows move through it with a live
+  preview. The theme choice is remembered in `/config/bb-monitor.conf`. All thirteen themes
+  are offered on any terminal, each with its own low-colour rendering.
+- The upload sparkline in `bb-monitor`, over the same forty-sample window the web dashboard
+  uses.
 - `bb-monitor-web`, the upload dashboard served over HTTP instead of the terminal, so a
   session survives the console window closing. Shows overall backup progress with an ETA
   weighted by completed transfers, files remaining, a live rate sparkline and uptime.
@@ -35,20 +51,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Round-trip time is useful to read with transfer rate because per-connection
   throughput is bounded by send buffer divided by RTT, so the two together give the
   per-thread ceiling to expect.
-- A settings dialog in the monitors, holding the thirteen colour themes and an About tab
-  reporting the running build, licence and credits. The terminal's theme choice is remembered
-  in `/config/bb-monitor.conf`.
-- The upload sparkline in `bb-monitor`, drawn in block characters over the same forty-sample
-  window the web dashboard uses.
-- `bb-monitor` gains what the web dashboard had first: overall backup progress with its ETA,
-  files remaining, round-trip time and uptime.
-- The assigned upload server, shown in both monitors.
+- A settings dialog in the web dashboard, holding the thirteen colour themes and an About
+  tab reporting the running build, licence and credits.
 
 ### Changed
-- `bb-monitor` and `bb-monitor-web` share one data layer, `/usr/local/lib/bb-monitor/bbdata.py`.
 - The web dashboard is mobile-friendly.
-- All thirteen themes are offered in `bb-monitor` on any terminal, each with its own
-  low-colour rendering.
+- `bb-monitor` and `bb-monitor-web` share one data layer, `/usr/local/lib/bb-monitor/bbdata.py`,
+  so a feature appears in both or neither.
 
 ### Fixed
 - File names were written into the page without HTML escaping, so a backed-up file whose
@@ -62,13 +71,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default to `min-width:auto` and so refuse to shrink below their content, which let one
   path in the in-flight list widen everything around it.
 
-## [beta] - 2026-08-07
-
-Beta channel only (`:beta` tag), carrying everything in 10.2.1 plus the patch below. The
-`:beta` tag is mutable, so each published build stamps a number: `bb-version` reports it
-and the monitors show it as `beta+<n>`. Quote that number in a bug report.
-
-### Added
 - A second Wine patch, `patches/wine-fdwrite-rearm.patch`, re-arming FD_WRITE after a
   poll observes that a socket cannot accept a send. Once FD_WRITE has been reported,
   Wine masks POLLOUT for that socket and suppresses further notification, so an
