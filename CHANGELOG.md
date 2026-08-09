@@ -39,6 +39,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   container. Contributed in concept by rogman.
 - The assigned upload server shown in the footer.
 
+### Changed
+- `bb-monitor` and `bb-monitor-web` now share one data layer, `/usr/local/lib/bb-monitor/bbdata.py`.
+  Each previously carried its own copy of the code that reads `/proc`, the cgroups and
+  Backblaze's own files, and they drifted: the web dashboard gained overall backup progress,
+  an ETA, files remaining and round-trip time while the terminal one kept the original
+  narrower view. Collection now lives in one place and a feature appears in both or neither.
+
+### Added
+- `bb-monitor` gains everything the web dashboard had first: overall backup progress with
+  its ETA, files remaining, round-trip time to the storage pod, and uptime.
+
 ### Fixed
 - File names were written into the page without HTML escaping, so a backed-up file whose
   name contained markup could inject it into the dashboard. Everything derived from

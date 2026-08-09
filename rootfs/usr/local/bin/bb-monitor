@@ -14,85 +14,19 @@ Shows the transfer rate, the files being sent, and recently completed files.
 Needs a terminal:  docker exec -it <container> bb-monitor
 """
 import locale; locale.setlocale(locale.LC_ALL, "")
-import curses, os, sys, time, re, calendar, unicodedata
+import curses, os, sys, time, unicodedata
 
-# ---- config -------------------------------------------------------------------
-BZ="/config/wine/dosdevices/c:/ProgramData/Backblaze/bzdata"
-LOGDIR=BZ+"/bzlogs/bztransmit"; TDIR=BZ+"/bzthread"
-PROC="/proc"; NETDEV="/proc/net/dev"; MEMINFO="/proc/meminfo"
-CG2="/sys/fs/cgroup"; CG1="/sys/fs/cgroup/memory"
-INT=2.0            # refresh interval (s)
-MPLOG="/tmp/bb_multipart_bzdone.log"   # first multi-part bz_done line gets dumped here
+# ---- shared data layer ----------------------------------------------------
+# Everything that reads /proc, the cgroups and Backblaze's own files lives in
+# bbdata, shared with bb-monitor-web. The two used to carry separate copies and
+# drifted: the web one gained overall progress, an ETA, files remaining and
+# round-trip time while this one kept the original narrower view. A feature
+# added to bbdata now shows up in both. This file owns curses and nothing else.
+sys.path.insert(0, "/usr/local/lib/bb-monitor")
+from bbdata import (BUILD_LABEL, INT, eta_str, gather, human, rec_cols,
+                     uptime_str, _upload_rtt)
 
-_logged=set(); _inflight={}; _recent=[]; _sess=0
-
-def _build_label():
-    """Short build identifier for the status bar, from the stamp written at build time."""
-    try:
-        with open("/etc/bb-build") as fh:
-            info=dict(l.split("=",1) for l in fh.read().splitlines() if "=" in l)
-    except OSError:
-        return ""
-    v=info.get("version","").strip()
-    if not v: return ""
-    label="v"+v if v[0].isdigit() else v
-    # The :beta tag is mutable, so "beta" alone identifies nothing. The build number
-    # (CI run) makes one published beta distinguishable from the next in a bug report.
-    b=info.get("build","").strip()
-    return "%s+%s"%(label,b) if b and b!="0" else label
-BUILD_LABEL=_build_label()
-
-# ---- helpers ------------------------------------------------------------------
-def read(path):
-    try:
-        with open(path,encoding="utf-8",errors="replace") as fh: return fh.read()
-    except OSError: return ""
-
-def human(n):
-    if n>=1073741824: return "%.1f GB"%(n/1073741824)
-    if n>=1048576:    return "%.0f MB"%(n/1048576)
-    return "%d KB"%(n/1024)
-
-def _secs(t):
-    hh,mm,ss=t.split(":"); return int(hh)*3600+int(mm)*60+int(ss)
-
-def _local_hms(line,fallback):
-    """Backblaze stamps its own log lines in UTC whatever the container's TZ is.
-    Returns (utc_hms, local_hms): callers keep the UTC value for span/duration
-    arithmetic, which must stay self-consistent, and show the local one."""
-    m=re.match(r'^(\d{4}-\d{2}-\d{2}) (\d\d:\d\d:\d\d)',line)
-    if not m: return fallback,fallback
-    utc_hms=m.group(2)
-    try:
-        epoch=calendar.timegm(time.strptime(m.group(1)+" "+utc_hms,"%Y-%m-%d %H:%M:%S"))
-        return utc_hms,time.strftime("%H:%M:%S",time.localtime(epoch))
-    except ValueError:
-        return utc_hms,utc_hms
-
-def rate_str(nbytes,secs,kbit_fallback=0):
-    """MB/s above 1024 kbit/s, else kbit/s. Falls back to the logged rate."""
-    if secs>0 and nbytes>0:
-        kbit=nbytes/secs*8/1000.0
-        return "%.2f MB/s"%(nbytes/secs/1048576) if kbit>1024 else "%d kbit/s"%kbit
-    if kbit_fallback>1024: return "%.2f MB/s"%(kbit_fallback/8192.0)
-    return "%d kbit/s"%kbit_fallback if kbit_fallback else ""
-
-def rec_cols(r):
-    """(thread, size, rate) display columns for one Recently Completed row.
-
-    Backblaze splits files over ~100 MB into parts uploaded by different threads.
-    Those are bundled into a single row: thread shows parts done/total, size is
-    the cumulative bytes sent, and rate is the file's true aggregate throughput
-    (total bytes over the wall-clock span of its parts, so it stays honest whether
-    the parts ran concurrently or in waves)."""
-    if r["chunked"]:
-        span=r["last"]-r["first"]
-        if span<0: span+=86400          # parts straddling midnight
-        return ("%d/%d"%(r["done"],r["total"]), human(r["bytes"]),
-                rate_str(r["bytes"],span))
-    return ("thr%d"%r["thr"], human(r["bytes"]) if r["bytes"] else "?",
-            rate_str(r["bytes"],r["secs"],r["kbit"]))
-
+# ---- curses-only helper -------------------------------------------------------
 def wclip(s,width):
     """Clip to terminal cells, not codepoints (CJK/emoji are 2 cells wide)."""
     out=[]; cw=0
@@ -101,171 +35,6 @@ def wclip(s,width):
         if cw+w>width: break
         out.append(ch); cw+=w
     return "".join(out)
-
-# ---- data sources (all direct file reads; no subprocesses) ----------------------
-def scan_procs():
-    """threadpush count, in-flight XML names, and process presence from /proc."""
-    thr=0; xmls=set(); has_fl=False; has_bt=False
-    try: pids=[p for p in os.listdir(PROC) if p.isdigit()]
-    except OSError: return 0,[],False,False
-    for p in pids:
-        try:
-            with open(os.path.join(PROC,p,"cmdline"),"rb") as fh:
-                cmd=fh.read().decode("utf-8","replace").replace("\0"," ")
-        except OSError: continue
-        if "bztransmit" in cmd: has_bt=True
-        if "bzfilelist" in cmd: has_fl=True
-        if "-threadpush" in cmd:
-            thr+=1; xmls.update(re.findall(r'bzt_\w+_bzt\.xml',cmd))
-    return thr,sorted(xmls),has_fl,has_bt
-
-def tail_log(n=800):
-    """Last n lines of the newest bztransmit log."""
-    try:
-        fs=[os.path.join(LOGDIR,f) for f in os.listdir(LOGDIR) if f.endswith(".log")]
-        if not fs: return ""
-        p=max(fs,key=os.path.getmtime)
-        with open(p,"rb") as fh:
-            fh.seek(0,2); sz=fh.tell(); fh.seek(max(0,sz-262144))
-            return "\n".join(fh.read().decode("utf-8","replace").splitlines()[-n:])
-    except OSError: return ""
-
-def _tx():
-    t=0
-    for ln in read(NETDEV).splitlines():
-        f=ln.replace(":"," ").split()
-        if len(f)>=10 and f[0]!="lo" and f[1].isdigit():
-            try: t+=int(f[9])
-            except ValueError: pass
-    return t
-
-def mem_info(host_total):
-    """Container memory from the cgroup (v2 then v1), docker-stats style."""
-    for cur,mx,stat,key in ((CG2+"/memory.current",CG2+"/memory.max",CG2+"/memory.stat","inactive_file"),
-                            (CG1+"/memory.usage_in_bytes",CG1+"/memory.limit_in_bytes",CG1+"/memory.stat","total_inactive_file")):
-        u=read(cur).strip()
-        if not u.isdigit(): continue
-        m=re.search(r'^%s (\d+)'%key,read(stat),re.M)
-        used=max(0,int(u)-(int(m.group(1)) if m else 0))   # minus page cache
-        l=read(mx).strip()
-        lim=int(l) if l.isdigit() else 0
-        if not 0<lim<(1<<60): lim=host_total               # "max"/unlimited -> host total
-        if lim>0: return (used,lim,used*100.0/lim)
-    return None
-
-# ---- data collection ------------------------------------------------------------
-def gather(prev):
-    global _inflight,_recent,_sess
-    o={}; ts=time.time()
-
-    mi=read(MEMINFO)   # /proc/meminfo is not namespaced: host values
-    m=re.search(r'MemTotal:\s+(\d+)',mi); host_total=int(m.group(1))*1024 if m else 0
-    mt=re.search(r'SwapTotal:\s+(\d+)',mi); mf=re.search(r'SwapFree:\s+(\d+)',mi)
-    o["swap"]=None
-    if mt and mf and int(mt.group(1))>0:
-        tot=int(mt.group(1))*1024; used=tot-int(mf.group(1))*1024
-        o["swap"]=(used,tot,used*100.0/tot)
-    o["mem"]=mem_info(host_total)
-
-    threads,xmls,has_fl,has_bt=scan_procs()
-    o["threads"]=threads
-    o["state"]=("Transmitting" if threads else
-                "Scanning" if has_fl else
-                "Preparing" if has_bt else "Idle")
-
-    now=_tx()
-    if prev and now>0 and now>=prev[0] and ts>prev[1]:
-        o["rate"]=(now-prev[0])/(ts-prev[1])/1048576; _sess+=now-prev[0]
-    else:
-        o["rate"]=0.0
-    o["_tx"]=(now,ts) if now>0 else prev
-    o["sess"]=_sess
-
-    blob=tail_log()
-    comps=[l for l in blob.splitlines() if "Leaving bztrans_thread_push" in l]
-    times=[_secs(m.group(1)) for l in comps for m in [re.search(r'(\d\d:\d\d:\d\d)',l)] if m]
-    o["chunks"]=sum(1 for t in times if (times[-1]-t)%86400<=60) if times else 0
-    sb=ss=0
-    for l in comps[-20:]:
-        m=re.search(r'elapsedSec=(\d+).*?numBytes=(\d+) bytes',l)
-        if m: ss+=int(m.group(1)); sb+=int(m.group(2))
-    ptbps=int(sb/ss) if ss>0 else 175000
-
-    # newest completion line for a thread slot (used for corroboration below)
-    def newest_line(thr):
-        return next((l for l in reversed(comps)
-                     if thr>=0 and re.search(r'which_threadStr=0*%d(?!\d)'%thr,l)),None)
-
-    # in-flight uploads from the thread XMLs
-    files=[]; cur={}
-    for x in xmls:
-        xml=read(os.path.join(TDIR,x))
-        mp=re.search(r'numBytes_to_send_in_shm="(\d+)"',xml)
-        mg=re.search(r'gmt_started="(\d{14})"',xml)
-        mh=re.search(r'hex_encoded_bz_done_line="([0-9a-f]*)"',xml)
-        mw=re.search(r'which_thread="(\d+)"',xml)
-        if not (mp and mg and mh): continue
-        try: fields=bytes.fromhex(mh.group(1)).decode('utf-8','replace').rstrip("\n").split("\t")
-        except ValueError: continue
-        win=fields[-1]; name=win.split("\\")[-1]
-        part=int(mp.group(1)); thr=int(mw.group(1)) if mw else -1
-        fsize=0
-        if len(win)>2 and win[1]==":":
-            try: fsize=os.path.getsize("/config/wine/dosdevices/%s:%s"%(win[0].lower(),win[2:].replace("\\","/")))
-            except OSError: pass
-        if fsize>part*1.5 and name not in _logged:     # capture 1st multi-part file seen
-            _logged.add(name)
-            try:
-                with open(MPLOG,"a") as fh:
-                    fh.write("%s  file=%d part=%d ~parts=%d\n"%(time.strftime("%F %T"),fsize,part,-(-fsize//part)))
-                    for i,fl in enumerate(fields): fh.write("   [%02d] %r\n"%(i,fl))
-                    fh.write("\n")
-            except OSError: pass
-        try: el=ts-calendar.timegm(time.strptime(mg.group(1),"%Y%m%d%H%M%S"))
-        except ValueError: el=0
-        pct=min(99.0,max(0.0,el*ptbps/part*100)) if part>0 else 0
-        # remember the newest completion line for this slot NOW, while the push is
-        # in flight — a completion later is corroborated by a NEWER line appearing
-        # (clock-free: immune to log-vs-XML timezone/clock skew).
-        files.append((name,part,fsize,pct)); cur[x]=(name,fsize,part,thr,newest_line(thr))
-    o["files"]=files
-
-    # completion = a push tracked last cycle whose XML is gone (or now holds a new
-    # file), CORROBORATED by a fresh log line for that thread — so a killed push
-    # or a stale slot never fabricates a "Recently Completed" row.
-    for xb,(nm,fs,part,thr,seen) in _inflight.items():
-        if xb in cur and cur[xb][0]==nm: continue
-        line=newest_line(thr)
-        if line is None or line==seen: continue   # no NEW completion line: skip
-        m=re.search(r'(\d\d:\d\d:\d\d)',line)
-        fallback=m.group(1) if m else time.strftime("%H:%M:%S")
-        tstr,tstr_local=_local_hms(line,fallback)   # tstr stays UTC for the span maths
-        end=_secs(tstr)
-        mn=re.search(r'elapsedSec=(\d+).*?numBytes=(\d+) bytes',line)
-        el=int(mn.group(1)) if mn else 0
-        nb=int(mn.group(2)) if mn else 0
-        if not nb:
-            mb=re.search(r'\((\d+) MBytes\)',line)
-            nb=int(mb.group(1))*1048576 if mb else 0
-        mk=re.search(r'kBitsPerSec=(\d+)',line); kb=int(mk.group(1)) if mk else 0
-        if part>0 and fs>part*1.5:
-            # a part of a split file: fold it into that file's single row
-            b=next((r for r in _recent
-                    if r["chunked"] and r["name"]==nm and r["done"]<r["total"]),None)
-            if b is None:
-                b={"chunked":True,"name":nm,"done":0,"total":max(1,-(-fs//part)),
-                   "bytes":0,"first":end-el,"last":end}
-                _recent.append(b)
-            b["done"]+=1; b["bytes"]+=nb; b["t"]=tstr_local
-            b["first"]=min(b["first"],end-el); b["last"]=max(b["last"],end)
-            _recent.remove(b); _recent.append(b)   # keep the active bundle in view
-        else:
-            _recent.append({"chunked":False,"name":nm,"thr":thr,"t":tstr_local,
-                            "bytes":fs or nb,"secs":el,"kbit":kb})
-    del _recent[:-8]
-    _inflight=cur
-    o["recent"]=list(_recent)
-    return o
 
 # ---- dashboard ------------------------------------------------------------------
 def aw(scr,y,x,s,attr=0):
@@ -310,13 +79,16 @@ def draw(scr,d,st):
             cx=x
             for s,a in parts: aw(scr,y,cx,s,a); cx+=len(s)
         return {"w":wd,"draw":dr}
-    def gauge(label,us,ts_,pct):
-        pre="%s %s/%s "%(label,us,ts_); suf=" %d%%"%int(pct)
+    def gauge(label,us,ts_,pct,high_is_good=False,note=""):
+        # Mem and Swap are bad when full; Backup is good when full. Same widget,
+        # opposite reading, so the direction has to be told rather than assumed.
+        pre="%s %s/%s "%(label,us,ts_); suf=" %d%%"%int(pct)+(" %s"%note if note else "")
+        if high_is_good: sev=0 if pct>=67 else (1 if pct>=34 else 2)
+        else:            sev=2 if pct>=90 else (1 if pct>=70 else 0)
         def dr(y,x):
             aw(scr,y,x,pre,NORM)
-            gp=curses.color_pair(9 if pct>=90 else (8 if pct>=70 else 7))
-            draw_bar(scr,y,x+len(pre),12,pct,gp)
-            aw(scr,y,x+len(pre)+12,suf, BAD if pct>=90 else (WARN if pct>=70 else GOOD))
+            draw_bar(scr,y,x+len(pre),12,pct,curses.color_pair((7,8,9)[sev]))
+            aw(scr,y,x+len(pre)+12,suf,(GOOD,WARN,BAD)[sev])
         return {"w":len(pre)+12+len(suf),"draw":dr}
     chunks=[
         txt([("Threads: ",NORM),("%d"%d["threads"],NORM)]),
@@ -327,6 +99,21 @@ def draw(scr,d,st):
         gauge("Mem:",human(d["mem"][0]),human(d["mem"][1]),d["mem"][2]) if d["mem"] else txt([("Mem: n/a",NORM)]),
         gauge("Swap:",human(d["swap"][0]),human(d["swap"][1]),d["swap"][2]) if d["swap"] else txt([("Swap: off",NORM)]),
     ]
+    # Everything below reached the web dashboard first. Both read the same
+    # bbdata.gather(), so they stay in step from here.
+    rtt_ms,rtt_peer,_=_upload_rtt()
+    if rtt_ms is None: chunks.append(txt([("RTT: n/a",NORM)]))
+    else:
+        rc=GOOD if rtt_ms<80 else (WARN if rtt_ms<200 else BAD)
+        chunks.append(txt([("RTT: ",NORM),("%dms"%round(rtt_ms),rc)]))
+    b=d.get("backup")
+    if b:
+        fr=b.get("remaining_files")
+        if fr is not None:
+            chunks.append(txt([("Files Remaining: ",NORM),("{:,}".format(fr),NORM)]))
+        chunks.append(gauge("Backup:",human(b["done"]),human(b["total"]),b["pct"],
+                             high_is_good=True,note="ETA "+eta_str(b.get("eta_seconds"))))
+    chunks.append(txt([("Uptime: ",NORM),(uptime_str(),NORM)]))
     SEP=3; inner=max(1,w-4); placements=[]; line=0; cx=0
     for c in chunks:
         if cx==0: placements.append((c,line,0)); cx=c["w"]
