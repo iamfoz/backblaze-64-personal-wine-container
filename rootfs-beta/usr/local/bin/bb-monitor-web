@@ -141,10 +141,12 @@ INDEX_HTML = """<!doctype html>
     --good:#3ddc6b; --warn:#ffd23d; --bad:#ff5a5a;
     --track-bg:#04101f; --track-border:#1c3a63; --scanline:0;
   }
+  /* Dark is properly black rather than dark grey. rogman's values: the point of
+     the theme is black, and #161616 was not it. */
   html[data-theme="dark"]{
-    --bg:#161616; --panel:#1e1e1e; --border:#6a9fd8; --title:#7fb2e5;
-    --text:#d4d4d4; --hi-bg:#d4d4d4; --hi-fg:#161616;
-    --good:#4ec9b0; --warn:#dcdcaa; --bad:#f14c4c;
+    --bg:#000000; --panel:#1e1e1e; --border:#6a9fd8; --title:#7fb2e5;
+    --text:#d7e6ff; --hi-bg:#d4d4d4; --hi-fg:#161616;
+    --good:#3ddc6b; --warn:#ffd23d; --bad:#ff5a5a;
     --track-bg:#0c0c0c; --track-border:#3a3a3a; --scanline:0;
   }
   html[data-theme="matrix"]{

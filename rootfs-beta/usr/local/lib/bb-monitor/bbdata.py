@@ -250,6 +250,13 @@ def read(path):
 
 
 def human(n):
+    # Runs to PB. Stopping at GB meant a 250 TB backup rendered as
+    # "257524.9 GB", eleven characters that overflowed the gauge label and got
+    # clipped. Reported by gandalf15.
+    if n >= 1125899906842624:
+        return "%.1f PB" % (n / 1125899906842624)
+    if n >= 1099511627776:
+        return "%.1f TB" % (n / 1099511627776)
     if n >= 1073741824:
         return "%.1f GB" % (n / 1073741824)
     if n >= 1048576:

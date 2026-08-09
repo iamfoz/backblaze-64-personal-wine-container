@@ -55,11 +55,15 @@ stable release.
   tab reporting the running build, licence and credits.
 
 ### Changed
+- The dark theme is properly black rather than dark grey, using rogman's values.
 - The web dashboard is mobile-friendly.
 - `bb-monitor` and `bb-monitor-web` share one data layer, `/usr/local/lib/bb-monitor/bbdata.py`,
   so a feature appears in both or neither.
 
 ### Fixed
+- Sizes above a terabyte were rendered in gigabytes, so a 250 TB backup showed as
+  "257524.9 GB" and overflowed the gauge label. Sizes now run to petabytes. Reported by
+  gandalf15.
 - File names were written into the page without HTML escaping, so a backed-up file whose
   name contained markup could inject it into the dashboard. Found by rogman.
 - The dashboard had no viewport meta, so a mobile browser laid it out at around 980px and
