@@ -77,6 +77,11 @@ stable release.
   Chunks are shown in their real positions, filling out of order as threads finish, with
   those in flight marked differently. Chunks that completed before the monitor was opened
   stay unmarked, since they cannot be told apart from pending ones.
+- Warnings drawn from the client's own records: a safety freeze, a failed file check, or no
+  completed backup within the number of days set in the user's own settings. They appear as
+  a banner in the web dashboard and in the terminal title bar.
+- Upload counts for the most recent day, with failures broken out by the client's own
+  categories, and the bytes compression has saved.
 - Backblaze's own measured throughput, from `bzperf_measured_upload.xml`. It reports
   3578 kbit/s for files over a megabyte on the machine this was developed against, which
   matches the ceiling calculated from the send buffer and round-trip time to within two

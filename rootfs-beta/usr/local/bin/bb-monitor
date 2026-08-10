@@ -186,7 +186,11 @@ def draw(scr,d,st):
     NORM=curses.color_pair(1); HI=curses.color_pair(2)|curses.A_BOLD
     BORD=curses.color_pair(6)|curses.A_BOLD; TIT=curses.color_pair(2)|curses.A_BOLD
     GOOD=curses.color_pair(4)|curses.A_BOLD; WARN=curses.color_pair(3)|curses.A_BOLD; BAD=curses.color_pair(5)|curses.A_BOLD
-    hdr="Backblaze 64 • Upload Monitor"; clk=time.strftime("%H:%M:%S")
+    # Warnings ride in the title bar, where they cannot be scrolled past.
+    warn=d.get("health") or []
+    hdr="Backblaze 64 • Upload Monitor"
+    if warn: hdr += "  •  " + "; ".join(t for _,t in warn)
+    clk=time.strftime("%H:%M:%S")
     aw(scr,0,0," "*w,HI); aw(scr,0,1,hdr,HI)
     if w>=len(hdr)+len(clk)+4: aw(scr,0,w-len(clk)-2,clk,HI)
 
@@ -246,6 +250,13 @@ def draw(scr,d,st):
                            ("%d/%d dirs"%(sc["dirs_done"],sc["dirs_total"]),GOOD)]))
         if sc.get("files") is not None:
             chunks.append(txt([("Found: ",NORM),("{:,}".format(sc["files"]),NORM)]))
+    us=d.get("upload_success")
+    if us:
+        parts=[("Uploads: ",NORM),("{:,}".format(us[0]),NORM)]
+        if us[1]: parts.append((" (%d failed)"%us[1],BAD))
+        chunks.append(txt(parts))
+    cs=d.get("compress_saved")
+    if cs: chunks.append(txt([("Compression saved: ",NORM),(human(cs),NORM)]))
     pf=d.get("perf")
     if pf: chunks.append(txt([("Client est: ",NORM),
                               ("%.1f Mbit/s"%(pf["large_kbit"]/1000.0),NORM)]))

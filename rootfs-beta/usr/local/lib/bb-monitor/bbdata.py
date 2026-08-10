@@ -41,6 +41,8 @@ OVERVIEW = BZ + "/overviewstatus.xml"
 LFDIR = BZ + "/bzbackup/bzdatacenter/bzcurrentlargefile"
 FLISTS = BZ + "/bzfilelists"
 PERFXML = BZ + "/bzreports/bzperf_measured_upload.xml"
+RPTS = BZ + "/bzreports"
+BZINFO = BZ + "/bzinfo.xml"
 
 _logged = set()
 _inflight = {}
@@ -293,6 +295,86 @@ def _chunk_map():
     _chunk_cache.update({"file": name, "map": out, "total": len(out)})
     _chunk_seen.pop(name, None)
     return name, out, len(out)
+
+
+def health():
+    """Conditions worth warning about, from the client's own records.
+
+    A safety freeze stops backups entirely, an unclean file check means the
+    client thinks something is wrong, and a backup that has not completed within
+    the user's own threshold is the warning the GUI would give.
+    """
+    out = []
+    j = read(RPTS + "/status.json")
+    if '"frozen"' in j and re.search(r'"frozen"\s*:\s*true', j):
+        out.append(("frozen", "Backups are safety-frozen"))
+    fc = read(RPTS + "/bzdc_filecheck.xml")
+    if 'file_check_is_clean="false"' in fc:
+        out.append(("filecheck", "Backblaze reports a failed file check"))
+    last = re.search(r'gmt_millis="(\d+)"', read(RPTS + "/bzstat_lastbackupcompleted.xml"))
+    warn = re.search(r'numdays_warn_if_no_backup="(\d+)"', read(BZINFO))
+    if last:
+        days = (time.time() - int(last.group(1)) / 1000.0) / 86400.0
+        limit = int(warn.group(1)) if warn else 7
+        if days > limit:
+            out.append(("stale", "No completed backup for %d days (limit %d)"
+                                  % (int(days), limit)))
+    return out
+
+
+def last_backup_days():
+    """Days since a backup last completed, or None."""
+    m = re.search(r'gmt_millis="(\d+)"', read(RPTS + "/bzstat_lastbackupcompleted.xml"))
+    return (time.time() - int(m.group(1)) / 1000.0) / 86400.0 if m else None
+
+
+def upload_success_today():
+    """(successes, failures) from the most recent day the client recorded."""
+    rows = re.findall(r'<one_upload_success_stat ([^/]*)/>', read(RPTS + "/bzstat_upload_success.xml"))
+    if not rows:
+        return None
+    last = rows[-1]
+    def g(k):
+        m = re.search(k + r'="(\d+)"', last)
+        return int(m.group(1)) if m else 0
+    fails = (g("num_upload_fail_CvtTooBusy") + g("num_upload_fail_CvtNoRoom")
+             + g("num_upload_fail_UnknownReason"))
+    return (g("num_upload_success"), fails)
+
+
+def compress_saved():
+    """Bytes the client says compression has saved, or None."""
+    m = re.search(r'num_bytes_saved="(\d+)"', read(RPTS + "/bzstat_compress_save.xml"))
+    return int(m.group(1)) if m else None
+
+
+def speed_curve():
+    """Throughput by payload size from the client's own speed test, kbit/s.
+
+    Written as 10KB_112__100KB_632__1MB_2712__10MB_4304, which is the clearest
+    statement of why small files are slow: each costs a round trip, so the rate
+    climbs with payload size.
+    """
+    t = read(RPTS + "/bzperf_lastspeedtest.txt").strip()
+    pairs = re.findall(r'(\d+[KM]B)_(\d+)', t)
+    return [(sz, int(v)) for sz, v in pairs] or None
+
+
+def volumes():
+    """Source volumes with their space, from the client's own view."""
+    out = []
+    for a in re.findall(r'<bzvolume ([^/]*)/>', read(BZ + "/bzvolumes.xml")):
+        mp = re.search(r'mountPointPathHex="([0-9a-f]*)"', a)
+        tot = re.search(r'numBytesTotalOnVolume="(\d+)"', a)
+        free = re.search(r'numBytesFreeOnVolume="(\d+)"', a)
+        if not (tot and free):
+            continue
+        try:
+            path = bytes.fromhex(mp.group(1)).decode("utf-8", "replace") if mp else "?"
+        except ValueError:
+            path = "?"
+        out.append({"path": path, "total": int(tot.group(1)), "free": int(free.group(1))})
+    return out or None
 
 
 def uptime_str():
@@ -706,6 +788,10 @@ def gather(prev):
     o["state_reported"], o["current_file"] = client_state()
     o["scan"] = scan_progress()
     o["perf"] = measured_perf()
+    o["health"] = health()
+    o["upload_success"] = upload_success_today()
+    o["compress_saved"] = compress_saved()
+    o["last_backup_days"] = last_backup_days()
     o["files"] = files
 
     for xb, (nm, fs, part, thr, seen) in _inflight.items():

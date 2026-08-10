@@ -114,6 +114,11 @@ def snapshot_to_json(d):
                    "size_str": human(d["scan"]["bytes"]) if d["scan"]["bytes"] else None}
                   if d.get("scan") else None),
         "perf": d.get("perf"),
+        "health": [{"kind": k, "text": t} for k, t in (d.get("health") or [])],
+        "upload_success": d.get("upload_success"),
+        "compress_saved": human(d["compress_saved"]) if d.get("compress_saved") else None,
+        "last_backup_days": (round(d["last_backup_days"], 1)
+                             if d.get("last_backup_days") is not None else None),
         "chunkmap": d.get("chunkmap"),
         "latency_ms": (round(lat_ms, 1) if lat_ms is not None else None),
         "latency_host": lat_host,
@@ -307,6 +312,8 @@ INDEX_HTML = """<!doctype html>
   .file-row.cells .meta{font-size:12px;}
   #empty{opacity:.6;}
   #err{color:var(--bad);padding:10px;}
+  #health{color:var(--hi-bg);background:var(--bad);padding:7px 10px;margin-bottom:10px;
+       border-radius:2px;font-weight:bold;}
   /* ---- settings modal ---------------------------------------------------- */
   #settings-btn{font-family:inherit;font-size:15px;line-height:1;background:transparent;
        color:var(--hi-fg);border:1px solid var(--hi-fg);border-radius:2px;padding:2px 7px;
@@ -443,6 +450,7 @@ INDEX_HTML = """<!doctype html>
 </div>
 <main>
   <div id="err" style="display:none"></div>
+  <div id="health" style="display:none"></div>
   <div class="panel" id="panel-status">
     <span class="ptitle">Status</span>
     <div id="status-grid"></div>
@@ -584,6 +592,11 @@ async function tick(){
       return;
     }
     document.getElementById('err').style.display='none';
+    var hw = document.getElementById('health');
+    if(d.health && d.health.length){
+      hw.style.display = 'block';
+      hw.innerHTML = d.health.map(function(h){ return esc(h.text); }).join(' &bull; ');
+    } else { hw.style.display = 'none'; }
     document.getElementById('clock').textContent = d.clock;
     document.getElementById('build').textContent = d.build_label || '';
     document.getElementById('footer-server').textContent =
@@ -612,6 +625,12 @@ async function tick(){
       (d.scan ? '<span class="stat">Scanning: '+d.scan.dirs+' dirs \u2022 ' +
                 esc((d.scan.files||0).toLocaleString())+' files' +
                 (d.scan.size_str ? ' \u2022 '+esc(d.scan.size_str) : '') + '</span>' : '') +
+      (d.upload_success ? '<span class="stat" title="Uploads the client recorded for ' +
+                'the most recent day, with failures broken out.">Uploads: ' +
+                d.upload_success[0].toLocaleString() +
+                (d.upload_success[1] ? ' <span class="bad">'+d.upload_success[1]+' failed</span>' : '') +
+                '</span>' : '') +
+      (d.compress_saved ? '<span class="stat dim">Compression saved: '+esc(d.compress_saved)+'</span>' : '') +
       (d.perf ? '<span class="stat dim" title="Measured by the Backblaze client itself. ' +
                 'Small files are slower because each costs a round trip.">Client est: ' +
                 (d.perf.large_kbit/1000).toFixed(1)+' Mbit/s</span>' : '') +
