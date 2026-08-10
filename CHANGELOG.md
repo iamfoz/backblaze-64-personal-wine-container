@@ -65,6 +65,9 @@ stable release.
   per-thread ceiling to expect.
 - A settings dialog in the web dashboard, holding the thirteen colour themes and an About
   tab reporting the running build, licence and credits.
+- A compact view for multi-part uploads, in both monitors. One row per file with the bar
+  drawn as a block per part, filling as parts complete. Off by default, toggled beside the
+  theme picker.
 
 ### Changed
 - The dark theme is properly black rather than dark grey, using rogman's values.

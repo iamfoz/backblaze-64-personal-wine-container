@@ -72,9 +72,12 @@ def snapshot_to_json(d):
     swap = d["swap"]
     lat_ms, lat_host, lat_note = _upload_rtt()
     files_out = []
-    for name, part, fsize, pct in d["files"]:
+    for name, part, fsize, pct, parts in d["files"]:
         size_str = (human(fsize) + (" (chunked)" if fsize > part * 1.5 else "")) if fsize > 0 else "%d MB" % (part / 1048576)
-        files_out.append({"name": name, "pct": round(pct, 1), "size_str": size_str})
+        row = {"name": name, "pct": round(pct, 1), "size_str": size_str}
+        if parts:
+            row["parts"] = {"done": parts[0], "total": parts[1]}
+        files_out.append(row)
     recent_out = []
     for rr in d["recent"]:
         th, size, rate = rec_cols(rr)
@@ -286,6 +289,12 @@ INDEX_HTML = """<!doctype html>
   /* min-width:0 because a flex item defaults to min-width:auto and so refuses
      to shrink below its content, which let one long path widen the page. */
   .file-row .meta > span{min-width:0;overflow-wrap:anywhere;}
+  /* Compact multi-part view: one row per file, the bar split into a cell per part. */
+  .file-row.cells .track{display:flex;gap:1px;background:transparent;border:0;height:14px;}
+  .file-row.cells .cell{flex:1 1 0;min-width:2px;background:var(--track-bg);
+       border:1px solid var(--track-border);}
+  .file-row.cells .cell.on{background:var(--good);border-color:var(--good);}
+  .file-row.cells .meta{font-size:12px;}
   #empty{opacity:.6;}
   #err{color:var(--bad);padding:10px;}
   /* ---- settings modal ---------------------------------------------------- */
@@ -409,6 +418,12 @@ INDEX_HTML = """<!doctype html>
           <option value="cyberpunk">Cyberpunk Neon</option>
         </select>
       </div>
+      <div class="frow" style="margin-top:12px">
+        <label for="compact-parts">Compact multi-part view</label>
+        <input type="checkbox" id="compact-parts">
+      </div>
+      <p class="fhint">One row per file, with the bar split into a block per part.
+         Blocks fill as parts complete.</p>
       <p class="fhint">Saved in this browser only. Each device keeps its own choice.
          Add <code>?theme=matrix</code> or <code>?compact=1</code> to the URL to override,
          which is how to embed a compact panel in a dashboard.</p>
@@ -482,6 +497,7 @@ function gaugeHtml(label, g, highIsGood, extra, suffix){
          ' <span class="track"><span class="fill" style="width:'+Math.min(100,g.pct)+'%"></span></span> '+g.pct+'%'+suf+'</span>';
 }
 var lastState = null;
+var compactParts = false;
 function updateFavicon(state){
   var cs = getComputedStyle(document.documentElement);
   var color = '#888888';
@@ -582,6 +598,15 @@ async function tick(){
       up.innerHTML = '<div id="empty">(nothing in flight)</div>';
     } else {
       up.innerHTML = d.files.map(f=>{
+        if(compactParts && f.parts && f.parts.total > 1){
+          var cells = '';
+          for(var i=0;i<f.parts.total;i++){
+            cells += '<span class="cell'+(i < f.parts.done ? ' on' : '')+'"></span>';
+          }
+          return '<div class="file-row cells"><div class="track">'+cells+'</div>' +
+                 '<div class="meta"><span>'+f.parts.done+'/'+f.parts.total+'</span>' +
+                 '<span>'+esc(f.size_str)+'</span><span>'+esc(f.name)+'</span></div></div>';
+        }
         var cls = f.pct>=67?'good':(f.pct>=34?'warn':'bad');
         return '<div class="file-row"><div class="track"><span class="fill '+cls+'" style="width:'+f.pct+'%"></span></div>' +
                '<div class="meta"><span>'+f.pct.toFixed(0)+'%</span><span>'+esc(f.size_str)+'</span><span>'+esc(f.name)+'</span></div></div>';
@@ -620,6 +645,15 @@ async function tick(){
     document.documentElement.setAttribute('data-theme', sel.value);
     try { localStorage.setItem('bbMonitorTheme', sel.value); } catch(e){}
     updateFavicon(lastState);
+  });
+
+  var cp = document.getElementById('compact-parts');
+  try { compactParts = localStorage.getItem('bbCompactParts') === '1'; } catch(e){}
+  if(params.get('parts') === '1') compactParts = true;
+  cp.checked = compactParts;
+  cp.addEventListener('change', function(){
+    compactParts = cp.checked;
+    try { localStorage.setItem('bbCompactParts', compactParts ? '1' : '0'); } catch(e){}
   });
 
   var backdrop = document.getElementById('backdrop');

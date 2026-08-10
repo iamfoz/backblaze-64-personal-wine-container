@@ -339,6 +339,21 @@ def _part_size(fields, live):
     return best or live
 
 
+def _parts_progress(name, fsize, part):
+    """(done, total) for a file Backblaze has split, or None for a single part.
+
+    done comes from the completed-parts bundle already tracked for the file, so a
+    part counts only once it has actually landed.
+    """
+    if part <= 0 or fsize <= part * 1.5:
+        return None
+    total = max(1, -(-fsize // part))
+    for r in _recent:
+        if r.get("chunked") and r["name"] == name and r["done"] < r["total"]:
+            return (min(r["done"], total), total)
+    return (0, total)
+
+
 def rec_cols(r):
     if r["chunked"]:
         span = r["last"] - r["first"]
@@ -576,7 +591,7 @@ def gather(prev):
         except ValueError:
             el = 0
         pct = min(99.0, max(0.0, el * ptbps / part * 100)) if part > 0 else 0
-        files.append((name, part, fsize, pct))
+        files.append((name, part, fsize, pct, _parts_progress(name, fsize, part)))
         cur[x] = (name, fsize, part, thr, newest_line(thr))
     o["files"] = files
 

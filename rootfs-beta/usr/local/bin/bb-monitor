@@ -260,11 +260,22 @@ def draw(scr,d,st):
     if up_h>=3:
         iw=w-4; bw=max(10,min(40,iw-42)); yy=up_top+1
         if not files: aw(scr,yy,2,"(nothing in flight)",NORM)
-        for name,part,fsize,pct in files[soff:soff+cap]:
-            bp=curses.color_pair(7 if pct>=67 else (8 if pct>=34 else 9))
-            draw_bar(scr,yy,2,bw,pct,bp)
+        for name,part,fsize,pct,parts in files[soff:soff+cap]:
             sz=(human(fsize)+(" (chunked)" if fsize>part*1.5 else "")) if fsize>0 else "%d MB"%(part/1048576)
-            aw(scr,yy,2+bw,wclip(" %3.0f%%  %-12s %s"%(pct,sz,name),iw-bw),NORM); yy+=1
+            if st.get("cells") and parts and parts[1]>1:
+                # One block per part, filled as parts land.
+                done,total=parts
+                cw=min(bw,total)
+                for i in range(cw):
+                    lit=i < int(round(done*cw/total))
+                    aw(scr,yy,2+i,"\u2588" if lit else "\u2591",
+                       curses.color_pair(7) if lit else NORM)
+                aw(scr,yy,2+cw,wclip(" %d/%d  %-12s %s"%(done,total,sz,name),iw-cw),NORM)
+            else:
+                bp=curses.color_pair(7 if pct>=67 else (8 if pct>=34 else 9))
+                draw_bar(scr,yy,2,bw,pct,bp)
+                aw(scr,yy,2+bw,wclip(" %3.0f%%  %-12s %s"%(pct,sz,name),iw-bw),NORM)
+            yy+=1
         t="Uploading Now"
         if n>cap: t+=" • %d-%d/%d"%(soff+1,min(n,soff+cap),n)
         box(scr,up_top,0,up_h,w,t,BORD,TIT)
@@ -342,8 +353,15 @@ def draw_overlay(scr, st):
     if ui["tab"] == 0:
         picking = ui["picker"] is not None
         cur = ui["theme"]
-        aw(scr, top, bx + 2, "Colour theme", NORM | (0 if picking else curses.A_BOLD))
-        aw(scr, top, bx + 20, "< %s >" % cur, NORM if picking else HI)
+        sel = ui.get("row", 0)
+        aw(scr, top, bx + 2, "Colour theme",
+           NORM | (0 if picking else (curses.A_BOLD if sel == 0 else 0)))
+        aw(scr, top, bx + 20, "< %s >" % cur,
+           NORM if picking else (HI if sel == 0 else NORM))
+        aw(scr, top + 1, bx + 2, "Compact multi-part view",
+           NORM | (curses.A_BOLD if (sel == 1 and not picking) else 0))
+        aw(scr, top + 1, bx + 26, "[%s]" % ("x" if ui["cells"] else " "),
+           HI if (sel == 1 and not picking) else NORM)
         if picking:
             # Scroll rather than truncate. On a short terminal the list will not
             # fit, and silently dropping the last few themes is how Cyberpunk Neon
@@ -360,7 +378,7 @@ def draw_overlay(scr, st):
             more = " (%d/%d)" % (sel + 1, len(names)) if len(names) > avail else ""
             hint = "Up/Down choose \u2022 Enter apply \u2022 Esc cancel" + more
         else:
-            aw(scr, top + 2, bx + 2,
+            aw(scr, top + 3, bx + 2,
                wclip("Applies immediately and is remembered in %s" % PREF_FILE, bw - 4), DIM)
             # Say what the terminal can actually do. Without this, a theme that
             # renders almost identically to another looks like a broken setting
@@ -376,7 +394,9 @@ def draw_overlay(scr, st):
                 aw(scr, top + 5, bx + 2, wclip(
                     "Unraid's container Console gives full colour, or pass "
                     "-e TERM=xterm-256color", bw - 4), DIM)
-            hint = "Enter change theme \u2022 Tab About \u2022 Esc close"
+            hint = ("Up/Down row \u2022 Enter "
+                    + ("change theme" if sel == 0 else "toggle")
+                    + " \u2022 Tab About \u2022 Esc close")
     else:
         y = top
         for text, bold in _about_lines():
@@ -416,8 +436,17 @@ def overlay_key(scr, st, ch):
         ui["tab"] = (ui["tab"] + 1) % 2
     elif ch == curses.KEY_BTAB:
         ui["tab"] = (ui["tab"] - 1) % 2
+    elif ch in (curses.KEY_UP, ord('k')) and ui["tab"] == 0:
+        ui["row"] = (ui.get("row", 0) - 1) % 2
+    elif ch in (curses.KEY_DOWN, ord('j')) and ui["tab"] == 0:
+        ui["row"] = (ui.get("row", 0) + 1) % 2
     elif ch in (curses.KEY_ENTER, 10, 13) and ui["tab"] == 0:
-        ui["picker"] = max(0, names.index(ui["theme"]) if ui["theme"] in names else 0)
+        if ui.get("row", 0) == 0:
+            ui["picker"] = max(0, names.index(ui["theme"]) if ui["theme"] in names else 0)
+        else:
+            ui["cells"] = not ui["cells"]
+            save_pref("compact_parts", "1" if ui["cells"] else "0")
+            st["cells"] = ui["cells"]
     return True
 
 def main(scr):
@@ -429,7 +458,8 @@ def main(scr):
     if theme not in names: theme=names[0]
     apply_theme(scr,theme)
     scr.keypad(True); scr.timeout(50)
-    st={"soff":0,"cap":1,"ui":None}; prev=None; d=None; last=0
+    cells=load_pref("compact_parts","0")=="1"
+    st={"soff":0,"cap":1,"ui":None,"cells":cells}; prev=None; d=None; last=0
     while True:
         ch=scr.getch()
         if st["ui"] is not None:
@@ -442,7 +472,8 @@ def main(scr):
         else:
             if ch in (ord('q'),ord('Q')): break
             elif ch in (ord('s'),ord('S')):
-                st["ui"]={"tab":0,"row":0,"picker":None,"theme":theme}
+                st["ui"]={"tab":0,"row":0,"picker":None,"theme":theme,
+                          "cells":st.get("cells",False)}
             elif ch in (curses.KEY_UP,ord('k')): st["soff"]-=1
             elif ch in (curses.KEY_DOWN,ord('j')): st["soff"]+=1
             elif ch==curses.KEY_PPAGE: st["soff"]-=st["cap"]
