@@ -82,7 +82,9 @@ stable release.
   size turned `filesize / part` into tens of thousands. The configured part size is now read
   from the `bz_done` line, which is constant for a file. A total that large also meant the
   record never reached completion, so every later upload of the same file kept accumulating
-  into it. Reported by gandalf15.
+  into it. Multi-part files also produce one push beyond their part count, which would
+  otherwise open a second row for the same file once the count was corrected; that trailing
+  push is now absorbed. Reported by gandalf15.
 - Sizes above a terabyte were rendered in gigabytes, so a 250 TB backup showed as
   "257524.9 GB" and overflowed the gauge label. Sizes now run to petabytes. Reported by
   gandalf15.

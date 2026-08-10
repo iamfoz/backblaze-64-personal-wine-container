@@ -616,6 +616,12 @@ def gather(prev):
         if part > 0 and fs > part * 1.5:
             b = next((r for r in _recent if r["chunked"] and r["name"] == nm and r["done"] < r["total"]), None)
             if b is None:
+                # Every multi-part file produces one push beyond its part count,
+                # consistently, across every sample looked at. Once a file's bundle
+                # is full that trailing push is that file finishing, not a fresh
+                # upload, so it is dropped rather than opening a second row.
+                if any(r["chunked"] and r["name"] == nm for r in _recent):
+                    continue
                 b = {"chunked": True, "name": nm, "done": 0, "total": max(1, -(-fs // part)),
                      "bytes": 0, "first": end - el, "last": end}
                 _recent.append(b)
