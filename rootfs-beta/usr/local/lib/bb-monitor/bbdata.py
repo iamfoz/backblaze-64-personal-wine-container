@@ -35,6 +35,13 @@ CG1 = "/sys/fs/cgroup/memory"
 INT = 2.0
 MPLOG = "/tmp/bb_multipart_bzdone.log"
 
+# Files the client keeps its own state in. Everything here was found by surveying
+# a live bzdata tree; see scratch/bzdata-survey-findings.md for what each holds.
+OVERVIEW = BZ + "/overviewstatus.xml"
+LFDIR = BZ + "/bzbackup/bzdatacenter/bzcurrentlargefile"
+FLISTS = BZ + "/bzfilelists"
+PERFXML = BZ + "/bzreports/bzperf_measured_upload.xml"
+
 _logged = set()
 _inflight = {}
 _recent = []
@@ -204,6 +211,88 @@ def _upload_rtt():
 
 
 START_TIME = time.time()
+
+
+def client_state():
+    """What the client says it is doing, and the file it names.
+
+    overviewstatus.xml is rewritten continuously and holds the client's own word
+    for its state, which beats inferring one from which processes exist.
+    current_file reads like "Part 14 of Something.mkv" during a large upload.
+    """
+    t = read(OVERVIEW)
+    m = re.search(r'cur_state="([^"]*)"', t)
+    f = re.search(r'current_file="([^"]*)"', t)
+    return (m.group(1) if m else None, f.group(1) if f else None)
+
+
+def scan_progress():
+    """Progress of a file-list scan, or None when no scan is running.
+
+    A scan writes a parallel .future set alongside the live one and marks it
+    totally_final="false" until it finishes. topdirs gives directories indexed
+    out of the total, which is the only real percentage the client exposes.
+    """
+    fut = read(FLISTS + "/topdirs.xml.future")
+    stats = read(FLISTS + "/filestats.xml.future")
+    if not fut or 'totally_final="true"' in stats:
+        return None
+    mt = re.search(r'numtopdirs="(\d+)"', fut)
+    mn = re.search(r'next_to_index="(\d+)"', fut)
+    if not (mt and mn):
+        return None
+    total, done = int(mt.group(1)), int(mn.group(1))
+    mf = re.search(r'everythingnum="(\d+)"', stats)
+    mb = re.search(r'everythingtotbytes="(\d+)"', stats)
+    return {"dirs_done": min(done, total), "dirs_total": total,
+            "pct": (min(done, total) * 100.0 / total) if total else 0.0,
+            "files": int(mf.group(1)) if mf else None,
+            "bytes": int(mb.group(1)) if mb else None}
+
+
+def measured_perf():
+    """The client's own measured throughput, in kbit/s, split by file size."""
+    t = read(PERFXML)
+    big = re.search(r'perf_in_kbits_per_sec_larger_1mb="(\d+)"', t)
+    small = re.search(r'perf_in_kbits_per_sec_smaller_1mb="(\d+)"', t)
+    if not big:
+        return None
+    return {"large_kbit": int(big.group(1)),
+            "small_kbit": int(small.group(1)) if small else None}
+
+
+# ---- chunk map for the large file in flight ------------------------------------
+# onechunk_seq*.dat describes every chunk of the file named in currentlargefile.xml:
+# its index, its byte offset, its size and its SHA-1. That SHA-1 is also field 8 of
+# the bz_done line carried in each thread's instruction, so a transfer in flight can
+# be matched to the exact chunk it is carrying.
+_chunk_cache = {"file": None, "map": {}, "total": 0}
+_chunk_seen = {}          # file name -> {index: "sent"|"inflight"}
+
+
+def _chunk_map():
+    """{sha1: (index, offset, size)} plus the file it belongs to."""
+    cur = read(LFDIR + "/currentlargefile.xml")
+    m = re.search(r'bzfname="([^"]*)"', cur)
+    name = m.group(1).split("\\")[-1] if m else None
+    if not name:
+        return None, {}, 0
+    if _chunk_cache["file"] == name:
+        return name, _chunk_cache["map"], _chunk_cache["total"]
+    out = {}
+    try:
+        names = [f for f in os.listdir(LFDIR) if f.startswith("onechunk_seq")]
+    except OSError:
+        names = []
+    for f in names:
+        c = read(os.path.join(LFDIR, f))
+        mm = re.search(r'chunkSeqNum="(\w+)"[^>]*?startByteOffsetInOrigFile="(\d+)"'
+                       r'[^>]*?numBytesInMyChunk="(\d+)"[^>]*?sha1ofMyChunkInOrigFile="(\w+)"', c)
+        if mm:
+            out[mm.group(4)] = (int(mm.group(1), 16), int(mm.group(2)), int(mm.group(3)))
+    _chunk_cache.update({"file": name, "map": out, "total": len(out)})
+    _chunk_seen.pop(name, None)
+    return name, out, len(out)
 
 
 def uptime_str():
@@ -494,9 +583,13 @@ def gather(prev):
 
     threads, xmls, has_fl, has_bt = scan_procs()
     o["threads"] = threads
-    o["state"] = ("Transmitting" if threads else
-                  "Scanning" if has_fl else
-                  "Preparing" if has_bt else "Idle")
+    # The client's own state when it offers one, since it knows what it is doing
+    # better than a guess from which processes exist.
+    reported = client_state()[0]
+    o["state"] = (reported.capitalize() if reported else
+                  ("Transmitting" if threads else
+                   "Scanning" if has_fl else
+                   "Preparing" if has_bt else "Idle"))
 
     now = _tx()
     if prev and now > 0 and now >= prev[0] and ts > prev[1]:
@@ -548,6 +641,8 @@ def gather(prev):
 
     files = []
     cur = {}
+    cname, cmap, ctotal = _chunk_map()
+    inflight_now = set()
     for x in xmls:
         xml = read(os.path.join(TDIR, x))
         mp = re.search(r'numBytes_to_send_in_shm="(\d+)"', xml)
@@ -591,8 +686,26 @@ def gather(prev):
         except ValueError:
             el = 0
         pct = min(99.0, max(0.0, el * ptbps / part * 100)) if part > 0 else 0
+        sha = fields[8] if len(fields) > 8 else ""
+        if sha and sha in cmap:
+            seen = _chunk_seen.setdefault(cname, {})
+            seen[cmap[sha][0]] = "inflight"
+            inflight_now.add(cmap[sha][0])
         files.append((name, part, fsize, pct, _parts_progress(name, fsize, part)))
         cur[x] = (name, fsize, part, thr, newest_line(thr))
+    if cname:
+        seen = _chunk_seen.setdefault(cname, {})
+        for idx, st in list(seen.items()):
+            if st == "inflight" and idx not in inflight_now:
+                seen[idx] = "sent"
+        o["chunkmap"] = {"file": cname, "total": ctotal,
+                         "sent": sorted(i for i, v in seen.items() if v == "sent"),
+                         "inflight": sorted(inflight_now)}
+    else:
+        o["chunkmap"] = None
+    o["state_reported"], o["current_file"] = client_state()
+    o["scan"] = scan_progress()
+    o["perf"] = measured_perf()
     o["files"] = files
 
     for xb, (nm, fs, part, thr, seen) in _inflight.items():

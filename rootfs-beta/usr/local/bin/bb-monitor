@@ -240,6 +240,15 @@ def draw(scr,d,st):
     # character hostname does not fit alongside both below about 120 columns. The
     # status grid wraps whole items to whatever width there is, so it shows up on
     # an 80 column terminal instead of silently vanishing.
+    sc=d.get("scan")
+    if sc:
+        chunks.append(txt([("Scanning: ",NORM),
+                           ("%d/%d dirs"%(sc["dirs_done"],sc["dirs_total"]),GOOD)]))
+        if sc.get("files") is not None:
+            chunks.append(txt([("Found: ",NORM),("{:,}".format(sc["files"]),NORM)]))
+    pf=d.get("perf")
+    if pf: chunks.append(txt([("Client est: ",NORM),
+                              ("%.1f Mbit/s"%(pf["large_kbit"]/1000.0),NORM)]))
     pod=_upload_host()
     if pod: chunks.append(txt([("Server: ",NORM),(pod,NORM)]))
     SEP=3; inner=max(1,w-4); placements=[]; line=0; cx=0
@@ -259,7 +268,28 @@ def draw(scr,d,st):
     soff=min(max(0,st.get("soff",0)),max(0,n-cap)); st["soff"]=soff
     if up_h>=3:
         iw=w-4; bw=max(10,min(40,iw-42)); yy=up_top+1
-        if not files: aw(scr,yy,2,"(nothing in flight)",NORM)
+        sc=d.get("scan")
+        if sc and yy<rec_top-1:
+            draw_bar(scr,yy,2,bw,sc["pct"],curses.color_pair(7))
+            aw(scr,yy,2+bw,wclip(" %3.0f%%  %d/%d directories  %s files found"
+                                 %(sc["pct"],sc["dirs_done"],sc["dirs_total"],
+                                   "{:,}".format(sc["files"] or 0)),iw-bw),NORM); yy+=1
+        cm=d.get("chunkmap")
+        if cm and cm.get("total") and yy<rec_top-1:
+            # Real chunk positions for the file the client is splitting: solid where
+            # the chunk finished while we watched, half-tone where a thread has it
+            # now, light where it is pending or finished before we started.
+            sent=set(cm.get("sent") or []); busy=set(cm.get("inflight") or [])
+            cw=min(bw,cm["total"])
+            for i in range(cw):
+                idx=i*cm["total"]//cw
+                if idx in busy: ch,cp="\u2593",curses.color_pair(8)
+                elif idx in sent: ch,cp="\u2588",curses.color_pair(7)
+                else: ch,cp="\u2591",NORM
+                aw(scr,yy,2+i,ch,cp)
+            aw(scr,yy,2+cw,wclip(" %d/%d chunks  %s"%(len(sent),cm["total"],cm["file"]),
+                                 iw-cw),NORM); yy+=1
+        if not files and not sc and not cm: aw(scr,yy,2,"(nothing in flight)",NORM)
         for name,part,fsize,pct,parts in files[soff:soff+cap]:
             sz=(human(fsize)+(" (chunked)" if fsize>part*1.5 else "")) if fsize>0 else "%d MB"%(part/1048576)
             if st.get("cells") and parts and parts[1]>1:

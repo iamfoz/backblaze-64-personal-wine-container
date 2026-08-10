@@ -65,6 +65,22 @@ stable release.
   per-thread ceiling to expect.
 - A settings dialog in the web dashboard, holding the thirteen colour themes and an About
   tab reporting the running build, licence and credits.
+- The state now comes from the client rather than being inferred. `overviewstatus.xml`
+  carries Backblaze's own `cur_state` and names the part in flight, which replaces guessing
+  from which processes are running.
+- Progress for file-list scans, in both monitors: directories indexed out of the total from
+  `topdirs.xml.future`, alongside a running count of files and bytes found. The client
+  exposes no other real percentage.
+- Chunk positions for the large file being split. Each chunk's index, byte offset and SHA-1
+  come from `bzcurrentlargefile/onechunk_seq*.dat`, and that SHA-1 also appears in each
+  transfer's own record, so a thread can be matched to the exact chunk it is carrying.
+  Chunks are shown in their real positions, filling out of order as threads finish, with
+  those in flight marked differently. Chunks that completed before the monitor was opened
+  stay unmarked, since they cannot be told apart from pending ones.
+- Backblaze's own measured throughput, from `bzperf_measured_upload.xml`. It reports
+  3578 kbit/s for files over a megabyte on the machine this was developed against, which
+  matches the ceiling calculated from the send buffer and round-trip time to within two
+  percent.
 - A compact view for multi-part uploads, in both monitors. One row per file with the bar
   drawn as a block per part, filling as parts complete. Off by default, toggled beside the
   theme picker.

@@ -107,6 +107,14 @@ def snapshot_to_json(d):
         "build_label": BUILD_LABEL,
         "interval": INT,
         "uptime": uptime_str(),
+        "current_file": d.get("current_file"),
+        "scan": ({"pct": round(d["scan"]["pct"], 1),
+                   "dirs": "%d/%d" % (d["scan"]["dirs_done"], d["scan"]["dirs_total"]),
+                   "files": d["scan"]["files"],
+                   "size_str": human(d["scan"]["bytes"]) if d["scan"]["bytes"] else None}
+                  if d.get("scan") else None),
+        "perf": d.get("perf"),
+        "chunkmap": d.get("chunkmap"),
         "latency_ms": (round(lat_ms, 1) if lat_ms is not None else None),
         "latency_host": lat_host,
         "latency_note": lat_note,
@@ -294,6 +302,8 @@ INDEX_HTML = """<!doctype html>
   .file-row.cells .cell{flex:1 1 0;min-width:2px;background:var(--track-bg);
        border:1px solid var(--track-border);}
   .file-row.cells .cell.on{background:var(--good);border-color:var(--good);}
+  .file-row.cells .cell.busy{background:var(--warn);border-color:var(--warn);}
+  .chunkstrip{margin-bottom:8px;}
   .file-row.cells .meta{font-size:12px;}
   #empty{opacity:.6;}
   #err{color:var(--bad);padding:10px;}
@@ -469,6 +479,22 @@ function sparklineSvg(values, w, h){
   return '<svg class="spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">' +
          '<polyline points="'+pts+'" /></svg>';
 }
+function chunkStrip(cm){
+  // Real chunk positions: each cell is a numbered chunk of the file currently
+  // being split, lit where that chunk has been seen to finish and highlighted
+  // where a thread is carrying it now. Cells never observed stay dim, because
+  // a chunk that completed before the page was opened cannot be distinguished
+  // from one still queued.
+  if(!cm || !cm.total) return '';
+  var sent = new Set(cm.sent||[]), busy = new Set(cm.inflight||[]), cells = '';
+  for(var i=0;i<cm.total;i++){
+    var c = busy.has(i) ? ' busy' : (sent.has(i) ? ' on' : '');
+    cells += '<span class="cell'+c+'" title="chunk '+i+'"></span>';
+  }
+  return '<div class="file-row cells chunkstrip"><div class="track">'+cells+'</div>' +
+         '<div class="meta"><span>'+sent.size+'/'+cm.total+' chunks</span>' +
+         '<span>'+esc(cm.file)+'</span></div></div>';
+}
 function pingHtml(d){
   // TCP handshake time, not ICMP. The tooltip names the host actually measured:
   // with no upload running this falls back to the public site, which can be a
@@ -583,6 +609,12 @@ async function tick(){
       '<span class="stat">Session: '+d.session_str+'</span>' +
       '<span class="stat">State: <span class="'+stateCls+'">'+d.state+'</span></span>' +
       pingHtml(d) +
+      (d.scan ? '<span class="stat">Scanning: '+d.scan.dirs+' dirs \u2022 ' +
+                esc((d.scan.files||0).toLocaleString())+' files' +
+                (d.scan.size_str ? ' \u2022 '+esc(d.scan.size_str) : '') + '</span>' : '') +
+      (d.perf ? '<span class="stat dim" title="Measured by the Backblaze client itself. ' +
+                'Small files are slower because each costs a round trip.">Client est: ' +
+                (d.perf.large_kbit/1000).toFixed(1)+' Mbit/s</span>' : '') +
       gaugeHtml('Mem', d.mem, false) +
       gaugeHtml('Swap', d.swap, false) +
       '<span class="stat">Files Remaining: '+(d.backup && d.backup.remaining_files!=null ? d.backup.remaining_files.toLocaleString() : 'n/a')+'</span>' +
@@ -594,10 +626,19 @@ async function tick(){
     document.getElementById('uploading-title').textContent = d.files.length
       ? 'Uploading Now \u2022 ' + d.files.length + (d.files.length===1?' file':' files')
       : 'Uploading Now';
-    if(!d.files.length){
-      up.innerHTML = '<div id="empty">(nothing in flight)</div>';
+    if(d.scan){
+      // A scan is the only place the client exposes a real percentage.
+      up.innerHTML = '<div class="file-row"><div class="track">' +
+        '<span class="fill good" style="width:'+d.scan.pct+'%"></span></div>' +
+        '<div class="meta"><span>'+d.scan.pct.toFixed(0)+'%</span>' +
+        '<span>'+esc(d.scan.dirs)+' directories</span>' +
+        '<span>'+esc((d.scan.files||0).toLocaleString())+' files found</span></div></div>' +
+        (d.chunkmap ? chunkStrip(d.chunkmap) : '');
+    } else if(!d.files.length){
+      up.innerHTML = (d.chunkmap ? chunkStrip(d.chunkmap) : '') ||
+                     '<div id="empty">(nothing in flight)</div>';
     } else {
-      up.innerHTML = d.files.map(f=>{
+      up.innerHTML = (d.chunkmap ? chunkStrip(d.chunkmap) : '') + d.files.map(f=>{
         if(compactParts && f.parts && f.parts.total > 1){
           var cells = '';
           for(var i=0;i<f.parts.total;i++){
