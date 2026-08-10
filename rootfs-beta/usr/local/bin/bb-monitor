@@ -250,6 +250,9 @@ def draw(scr,d,st):
                            ("%d/%d dirs"%(sc["dirs_done"],sc["dirs_total"]),GOOD)]))
         if sc.get("files") is not None:
             chunks.append(txt([("Found: ",NORM),("{:,}".format(sc["files"]),NORM)]))
+    fb=d.get("first_backup")
+    if fb: chunks.append(txt([("First backup: ",NORM),
+                              ("day %d \u2022 %.1f%%"%(fb["days"],fb["pct"]),NORM)]))
     us=d.get("upload_success")
     if us:
         parts=[("Uploads: ",NORM),("{:,}".format(us[0]),NORM)]

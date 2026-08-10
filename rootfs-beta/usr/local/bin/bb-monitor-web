@@ -117,6 +117,9 @@ def snapshot_to_json(d):
         "health": [{"kind": k, "text": t} for k, t in (d.get("health") or [])],
         "upload_success": d.get("upload_success"),
         "compress_saved": human(d["compress_saved"]) if d.get("compress_saved") else None,
+        "first_backup": ({"days": round(d["first_backup"]["days"]),
+                           "pct": round(d["first_backup"]["pct"], 1)}
+                          if d.get("first_backup") else None),
         "last_backup_days": (round(d["last_backup_days"], 1)
                              if d.get("last_backup_days") is not None else None),
         "chunkmap": d.get("chunkmap"),
@@ -625,6 +628,9 @@ async function tick(){
       (d.scan ? '<span class="stat">Scanning: '+d.scan.dirs+' dirs \u2022 ' +
                 esc((d.scan.files||0).toLocaleString())+' files' +
                 (d.scan.size_str ? ' \u2022 '+esc(d.scan.size_str) : '') + '</span>' : '') +
+      (d.first_backup ? '<span class="stat" title="A first upload works through the whole ' +
+                'set once. Until it catches up, gaps between completed passes are expected.">' +
+                'First backup: day '+d.first_backup.days+' \u2022 '+d.first_backup.pct+'%</span>' : '') +
       (d.upload_success ? '<span class="stat" title="Uploads the client recorded for ' +
                 'the most recent day, with failures broken out.">Uploads: ' +
                 d.upload_success[0].toLocaleString() +

@@ -311,15 +311,50 @@ def health():
     fc = read(RPTS + "/bzdc_filecheck.xml")
     if 'file_check_is_clean="false"' in fc:
         out.append(("filecheck", "Backblaze reports a failed file check"))
+    # Only meaningful once the backup has caught up. bzstat_lastbackupcompleted
+    # marks a pass finishing, not the whole set: on the machine this was written
+    # against it read 4 August while 87% of 85 TB was still unsent. Warning about
+    # that would be warning about a first upload doing exactly what it should.
     last = re.search(r'gmt_millis="(\d+)"', read(RPTS + "/bzstat_lastbackupcompleted.xml"))
     warn = re.search(r'numdays_warn_if_no_backup="(\d+)"', read(BZINFO))
-    if last:
+    if last and _caught_up():
         days = (time.time() - int(last.group(1)) / 1000.0) / 86400.0
         limit = int(warn.group(1)) if warn else 7
         if days > limit:
             out.append(("stale", "No completed backup for %d days (limit %d)"
                                   % (int(days), limit)))
     return out
+
+
+# Below this share of the set still to send, the backup counts as caught up and a
+# missing completion is worth remarking on. Above it there is simply work left.
+CAUGHT_UP_FRACTION = 0.02
+
+
+def _caught_up():
+    b = backup_totals()
+    if not b or not b.get("total"):
+        return True                       # nothing to judge against; do not suppress
+    remaining = max(0, b["total"] - b["done"])
+    return remaining <= b["total"] * CAUGHT_UP_FRACTION
+
+
+def first_backup():
+    """Progress of a first upload still working through the set, or None.
+
+    The client exposes no "initial backup finished" flag, so this is inferred:
+    it is a first pass while a real share of the set has never been sent. Gives
+    the day the first file went up, so a long upload reads as progress rather
+    than as something being wrong.
+    """
+    if _caught_up():
+        return None
+    b = backup_totals()
+    t = read(RPTS + "/bzstat_firstbackupfirstfileuploadedmillis.txt").strip()
+    if not t.isdigit():
+        return None
+    days = (time.time() - int(t) / 1000.0) / 86400.0
+    return {"days": days, "pct": b["pct"] if b else 0.0}
 
 
 def last_backup_days():
@@ -792,6 +827,7 @@ def gather(prev):
     o["upload_success"] = upload_success_today()
     o["compress_saved"] = compress_saved()
     o["last_backup_days"] = last_backup_days()
+    o["first_backup"] = first_backup()
     o["files"] = files
 
     for xb, (nm, fs, part, thr, seen) in _inflight.items():

@@ -78,7 +78,15 @@ stable release.
   those in flight marked differently. Chunks that completed before the monitor was opened
   stay unmarked, since they cannot be told apart from pending ones.
 - Warnings drawn from the client's own records: a safety freeze, a failed file check, or no
-  completed backup within the number of days set in the user's own settings. They appear as
+  completed backup within the number of days set in the user's own settings. The staleness
+  warning applies only once the backup has caught up, because
+  `bzstat_lastbackupcompleted.xml` marks a pass finishing rather than the whole set: on the
+  machine this was developed against it read four days old while 87% of 85 TB was still
+  unsent, and warning about that would be warning about a first upload behaving normally.
+- A first upload still working through the set shows how long it has been running and how
+  far it has got, rather than looking like something is wrong. The client exposes no
+  "initial backup finished" flag, so this is inferred from how much of the set has never
+  been sent. They appear as
   a banner in the web dashboard and in the terminal title bar.
 - Upload counts for the most recent day, with failures broken out by the client's own
   categories, and the bytes compression has saved.
