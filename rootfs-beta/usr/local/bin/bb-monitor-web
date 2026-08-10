@@ -117,6 +117,7 @@ def snapshot_to_json(d):
         "health": [{"kind": k, "text": t} for k, t in (d.get("health") or [])],
         "upload_success": d.get("upload_success"),
         "compress_saved": human(d["compress_saved"]) if d.get("compress_saved") else None,
+        "skipped": d.get("skipped"),
         "first_backup": ({"days": round(d["first_backup"]["days"]),
                            "pct": round(d["first_backup"]["pct"], 1)}
                           if d.get("first_backup") else None),

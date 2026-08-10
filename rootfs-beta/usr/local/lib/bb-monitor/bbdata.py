@@ -323,6 +323,10 @@ def health():
         if days > limit:
             out.append(("stale", "No completed backup for %d days (limit %d)"
                                   % (int(days), limit)))
+    sk = skipped_files()
+    if sk and sk["total"]:
+        out.append(("skipped", "%d files skipped and not backed up (%s)"
+                                % (sk["total"], sk["top_reason"].replace("_", " ").lower())))
     return out
 
 
@@ -337,6 +341,30 @@ def _caught_up():
         return True                       # nothing to judge against; do not suppress
     remaining = max(0, b["total"] - b["done"])
     return remaining <= b["total"] * CAUGHT_UP_FRACTION
+
+
+def skipped_files():
+    """Files the client has given up on, counted by its own reason.
+
+    These are not queued and not retried: they are simply not backed up, and
+    nothing in the GUI says so. Under this container the usual cause is a file
+    the container user cannot read, so a large count here often means a
+    permissions or ownership problem on the mounted source rather than anything
+    wrong with Backblaze.
+    """
+    t = read(RPTS + "/bzlist_skipped_files.txt")
+    if not t:
+        return None
+    reasons = {}
+    for line in t.splitlines():
+        f = line.split("\t")
+        if len(f) >= 3 and f[1]:
+            reasons[f[1]] = reasons.get(f[1], 0) + 1
+    if not reasons:
+        return None
+    total = sum(reasons.values())
+    top = max(reasons, key=reasons.get)
+    return {"total": total, "top_reason": top, "reasons": reasons}
 
 
 def first_backup():
@@ -828,6 +856,7 @@ def gather(prev):
     o["compress_saved"] = compress_saved()
     o["last_backup_days"] = last_backup_days()
     o["first_backup"] = first_backup()
+    o["skipped"] = skipped_files()
     o["files"] = files
 
     for xb, (nm, fs, part, thr, seen) in _inflight.items():

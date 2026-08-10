@@ -83,6 +83,10 @@ stable release.
   `bzstat_lastbackupcompleted.xml` marks a pass finishing rather than the whole set: on the
   machine this was developed against it read four days old while 87% of 85 TB was still
   unsent, and warning about that would be warning about a first upload behaving normally.
+- Files Backblaze has given up on are now reported. `bzlist_skipped_files.txt` records
+  them with a reason, and they are neither queued nor retried, so nothing else says they
+  are unprotected. Under this container the usual cause is a file the container user cannot
+  read, which points at ownership on the mounted source rather than at Backblaze.
 - A first upload still working through the set shows how long it has been running and how
   far it has got, rather than looking like something is wrong. The client exposes no
   "initial backup finished" flag, so this is inferred from how much of the set has never
