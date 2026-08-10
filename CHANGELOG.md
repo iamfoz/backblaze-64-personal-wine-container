@@ -65,9 +65,11 @@ stable release.
   per-thread ceiling to expect.
 - A settings dialog in the web dashboard, holding the thirteen colour themes and an About
   tab reporting the running build, licence and credits.
-- The state now comes from the client rather than being inferred. `overviewstatus.xml`
-  carries Backblaze's own `cur_state` and names the part in flight, which replaces guessing
-  from which processes are running.
+- The state now comes from the client rather than being inferred, from
+  `overviewstatus.xml`. Its `cur_state` turns out to be coarse and reads `transmitting`
+  through work that is nothing of the sort, so the activity is taken from `current_file`,
+  which holds a phrase rather than a name when there is no file: a scan reports
+  "Producing file lists" instead of the part in flight.
 - Progress for file-list scans, in both monitors: directories indexed out of the total from
   `topdirs.xml.future`, alongside a running count of files and bytes found. The client
   exposes no other real percentage.

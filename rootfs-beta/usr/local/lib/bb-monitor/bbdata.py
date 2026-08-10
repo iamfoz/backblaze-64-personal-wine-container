@@ -225,7 +225,16 @@ def client_state():
     t = read(OVERVIEW)
     m = re.search(r'cur_state="([^"]*)"', t)
     f = re.search(r'current_file="([^"]*)"', t)
-    return (m.group(1) if m else None, f.group(1) if f else None)
+    p = re.search(r'current_file_fullpath="([^"]*)"', t)
+    state = m.group(1) if m else None
+    cur = f.group(1) if f else None
+    # cur_state is coarse and stays "transmitting" through work that is nothing of
+    # the sort. The activity is in current_file, which holds a phrase rather than a
+    # name when there is no file: "Producing File Lists..." with a fullpath of
+    # "none". Where that happens the phrase is the state.
+    if cur and (not p or p.group(1) in ("none", "")):
+        state = cur.rstrip(".").strip() or state
+    return (state, cur)
 
 
 def scan_progress():
