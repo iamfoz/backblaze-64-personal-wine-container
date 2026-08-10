@@ -313,12 +313,41 @@ def rate_str(nbytes, secs, kbit_fallback=0):
     return "%d kbit/s" % kbit_fallback if kbit_fallback else ""
 
 
+# Field 12 of the bz_done line held the configured part size (10485760, ten
+# mebibytes) on every multi-part upload inspected so far. It is used in
+# preference to the live counter, with the largest value seen for a file as a
+# fallback when the field is absent or implausible.
+_PART_FIELD = 12
+_MIN_PART = 1 << 20          # a part below a mebibyte is the counter, not the size
+_part_seen = {}
+
+
+def _part_size(fields, live):
+    """Configured part size for this upload, in bytes."""
+    if len(fields) > _PART_FIELD:
+        try:
+            v = int(fields[_PART_FIELD])
+            if v >= _MIN_PART:
+                return v
+        except ValueError:
+            pass
+    # No usable field: the largest live reading seen for this file is the closest
+    # thing to the part size, since the counter starts full and falls.
+    key = fields[-1] if fields else ""
+    best = max(_part_seen.get(key, 0), live)
+    _part_seen[key] = best
+    return best or live
+
+
 def rec_cols(r):
     if r["chunked"]:
         span = r["last"] - r["first"]
         if span < 0:
             span += 86400
-        return ("%d/%d" % (r["done"], r["total"]), human(r["bytes"]), rate_str(r["bytes"], span))
+        # Clamp for display: a wrong total once let a bundle never finish, so every
+        # later completion for the same name kept accumulating into it.
+        return ("%d/%d" % (min(r["done"], r["total"]), r["total"]),
+                human(r["bytes"]), rate_str(r["bytes"], span))
     return ("thr%d" % r["thr"], human(r["bytes"]) if r["bytes"] else "?",
              rate_str(r["bytes"], r["secs"], r["kbit"]))
 
@@ -518,7 +547,12 @@ def gather(prev):
             continue
         win = fields[-1]
         name = win.split("\\")[-1]
-        part = int(mp.group(1))
+        # numBytes_to_send_in_shm counts down as the current part drains, so it is
+        # the bytes still to send, not the part size. Sampling a thread near the end
+        # of its part gave a few KB, and ceil(filesize / that) produced part counts
+        # in the tens of thousands ("21/36010"). The bz_done line carries the
+        # configured part size in a fixed field, which does not move.
+        part = _part_size(fields, int(mp.group(1)))
         thr = int(mw.group(1)) if mw else -1
         fsize = 0
         if len(win) > 2 and win[1] == ":":
