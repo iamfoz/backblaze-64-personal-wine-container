@@ -73,12 +73,13 @@ stable release.
   so a feature appears in both or neither.
 
 ### Fixed
-- Completed multi-part files showed nonsense part counts such as "21/6594". The part count
-  was derived from `numBytes_to_send_in_shm`, which counts down as a part drains rather than
-  giving the part size, so a thread sampled near the end of its part produced a part size of
-  a few kilobytes. The configured part size is now read from the `bz_done` line instead.
-  A total that large also meant the record never reached completion, so every later upload of
-  the same file kept accumulating into it. Reported by gandalf15.
+- Completed multi-part files showed nonsense part counts such as "21/6594". The count was
+  derived from the thread instruction's `numBytes_to_send_in_shm`, which describes the part
+  a thread is carrying rather than the file's part size, and readings well below the part
+  size turned `filesize / part` into tens of thousands. The configured part size is now read
+  from the `bz_done` line, which is constant for a file. A total that large also meant the
+  record never reached completion, so every later upload of the same file kept accumulating
+  into it. Reported by gandalf15.
 - Sizes above a terabyte were rendered in gigabytes, so a 250 TB backup showed as
   "257524.9 GB" and overflowed the gauge label. Sizes now run to petabytes. Reported by
   gandalf15.

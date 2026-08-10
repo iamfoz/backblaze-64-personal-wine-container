@@ -547,11 +547,12 @@ def gather(prev):
             continue
         win = fields[-1]
         name = win.split("\\")[-1]
-        # numBytes_to_send_in_shm counts down as the current part drains, so it is
-        # the bytes still to send, not the part size. Sampling a thread near the end
-        # of its part gave a few KB, and ceil(filesize / that) produced part counts
-        # in the tens of thousands ("21/36010"). The bz_done line carries the
-        # configured part size in a fixed field, which does not move.
+        # numBytes_to_send_in_shm belongs to the part a thread is carrying, not to
+        # the file, and readings well below the part size turned filesize/part into
+        # tens of thousands ("21/36010"). A file's last part is short by definition,
+        # and other readings below the part size have been observed without the
+        # cause being established. The bz_done line carries a part size that is
+        # constant for the file, so it is used instead.
         part = _part_size(fields, int(mp.group(1)))
         thr = int(mw.group(1)) if mw else -1
         fsize = 0
