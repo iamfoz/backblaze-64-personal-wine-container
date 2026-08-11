@@ -14,12 +14,28 @@ sys.path.insert(0, "/usr/local/lib/bb-monitor")
 import bbapi
 
 
+def available():
+    lines = ["Available:"]
+    for name in bbapi.ORDER:
+        mark = "  (not yet available)" if name in bbapi.RESERVED else ""
+        lines.append("  %-20s %s%s" % (name, bbapi.PERMISSIONS[name], mark))
+    for g, members in sorted(bbapi.GROUPS.items()):
+        lines.append("  %-20s shorthand for %s" % (g, ", ".join(members)))
+    return "\n".join(lines)
+
+
 def when(ts):
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else "-"
 
 
 def cmd_create(args):
-    scopes = sorted(set(args.scope))
+    if args.all:
+        scopes = [p for p in bbapi.ORDER if p not in bbapi.RESERVED]
+    else:
+        scopes = sorted(set(args.scope))
+    if not scopes:
+        sys.exit("bb-apikey: give at least one --scope, or --all\n\n"
+                 + available())
     try:
         rec, secret = bbapi.create(args.label, scopes)
     except ValueError as exc:
@@ -67,13 +83,20 @@ def main():
 
     c = sub.add_parser("create", help="mint a key and print it once")
     c.add_argument("--label", required=True, help="what this key is for")
-    c.add_argument("--scope", action="append", required=True,
-                   choices=bbapi.SCOPES,
-                   help="repeatable; read is all the dashboard plugin needs")
+    c.add_argument("--scope", action="append", default=[],
+                   metavar="PERM",
+                   help="repeatable. An operation such as control:pause, or a "
+                        "group name such as control to take all of it. "
+                        "read is all the dashboard plugin needs")
+    c.add_argument("--all", action="store_true",
+                   help="every operation that is currently available")
     c.set_defaults(func=cmd_create)
 
     l = sub.add_parser("list", help="list keys, without secrets")
     l.set_defaults(func=cmd_list)
+
+    s_ = sub.add_parser("permissions", help="what can be granted")
+    s_.set_defaults(func=lambda a: (print(available()), 0)[1])
 
     r = sub.add_parser("revoke", help="revoke a key by id")
     r.add_argument("id")

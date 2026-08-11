@@ -169,8 +169,13 @@ KEYS_HTML = """<!doctype html>
   label{display:block;margin:10px 0 4px;font-size:13px;}
   input[type=text]{width:100%;max-width:340px;padding:6px 8px;border-radius:4px;
     border:1px solid var(--border);background:var(--bg);color:var(--text);font:inherit;}
-  .scopes{display:flex;flex-wrap:wrap;gap:14px;margin:8px 0 4px;}
-  .scopes label{display:flex;gap:6px;align-items:flex-start;margin:0;max-width:30ch;}
+  .scopes{margin:8px 0 4px;}
+  .scopes label{display:flex;gap:8px;align-items:flex-start;margin:0 0 8px;max-width:52ch;}
+  .scopes code{font-size:12px;}
+  .everyone{padding-bottom:8px;border-bottom:1px solid var(--border);}
+  .group{margin:10px 0;}
+  .grouphead{margin-bottom:6px;}
+  .members{padding-left:22px;border-left:2px solid var(--border);}
   button{padding:7px 14px;border-radius:4px;border:1px solid var(--border);
     background:var(--border);color:#04101f;font:inherit;font-weight:600;cursor:pointer;}
   button.ghost{background:transparent;color:var(--text);font-weight:400;}
@@ -209,7 +214,7 @@ anything else outside the browser. It is served on this same port at
   <input type="text" id="label" placeholder="Unraid dashboard" autocomplete="off">
   <div class="scopes" id="scopes"></div>
   <p class="dim" style="margin:4px 0 12px">The dashboard plugin needs <code>read</code>
-  alone.</p>
+  alone. Grant each operation separately, or tick a group to take all of it.</p>
   <button id="create">Create key</button>
   <div id="err" class="err" hidden></div>
   <div id="secretbox" class="secret" hidden>
@@ -237,11 +242,29 @@ function post(path, body){
     body: JSON.stringify(body||{})}).then(function(r){
       return r.json().then(function(j){ return {ok:r.ok, body:j}; }); });
 }
-var SCOPE_HELP = {
-  read: 'Read status. All the dashboard needs.',
-  control: 'Start a backup, or ask a running one to pause. Uses Backblaze\\u2019s own bzcli, so a pause is cooperative rather than a kill.',
-  report: 'Generate and download a diagnostic bundle.'
-};
+function permRow(p){
+  var dis = p.reserved ? ' disabled' : '';
+  var note = p.reserved ? ' <span class="dim">(not yet available)</span>' : '';
+  var pre = p.name === 'read' ? ' checked' : '';
+  return '<label><input type="checkbox" class="perm" value="'+esc(p.name)+'"'+dis+pre+
+         '><span><code>'+esc(p.name)+'</code>'+note+
+         '<br><span class="dim">'+esc(p.does)+'</span></span></label>';
+}
+function syncGroups(){
+  // A group box is ticked when every member is, and half-ticked when some are.
+  [].slice.call(document.querySelectorAll('.groupall')).forEach(function(g){
+    var members = [].slice.call(document.querySelectorAll(
+      '.perm[value^="'+g.value+':"]:not(:disabled)'));
+    var on = members.filter(function(m){ return m.checked; }).length;
+    g.checked = members.length > 0 && on === members.length;
+    g.indeterminate = on > 0 && on < members.length;
+  });
+  var all = [].slice.call(document.querySelectorAll('.perm:not(:disabled)'));
+  var every = document.getElementById('all');
+  var n = all.filter(function(m){ return m.checked; }).length;
+  every.checked = n === all.length && all.length > 0;
+  every.indeterminate = n > 0 && n < all.length;
+}
 function render(d){
   var on = d.enabled;
   var st = document.getElementById('state');
@@ -250,14 +273,37 @@ function render(d){
 
   var box = document.getElementById('scopes');
   if(!box.dataset.built){
-    box.innerHTML = d.scopes.map(function(s){
-      var dis = s === 'report' ? ' disabled' : '';
-      var note = s === 'report' ? ' <span class="dim">(not yet available)</span>' : '';
-      return '<label><input type="checkbox" value="'+esc(s)+'"'+dis+
-             (s==='read'?' checked':'')+'><span><strong>'+esc(s)+'</strong>'+note+
-             '<br><span class="dim">'+esc(SCOPE_HELP[s]||'')+'</span></span></label>';
-    }).join('');
+    var html = '<label class="everyone"><input type="checkbox" id="all">' +
+               '<span><strong>Everything available</strong></span></label>';
+    var done = {};
+    d.permissions.forEach(function(p){
+      if(p.group && !done[p.group]){
+        done[p.group] = 1;
+        var members = (d.groups[p.group] || []);
+        html += '<div class="group"><label class="grouphead">' +
+                '<input type="checkbox" class="groupall" value="'+esc(p.group)+'">' +
+                '<span><strong>'+esc(p.group)+'</strong> <span class="dim">(' +
+                members.length + ')</span></span></label><div class="members">' +
+                d.permissions.filter(function(q){ return q.group === p.group; })
+                             .map(permRow).join('') + '</div></div>';
+      } else if(!p.group){
+        html += permRow(p);
+      }
+    });
+    box.innerHTML = html;
     box.dataset.built = '1';
+    box.addEventListener('change', function(e){
+      var t = e.target;
+      if(t.id === 'all' || t.classList.contains('groupall')){
+        var sel = t.id === 'all' ? '.perm:not(:disabled)'
+                                 : '.perm[value^="'+t.value+':"]:not(:disabled)';
+        [].slice.call(document.querySelectorAll(sel)).forEach(function(m){
+          m.checked = t.checked;
+        });
+      }
+      syncGroups();
+    });
+    syncGroups();
   }
 
   var rows = document.getElementById('rows');
@@ -279,7 +325,7 @@ function load(){
 }
 document.getElementById('create').addEventListener('click', function(){
   var label = document.getElementById('label').value.trim();
-  var scopes = [].slice.call(document.querySelectorAll('#scopes input:checked'))
+  var scopes = [].slice.call(document.querySelectorAll('#scopes .perm:checked'))
                  .map(function(i){ return i.value; });
   var err = document.getElementById('err');
   err.hidden = true;
@@ -1035,14 +1081,17 @@ class Handler(BaseHTTPRequestHandler):
         if method == "GET" and path == "/api/v1/status":
             return "read", self._api_status
         if method == "GET" and path == "/api/v1/control":
-            return "control", self._api_control_list
+            # Readable by any key, and it reports what *this* key may run, so a
+            # client can render only the buttons it can use rather than probing
+            # each endpoint and collecting 401s.
+            return "read", self._api_control_list
         if method == "POST" and path.startswith("/api/v1/control/"):
             name = path[len("/api/v1/control/"):]
             # The segment selects a key in a fixed table. It is never used to
             # build an argument list, so a caller cannot reach --clear-pek by
             # spelling it in a URL.
             if name in bbctl.ACTIONS:
-                return "control", lambda: self._api_control_run(name)
+                return "control:" + name, lambda: self._api_control_run(name)
         return None, None
 
     def _api_status(self):
@@ -1050,9 +1099,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, _latest_api)
 
     def _api_control_list(self):
+        held = set(bbapi.perms(self._kid))
         self._json(200, {"schema": bbapi.SCHEMA,
                          "available": bbctl.available(),
-                         "actions": [{"name": n, "does": d}
+                         "granted": sorted(held),
+                         "actions": [{"name": n, "does": d,
+                                      "allowed": ("control:" + n) in held}
                                      for n, (_, d) in sorted(bbctl.ACTIONS.items())]})
 
     def _api_control_run(self, name):
@@ -1089,6 +1141,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return True
         bbapi.touch(kid)
+        self._kid = kid
         if handler is None:
             self._json(404, {"schema": bbapi.SCHEMA, "error": "no such endpoint"})
         else:
@@ -1111,8 +1164,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def _manage_get(self, path):
         if path == "/manage/keys":
-            self._json(200, {"schema": bbapi.SCHEMA, "keys": bbapi.listing(),
-                             "enabled": bool(bbapi.active()), "scopes": list(bbapi.SCOPES)})
+            self._json(200, {
+                "schema": bbapi.SCHEMA, "keys": bbapi.listing(),
+                "enabled": bool(bbapi.active()),
+                "permissions": [{"name": n, "does": bbapi.PERMISSIONS[n],
+                                 "group": n.split(":")[0] if ":" in n else None,
+                                 "reserved": n in bbapi.RESERVED}
+                                for n in bbapi.ORDER],
+                "groups": {g: list(m) for g, m in bbapi.GROUPS.items()}})
             return True
         return False
 

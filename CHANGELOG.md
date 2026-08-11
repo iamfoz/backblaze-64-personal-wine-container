@@ -81,13 +81,19 @@ stable release.
   the login. Keys are 256-bit random, shown once, and stored only as a SHA-256. `bb-apikey`
   does the same job from a terminal.
 
-  A `control` scope starts a backup or pauses a running one, through `bzcli`, which
+  Permissions are granted per operation rather than per group, so a key that starts backups
+  need not also be able to pause them. Ticking a group name takes all of its operations, and
+  it expands on the way in, so what is stored is always the explicit list. A key is told
+  which operations it holds, so a client can offer the buttons it can actually use.
+
+  Starting a backup or pausing a running one goes through `bzcli`, which
   Backblaze ship with the client for this purpose. Pause is cooperative: the client asks
   bztransmit to stop rather than the process being killed, so it cannot leave the stale
   four-hour lock that `bb-watchdog` exists to clear. Backblaze document `--backup-now` as
   the way out of a pause. The same `bzcli` command group can also clear the private
   encryption key, which is unrecoverable, so the two safe verbs are whitelisted by name and
-  nothing from a request reaches its arguments. A `report` scope is reserved but not issued.
+  nothing from a request reaches its arguments. A `report` permission is defined but refused
+  until the bundle flow exists.
 - The file in hand is named in both monitors, which is the only way most of them appear at
   all: a small file is usually gone before the next poll and never gets a row of its own.
   What the client says it is doing with that file is shown alongside it, from a vocabulary

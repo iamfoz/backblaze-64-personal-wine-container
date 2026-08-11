@@ -16,7 +16,35 @@ DIR = "/config/bb-api"
 KEYS = DIR + "/keys.json"
 
 SCHEMA = 1                      # payload contract version, sent on every response
-SCOPES = ("read", "control", "report")
+
+# Permissions are per operation, not per group. A key wired into Home Assistant to
+# kick off a backup has no business also being able to pause one, and the two are
+# not a ladder: neither implies the other. Groups exist only so a person can say
+# "all of control" without ticking every box, and are expanded on the way in, so
+# what gets stored is always the explicit list.
+PERMISSIONS = {
+    "read":               "Read status. All the dashboard plugin needs.",
+    "control:backup-now": "Start a backup if one is not already running.",
+    "control:pause":      "Ask a running backup to pause, cooperatively.",
+    "report":             "Generate and download a diagnostic bundle.",
+}
+
+# Ordered for display, and it is the order the settings tab renders in.
+ORDER = ("read", "control:backup-now", "control:pause", "report")
+
+GROUPS = {"control": ("control:backup-now", "control:pause")}
+
+# Defined but not issuable yet: the bundle flow needs a job to poll and a
+# single-use download, and neither exists.
+RESERVED = ("report",)
+
+
+def expand(names):
+    """Group names to their members, everything else through unchanged."""
+    out = []
+    for n in names:
+        out.extend(GROUPS.get(n, (n,)))
+    return sorted(set(out))
 
 # bb64_<id>_<secret>: the id is public so a key can be named, listed and revoked
 # without the secret ever being recoverable or shown twice.
@@ -61,11 +89,15 @@ def _hash(secret):
 
 def create(label, scopes):
     """Mint a key. Returns (record, secret_once) — the secret is never stored."""
-    bad = [s for s in scopes if s not in SCOPES]
+    scopes = expand(scopes)
+    bad = [s for s in scopes if s not in PERMISSIONS]
     if bad:
-        raise ValueError("unknown scope: %s" % ", ".join(bad))
+        raise ValueError("unknown permission: %s" % ", ".join(bad))
+    held = [s for s in scopes if s in RESERVED]
+    if held:
+        raise ValueError("not available yet: %s" % ", ".join(held))
     if not scopes:
-        raise ValueError("a key needs at least one scope")
+        raise ValueError("a key needs at least one permission")
     records = _read()
     while True:
         kid = os.urandom(4).hex()
@@ -122,6 +154,15 @@ def verify(presented, scope):
             return False, kid
         return True, kid
     return False, kid
+
+
+def perms(kid):
+    """What a key holds, so a caller can be told what it may do rather than
+    having to probe each endpoint and collect 401s."""
+    for r in _read():
+        if r["id"] == kid and not r["revoked"]:
+            return list(r["scopes"])
+    return []
 
 
 def touch(kid):
