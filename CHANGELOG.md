@@ -117,6 +117,10 @@ stable release.
   so a feature appears in both or neither.
 
 ### Fixed
+- The compact multi-part view drew one row per thread, so nine threads on one film gave
+  nine identical "0/21" rows plus the chunk strip above them. The compact row counts the
+  file's parts rather than the thread's own progress, so there is now one row per file and
+  none at all for the file the strip is already showing in full.
 - The compact multi-part view showed a file that was not being uploaded, such as "0/21
   chunks" against a film while the client was producing file lists. `bzcurrentlargefile/`
   is not cleared when a file finishes, so it still described the last one split. The view

@@ -684,8 +684,15 @@ async function tick(){
     if(!d.files.length){
       up.innerHTML = head || '<div id="empty">(nothing in flight)</div>';
     } else {
+      var seenCompact = {};
       up.innerHTML = head + d.files.map(f=>{
         if(compactParts && f.parts && f.parts.total > 1){
+          // A dozen threads on one film would otherwise draw a dozen identical
+          // rows: the compact row counts the file's parts, not the thread's own
+          // progress. One row per file, and none for the file the strip covers.
+          if(seenCompact[f.name]) return '';
+          seenCompact[f.name] = 1;
+          if(d.chunkmap && d.chunkmap.file === f.name) return '';
           var cells = '';
           for(var i=0;i<f.parts.total;i++){
             cells += '<span class="cell'+(i < f.parts.done ? ' on' : '')+'"></span>';

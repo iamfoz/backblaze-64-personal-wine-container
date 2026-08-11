@@ -278,7 +278,21 @@ def draw(scr,d,st):
     up_top=1+statusH; foot=h-1; avail=foot-up_top
     if avail>=8: rec_h=min(11,max(4,avail//3)); rec_top=foot-rec_h; up_h=rec_top-up_top
     else: rec_h=0; rec_top=foot; up_h=max(0,avail)
-    files=d["files"]; n=len(files); cap=max(1,up_h-2); st["cap"]=cap
+    files=d["files"]
+    if st.get("cells"):
+        # One thread per part means a dozen threads on one film produce a dozen
+        # identical rows, since the compact row counts parts of the file rather
+        # than the thread's own progress. One row per file, and none at all for
+        # the file the chunk strip is already showing in full.
+        cmf=(d.get("chunkmap") or {}).get("file")
+        seen=set(); keep=[]
+        for f in files:
+            if f[4] and f[4][1]>1:
+                if f[0] in seen or f[0]==cmf: continue
+                seen.add(f[0])
+            keep.append(f)
+        files=keep
+    n=len(files); cap=max(1,up_h-2); st["cap"]=cap
     soff=min(max(0,st.get("soff",0)),max(0,n-cap)); st["soff"]=soff
     if up_h>=3:
         iw=w-4; bw=max(10,min(40,iw-42)); yy=up_top+1
