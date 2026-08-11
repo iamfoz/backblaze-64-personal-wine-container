@@ -133,7 +133,11 @@ def active():
 
 def verify(presented, scope):
     """(ok, key_id_or_None). key_id is returned on a parseable id even when the
-    secret is wrong, so a failure can be logged without ever touching the secret."""
+    secret is wrong, so a failure can be logged without ever touching the secret.
+
+    `scope` is one permission, a tuple meaning any one of them, or None meaning
+    any valid key.
+    """
     if not presented:
         return False, None
     m = _KEY_RE.match(presented.strip())
@@ -150,8 +154,10 @@ def verify(presented, scope):
             return False, kid
         if r["revoked"]:
             return False, kid
-        if scope not in r["scopes"]:
-            return False, kid
+        if scope is not None:
+            want = scope if isinstance(scope, (tuple, list)) else (scope,)
+            if not any(w in r["scopes"] for w in want):
+                return False, kid
         return True, kid
     return False, kid
 

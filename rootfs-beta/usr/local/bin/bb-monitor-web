@@ -1080,11 +1080,15 @@ class Handler(BaseHTTPRequestHandler):
         """
         if method == "GET" and path == "/api/v1/status":
             return "read", self._api_status
+        if method == "GET" and path == "/api/v1/key":
+            # Any valid key, describing only itself. This is what stops a client
+            # having to discover its own grants by collecting 401s, now that the
+            # other endpoints tell a key nothing about what it does not hold.
+            return None, self._api_key_self
         if method == "GET" and path == "/api/v1/control":
-            # Readable by any key, and it reports what *this* key may run, so a
-            # client can render only the buttons it can use rather than probing
-            # each endpoint and collecting 401s.
-            return "read", self._api_control_list
+            # Only a key that holds some control, and it lists only that key's
+            # own operations. A read-only key is not told what control exists.
+            return tuple(bbapi.GROUPS["control"]), self._api_control_list
         if method == "POST" and path.startswith("/api/v1/control/"):
             name = path[len("/api/v1/control/"):]
             # The segment selects a key in a fixed table. It is never used to
@@ -1098,14 +1102,18 @@ class Handler(BaseHTTPRequestHandler):
         with _lock:
             self._json(200, _latest_api)
 
+    def _api_key_self(self):
+        held = bbapi.perms(self._kid)
+        self._json(200, {"schema": bbapi.SCHEMA, "id": self._kid,
+                         "permissions": sorted(held)})
+
     def _api_control_list(self):
         held = set(bbapi.perms(self._kid))
         self._json(200, {"schema": bbapi.SCHEMA,
                          "available": bbctl.available(),
-                         "granted": sorted(held),
-                         "actions": [{"name": n, "does": d,
-                                      "allowed": ("control:" + n) in held}
-                                     for n, (_, d) in sorted(bbctl.ACTIONS.items())]})
+                         "actions": [{"name": n, "does": d}
+                                     for n, (_, d) in sorted(bbctl.ACTIONS.items())
+                                     if ("control:" + n) in held]})
 
     def _api_control_run(self, name):
         if not bbctl.available():
@@ -1130,8 +1138,9 @@ class Handler(BaseHTTPRequestHandler):
         auth = self.headers.get("Authorization", "")
         presented = auth[7:] if auth[:7].lower() == "bearer " else ""
         # An unknown path is still authenticated first, so that the set of
-        # endpoints is not enumerable without a key.
-        ok, kid = bbapi.verify(presented, need or "read")
+        # endpoints is not enumerable without a key. Any valid key is enough to
+        # be told 404, since that reveals nothing about what exists.
+        ok, kid = bbapi.verify(presented, need if handler else None)
         if not ok:
             # The public id only, never the secret, and only when one parsed.
             sys.stderr.write("bb-monitor-web: api/v1 auth failed%s\n"

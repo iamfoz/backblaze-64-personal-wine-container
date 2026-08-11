@@ -83,8 +83,11 @@ stable release.
 
   Permissions are granted per operation rather than per group, so a key that starts backups
   need not also be able to pause them. Ticking a group name takes all of its operations, and
-  it expands on the way in, so what is stored is always the explicit list. A key is told
-  which operations it holds, so a client can offer the buttons it can actually use.
+  it expands on the way in, so what is stored is always the explicit list. The API exposes
+  only what the key presenting it holds: a read-only key is not told which control
+  operations exist, and a key granted one of them does not learn about the other. A key can
+  ask what it holds, so a client offers the buttons it can use without discovering its own
+  limits from a run of refusals.
 
   Starting a backup or pausing a running one goes through `bzcli`, which
   Backblaze ship with the client for this purpose. Pause is cooperative: the client asks
