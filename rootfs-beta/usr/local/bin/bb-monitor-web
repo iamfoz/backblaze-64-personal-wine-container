@@ -108,6 +108,7 @@ def snapshot_to_json(d):
         "interval": INT,
         "uptime": uptime_str(),
         "current_file": d.get("current_file"),
+        "activity": d.get("activity"),
         "scan": ({"pct": round(d["scan"]["pct"], 1),
                    "dirs": "%d/%d" % (d["scan"]["dirs_done"], d["scan"]["dirs_total"]),
                    "files": d["scan"]["files"],
@@ -266,6 +267,11 @@ INDEX_HTML = """<!doctype html>
        position:relative;background:var(--panel);transition:background .25s,border-color .25s;}
   .panel > .ptitle{position:absolute;top:-10px;left:14px;background:var(--bg);
        padding:0 6px;color:var(--title);font-weight:bold;transition:background .25s,color .25s;}
+  .nowline{display:flex;gap:10px;align-items:baseline;padding:4px 0;
+    font-size:13px;color:var(--dim);min-width:0;}
+  .nowphase{flex:0 0 auto;}
+  .nowfile{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;color:var(--fg);}
   body.compact #panel-uploading,body.compact #panel-recent,
   body.compact #topbar,body.compact #footer{display:none;}
   body.compact main{padding:6px;max-width:none;}
@@ -652,19 +658,33 @@ async function tick(){
     document.getElementById('uploading-title').textContent = d.files.length
       ? 'Uploading Now \u2022 ' + d.files.length + (d.files.length===1?' file':' files')
       : 'Uploading Now';
-    if(d.scan){
-      // A scan is the only place the client exposes a real percentage.
-      up.innerHTML = '<div class="file-row"><div class="track">' +
+    // A scan is the only place the client exposes a real percentage, but it runs
+    // alongside uploads rather than instead of them, so it heads the panel rather
+    // than replacing it.
+    var scanHtml = d.scan
+      ? '<div class="file-row"><div class="track">' +
         '<span class="fill good" style="width:'+d.scan.pct+'%"></span></div>' +
         '<div class="meta"><span>'+d.scan.pct.toFixed(0)+'%</span>' +
         '<span>'+esc(d.scan.dirs)+' directories</span>' +
-        '<span>'+esc((d.scan.files||0).toLocaleString())+' files found</span></div></div>' +
-        (d.chunkmap ? chunkStrip(d.chunkmap) : '');
-    } else if(!d.files.length){
-      up.innerHTML = (d.chunkmap ? chunkStrip(d.chunkmap) : '') ||
-                     '<div id="empty">(nothing in flight)</div>';
+        '<span>'+esc((d.scan.files||0).toLocaleString())+' files found</span></div></div>'
+      : '';
+    // The chunk strip IS the compact multi-part view, so the setting governs it.
+    var stripHtml = (compactParts && d.chunkmap) ? chunkStrip(d.chunkmap) : '';
+    // Most files are small enough to be gone before the next poll, so they never
+    // get a row of their own. The client names the one it has in hand, which is
+    // the only way they show up at all.
+    var a = d.activity, nowHtml = '';
+    if(a && !d.files.some(f => a.file && f.name === a.file)){
+      nowHtml = '<div class="nowline"'+(a.internal ? ' title="The client\u2019s own '+
+        'bookkeeping going up, not one of your files."' : '')+'>' +
+        '<span class="nowphase">'+esc(a.phase)+(a.part ? ' part '+a.part : '')+'</span>' +
+        (a.file ? '<span class="nowfile">'+esc(a.file)+'</span>' : '') + '</div>';
+    }
+    var head = scanHtml + stripHtml + nowHtml;
+    if(!d.files.length){
+      up.innerHTML = head || '<div id="empty">(nothing in flight)</div>';
     } else {
-      up.innerHTML = (d.chunkmap ? chunkStrip(d.chunkmap) : '') + d.files.map(f=>{
+      up.innerHTML = head + d.files.map(f=>{
         if(compactParts && f.parts && f.parts.total > 1){
           var cells = '';
           for(var i=0;i<f.parts.total;i++){
@@ -721,6 +741,7 @@ async function tick(){
   cp.addEventListener('change', function(){
     compactParts = cp.checked;
     try { localStorage.setItem('bbCompactParts', compactParts ? '1' : '0'); } catch(e){}
+    tick();   // redraw at once rather than waiting out the poll interval
   });
 
   var backdrop = document.getElementById('backdrop');

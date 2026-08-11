@@ -70,6 +70,12 @@ stable release.
   through work that is nothing of the sort, so the activity is taken from `current_file`,
   which holds a phrase rather than a name when there is no file: a scan reports
   "Producing file lists" instead of the part in flight.
+- The file in hand is named in both monitors, which is the only way most of them appear at
+  all: a small file is usually gone before the next poll and never gets a row of its own.
+  What the client says it is doing with that file is shown alongside it, from a vocabulary
+  of "Preparing", "Part N of", and "Finishing" for a multi-part file. Its own bookkeeping
+  going up (`caNNN/bz_done_*.bzff`) is labelled as such rather than passed off as one of
+  your files.
 - Progress for file-list scans, in both monitors: directories indexed out of the total from
   `topdirs.xml.future`, alongside a running count of files and bytes found. The client
   exposes no other real percentage.
@@ -111,6 +117,18 @@ stable release.
   so a feature appears in both or neither.
 
 ### Fixed
+- Scan progress stuck at a figure like "50% 14/28 directories" and stayed there while files
+  uploaded. The `.future` files a scan writes are not removed when it ends, so their presence
+  proved nothing. Progress now shows only while `bzfilelist` is running and the files are
+  still being written to.
+- The scan bar took over the Uploading Now panel in the web dashboard, hiding transfers for
+  as long as it was up. A scan runs alongside uploads, so it now heads the panel instead of
+  replacing it.
+- File names carrying an apostrophe or an ampersand were shown as XML: "Mike Judge&apos;s"
+  and "Colbert &amp; Fallon". Names taken from the client's XML are decoded first.
+- The compact multi-part setting governed only the per-file view, while the chunk strip it
+  was meant to control was drawn regardless, in both monitors. The setting now covers it, and
+  the web dashboard redraws on the click rather than at the next poll.
 - Completed multi-part files showed nonsense part counts such as "21/6594". The count was
   derived from the thread instruction's `numBytes_to_send_in_shm`, which describes the part
   a thread is carrying rather than the file's part size, and readings well below the part

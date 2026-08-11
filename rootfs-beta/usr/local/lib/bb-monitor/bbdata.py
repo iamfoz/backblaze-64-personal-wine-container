@@ -18,7 +18,7 @@ Imported by path rather than installed as a package, since both callers live in
     sys.path.insert(0, "/usr/local/lib/bb-monitor")
     import bbdata
 """
-import calendar, ipaddress, os, re, socket, struct, threading, time, unicodedata
+import calendar, html, ipaddress, os, re, socket, struct, threading, time, unicodedata
 from collections import deque
 
 # ---- config (identical to bb-monitor) ------------------------------------
@@ -227,7 +227,7 @@ def client_state():
     f = re.search(r'current_file="([^"]*)"', t)
     p = re.search(r'current_file_fullpath="([^"]*)"', t)
     state = m.group(1) if m else None
-    cur = f.group(1) if f else None
+    cur = unesc(f.group(1)) if f else None
     # cur_state is coarse and stays "transmitting" through work that is nothing of
     # the sort. The activity is in current_file, which holds a phrase rather than a
     # name when there is no file: "Producing File Lists..." with a fullpath of
@@ -237,13 +237,56 @@ def client_state():
     return (state, cur)
 
 
-def scan_progress():
+# current_file carries a small vocabulary, seen across a full backup pass:
+#   Part 20 of <name>        a part of a multi-part file going up
+#   Preparing <name>         and "Preparing 0 of <name>", before the parts start
+#   Finishing <name>         after the last part
+#   Producing File Lists...  a scan, with no file at all
+#   <name>                   a whole small file, which is most of them
+#   caNNN/bz_done_*.bzff     the client's own records, not anything of the user's
+_ACTS = (
+    (re.compile(r"^Producing File Lists", re.I),      "Producing file lists", 0, 0),
+    (re.compile(r"^Preparing (?:\d+ of )?(.+)$"),     "Preparing",            1, 0),
+    (re.compile(r"^Finishing (.+)$"),                 "Finishing",            1, 0),
+    (re.compile(r"^Part (\d+) of (.+)$"),             "Uploading",            2, 1),
+)
+_INTERNAL = re.compile(r"(^|/)bz_done_[\w]+\.bzff$|^ca\d+/")
+
+
+def activity():
+    """{phase, file, part, internal} for whatever the client is doing now."""
+    cur = client_state()[1]
+    if not cur:
+        return None
+    if _INTERNAL.search(cur):
+        return {"phase": "Uploading backup records", "file": cur,
+                "part": None, "internal": True}
+    for rx, phase, fg, pg in _ACTS:
+        m = rx.match(cur)
+        if m:
+            return {"phase": phase,
+                    "file": m.group(fg) if fg else None,
+                    "part": int(m.group(pg)) if pg else None,
+                    "internal": False}
+    return {"phase": "Uploading", "file": cur, "part": None, "internal": False}
+
+
+def scan_progress(live=None):
     """Progress of a file-list scan, or None when no scan is running.
 
     A scan writes a parallel .future set alongside the live one and marks it
     totally_final="false" until it finishes. topdirs gives directories indexed
     out of the total, which is the only real percentage the client exposes.
     """
+    # The .future set is not removed when a scan ends, so its mere presence means
+    # nothing: it sat at 14 of 28 for an hour while files uploaded. A scan is live
+    # only while bzfilelist is running and the files are still being written to.
+    if live is False:
+        return None
+    fresh = max(_mtime(FLISTS + "/topdirs.xml.future"),
+                _mtime(FLISTS + "/filestats.xml.future"))
+    if not fresh or time.time() - fresh > SCAN_STALE:
+        return None
     fut = read(FLISTS + "/topdirs.xml.future")
     stats = read(FLISTS + "/filestats.xml.future")
     if not fut or 'totally_final="true"' in stats:
@@ -285,7 +328,7 @@ def _chunk_map():
     """{sha1: (index, offset, size)} plus the file it belongs to."""
     cur = read(LFDIR + "/currentlargefile.xml")
     m = re.search(r'bzfname="([^"]*)"', cur)
-    name = m.group(1).split("\\")[-1] if m else None
+    name = unesc(m.group(1)).split("\\")[-1] if m else None
     if not name:
         return None, {}, 0
     if _chunk_cache["file"] == name:
@@ -342,6 +385,7 @@ def health():
 # Below this share of the set still to send, the backup counts as caught up and a
 # missing completion is worth remarking on. Above it there is simply work left.
 CAUGHT_UP_FRACTION = 0.02
+SCAN_STALE = 300          # seconds without a write before a scan counts as over
 
 
 def _caught_up():
@@ -484,6 +528,20 @@ BUILD_INFO = _build_info()
 BUILD_LABEL = _build_label(BUILD_INFO)
 
 # ---- helpers (identical to bb-monitor) -----------------------------------
+def unesc(t):
+    """XML attribute values arrive escaped: a file called "Mike Judge's" reads as
+    "Mike Judge&apos;s" and an ampersand as "&amp;". Anything pulled out of an
+    attribute goes through here before it reaches a screen."""
+    return html.unescape(t) if t else t
+
+
+def _mtime(path):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0
+
+
 def read(path):
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
@@ -858,7 +916,8 @@ def gather(prev):
     else:
         o["chunkmap"] = None
     o["state_reported"], o["current_file"] = client_state()
-    o["scan"] = scan_progress()
+    o["scan"] = scan_progress(has_fl)
+    o["activity"] = activity()
     o["perf"] = measured_perf()
     o["health"] = health()
     o["upload_success"] = upload_success_today()
