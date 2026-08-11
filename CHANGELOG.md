@@ -117,6 +117,10 @@ stable release.
   so a feature appears in both or neither.
 
 ### Fixed
+- The compact multi-part view showed a file that was not being uploaded, such as "0/21
+  chunks" against a film while the client was producing file lists. `bzcurrentlargefile/`
+  is not cleared when a file finishes, so it still described the last one split. The view
+  now appears only while that file is the one being worked on.
 - Scan progress stuck at a figure like "50% 14/28 directories" and stayed there while files
   uploaded. The `.future` files a scan writes are not removed when it ends, so their presence
   proved nothing. Progress now shows only while `bzfilelist` is running and the files are

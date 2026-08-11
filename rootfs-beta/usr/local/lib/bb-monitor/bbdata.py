@@ -905,7 +905,14 @@ def gather(prev):
             inflight_now.add(cmap[sha][0])
         files.append((name, part, fsize, pct, _parts_progress(name, fsize, part)))
         cur[x] = (name, fsize, part, thr, newest_line(thr))
-    if cname:
+    act = activity()
+    # bzcurrentlargefile/ is not cleared when a file finishes, so its presence
+    # proves nothing: it still named a completed film, at 0/21, while the client
+    # was producing file lists. The map is only real while that file is the one
+    # being worked on, which is either a thread carrying one of its chunks or the
+    # client naming it.
+    live = bool(inflight_now) or bool(act and act.get("file") == cname)
+    if cname and live:
         seen = _chunk_seen.setdefault(cname, {})
         for idx, st in list(seen.items()):
             if st == "inflight" and idx not in inflight_now:
@@ -917,7 +924,7 @@ def gather(prev):
         o["chunkmap"] = None
     o["state_reported"], o["current_file"] = client_state()
     o["scan"] = scan_progress(has_fl)
-    o["activity"] = activity()
+    o["activity"] = act
     o["perf"] = measured_perf()
     o["health"] = health()
     o["upload_success"] = upload_success_today()
