@@ -367,22 +367,63 @@ def api_v1_payload(d):
     it carries pre-formatted strings ("19.5 TB", "3 days") which are the wrong
     thing to hand a consumer that wants to graph a number or format for its own
     locale. Bytes are bytes and seconds are seconds here.
+
+    Everything the monitor knows is here. What names a file is grouped under
+    "files" so it can be withheld from a key without read:files; see
+    strip_file_names().
     """
     b = d.get("backup") or {}
     act = d.get("activity") or {}
     sc = d.get("scan") or {}
+    mem, swap = d.get("mem"), d.get("swap")
+    us = d.get("upload_success")
+
+    def gauge(t):
+        if not t:
+            return None
+        used, total, pct = t
+        return {"used_bytes": used, "total_bytes": total, "pct": round(pct, 2)}
+
+    files = []
+    for name, part, fsize, pct, parts in (d.get("files") or []):
+        row = {"name": name, "pct": round(pct, 1),
+               "size_bytes": fsize or None, "part_bytes": part or None}
+        if parts:
+            row["parts"] = {"done": parts[0], "total": parts[1]}
+        files.append(row)
+
+    recent = []
+    for r in (d.get("recent") or []):
+        row = {"name": r["name"], "time": r["t"], "chunked": bool(r["chunked"])}
+        if r["chunked"]:
+            row.update(parts={"done": min(r["done"], r["total"]), "total": r["total"]},
+                       bytes=r["bytes"], seconds=max(0, r["last"] - r["first"]))
+        elif r.get("small"):
+            # Caught from the client naming it, not from a transfer record, so
+            # there is no thread, size or rate to report.
+            row.update(measured=False)
+        else:
+            row.update(thread=r["thr"], bytes=r["bytes"], seconds=r["secs"],
+                       kbit_per_sec=r["kbit"], measured=True)
+        recent.append(row)
+
+    cm = d.get("chunkmap")
     return {
         "schema": bbapi.SCHEMA,
         "ok": True,
         "build": BUILD_LABEL,
         "time": int(time.time()),
+        "poll_interval_seconds": INT,
         "state": d.get("state"),
         "activity": {"phase": act.get("phase"), "file": act.get("file"),
                      "part": act.get("part"), "internal": act.get("internal")} if act else None,
         "threads": d.get("threads"),
         "rate_bytes_per_sec": int(d.get("rate", 0) * 1048576) if d.get("rate") else 0,
         "session_bytes": d.get("sess"),
+        "chunks_last_minute": d.get("chunks"),
         "uptime_seconds": int(time.time() - bbdata.START_TIME),
+        "memory": gauge(mem),
+        "swap": gauge(swap),
         "backup": {"done_bytes": b.get("done"), "total_bytes": b.get("total"),
                    "pct": round(b["pct"], 2) if b.get("pct") is not None else None,
                    "done_files": b.get("done_files"), "total_files": b.get("total_files"),
@@ -396,10 +437,35 @@ def api_v1_payload(d):
         "skipped_files": d.get("skipped"),
         "last_backup_days": d.get("last_backup_days"),
         "first_backup": d.get("first_backup"),
-        "latency_ms": d.get("latency_ms"),
+        "latency": {"ms": d.get("latency_ms"), "host": d.get("latency_host"),
+                    "note": d.get("latency_note")},
         "upload_pod": d.get("upload_pod"),
         "compress_saved_bytes": d.get("compress_saved"),
+        # Backblaze's own measurement, not ours.
+        "client_measured_kbit": d.get("perf"),
+        "uploads_today": {"success": us[0], "failures": us[1]} if us else None,
+        "files": {
+            "in_flight": files,
+            "recent": recent,
+            "chunk_map": ({"file": cm["file"], "total": cm["total"],
+                           "sent": cm["sent"], "in_flight": cm["inflight"]}
+                          if cm else None),
+        },
     }
+
+
+# What names a file the user is backing up. A key without read:files gets status
+# without any of it: a dashboard tile showing rate, progress, memory and latency
+# has no need for the name of every file on the array.
+def strip_file_names(payload):
+    out = dict(payload)
+    out["files"] = None
+    act = out.get("activity")
+    if act:
+        act = dict(act)
+        act["file"] = None
+        out["activity"] = act
+    return out
 
 
 def _loop():
@@ -409,6 +475,12 @@ def _loop():
             d = gather(prev)
             prev = d["_tx"]
             js = snapshot_to_json(d)
+            # snapshot_to_json fills in latency and the pod, which gather() does
+            # not carry, so the API payload is built from the enriched view.
+            d.setdefault("latency_ms", js.get("latency_ms"))
+            d.setdefault("latency_host", js.get("latency_host"))
+            d.setdefault("latency_note", js.get("latency_note"))
+            d.setdefault("upload_pod", js.get("upload_pod"))
             api = api_v1_payload(d)
         except Exception as e:
             js = {"ok": False, "error": str(e), "about": ABOUT}
@@ -1100,7 +1172,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_status(self):
         with _lock:
-            self._json(200, _latest_api)
+            payload = _latest_api
+        if "read:files" not in bbapi.perms(self._kid):
+            payload = strip_file_names(payload)
+        self._json(200, payload)
 
     def _api_key_self(self):
         held = bbapi.perms(self._kid)

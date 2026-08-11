@@ -81,6 +81,13 @@ stable release.
   the login. Keys are 256-bit random, shown once, and stored only as a SHA-256. `bb-apikey`
   does the same job from a terminal.
 
+  The feed carries everything the monitors know: rate, backup progress and ETA, scan
+  progress, container memory and swap, round-trip time, health warnings, skipped files,
+  compression saved, uploads and failures for the day, Backblaze's own measured throughput,
+  and the in-flight and recently completed files with their chunk positions. A key granted
+  `read` alone gets none of the file names, which is what a dashboard tile showing rate and
+  progress actually needs; `read:files` adds them.
+
   Permissions are granted per operation rather than per group, so a key that starts backups
   need not also be able to pause them. Ticking a group name takes all of its operations, and
   it expands on the way in, so what is stored is always the explicit list. The API exposes

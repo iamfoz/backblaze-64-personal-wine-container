@@ -23,15 +23,18 @@ SCHEMA = 1                      # payload contract version, sent on every respon
 # "all of control" without ticking every box, and are expanded on the way in, so
 # what gets stored is always the explicit list.
 PERMISSIONS = {
-    "read":               "Read status. All the dashboard plugin needs.",
+    "read":               "Read status: rates, progress, memory, latency, health.",
+    "read:files":         "Also see the names of files being backed up.",
     "control:backup-now": "Start a backup if one is not already running.",
     "control:pause":      "Ask a running backup to pause, cooperatively.",
     "report":             "Generate and download a diagnostic bundle.",
 }
 
 # Ordered for display, and it is the order the settings tab renders in.
-ORDER = ("read", "control:backup-now", "control:pause", "report")
+ORDER = ("read", "read:files", "control:backup-now", "control:pause", "report")
 
+# "read" is a permission in its own right, so it is not also a group name. A key
+# that should see file names is granted read:files alongside it.
 GROUPS = {"control": ("control:backup-now", "control:pause")}
 
 # Defined but not issuable yet: the bundle flow needs a job to poll and a
