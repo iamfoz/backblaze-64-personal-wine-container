@@ -26,7 +26,7 @@
   .pane{flex:1 1 auto;border:0;width:100%;display:block;background:#0a1830;}
   .pane[hidden]{display:none;}
   #fallback{padding:14px;color:#ff5a5a;}
-  /* On a phone the two tabs should own the width and be comfortably tappable.
+  /* On a phone the tabs should own the width and be comfortably tappable.
      44px is the usual floor for a finger target; the default padding gives
      about 30. */
   @media (max-width:560px){
@@ -39,6 +39,7 @@
 <div id="tabs" role="tablist">
   <button role="tab" data-pane="desktop" aria-controls="pane-desktop" aria-selected="true">Desktop</button>
   <button role="tab" data-pane="monitor" aria-controls="pane-monitor" aria-selected="false">Upload Monitor</button>
+  <button role="tab" data-pane="api" aria-controls="pane-api" aria-selected="false">API</button>
   <span id="brand">Backblaze 64</span>
 </div>
 
@@ -59,19 +60,27 @@
 <iframe id="pane-monitor" class="pane" role="tabpanel" hidden
         title="Upload monitor"></iframe>
 
+<!-- Key management. Served through /monitor/ so it inherits the same login as
+     the dashboard: creating a key must never sit on the exempted /api/v1/ path. -->
+<iframe id="pane-api" class="pane" role="tabpanel" hidden
+        title="API keys"></iframe>
+
 <script>
 (function(){
   var MON = '/monitor/';
+  var API = '/monitor/apikeys';
   var tabs = Array.prototype.slice.call(document.querySelectorAll('#tabs button'));
   var panes = { desktop: document.getElementById('pane-desktop'),
-                monitor: document.getElementById('pane-monitor') };
-  var loaded = { desktop: true, monitor: false };
+                monitor: document.getElementById('pane-monitor'),
+                api: document.getElementById('pane-api') };
+  var loaded = { desktop: true, monitor: false, api: false };
+  var SRC = { monitor: MON, api: API };
 
   function show(name){
     if(!panes[name]) name = 'desktop';
-    if(name === 'monitor' && !loaded.monitor){
-      panes.monitor.src = MON;      // first activation only
-      loaded.monitor = true;
+    if(SRC[name] && !loaded[name]){
+      panes[name].src = SRC[name];  // first activation only
+      loaded[name] = true;
     }
     tabs.forEach(function(t){
       var on = t.getAttribute('data-pane') === name;
@@ -81,7 +90,7 @@
     try { localStorage.setItem('bbShellTab', name); } catch(e){}
     // Keep the address bar honest without reloading, so a refresh or a shared
     // link lands on the same tab.
-    try { history.replaceState(null, '', name === 'desktop' ? '/' : '/?tab=monitor'); } catch(e){}
+    try { history.replaceState(null, '', name === 'desktop' ? '/' : '/?tab=' + name); } catch(e){}
   }
 
   tabs.forEach(function(t){

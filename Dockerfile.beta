@@ -183,7 +183,7 @@ COPY rootfs/ /
 COPY rootfs-beta/ /
 RUN chmod +x /startapp.sh /usr/local/bin/bb-monitor /usr/local/bin/bb-monitor-web \
         /usr/local/bin/bb-health /usr/local/bin/bb-watchdog /usr/local/bin/bb-version \
-        /usr/local/bin/bb-doctor /usr/local/bin/bb-report \
+        /usr/local/bin/bb-doctor /usr/local/bin/bb-report /usr/local/bin/bb-apikey \
         /etc/services.d/bb-watchdog/run /etc/services.d/bb-monitor-web/run
 
 # Wire the upload dashboard into the base image's nginx server block. The base

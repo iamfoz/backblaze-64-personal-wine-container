@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+# Manage keys for the /api/v1 surface.
+#
+#   bb-apikey create --label "unraid dashboard" --scope read
+#   bb-apikey list
+#   bb-apikey revoke <id>
+#
+# The secret is printed once, at creation, and is not recoverable afterwards.
+# Only its SHA-256 is stored.
+
+import argparse, sys, time
+
+sys.path.insert(0, "/usr/local/lib/bb-monitor")
+import bbapi
+
+
+def when(ts):
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else "-"
+
+
+def cmd_create(args):
+    scopes = sorted(set(args.scope))
+    try:
+        rec, secret = bbapi.create(args.label, scopes)
+    except ValueError as exc:
+        sys.exit("bb-apikey: %s" % exc)
+    print("Key created.\n")
+    print("  id      %s" % rec["id"])
+    print("  label   %s" % rec["label"])
+    print("  scopes  %s" % ", ".join(rec["scopes"]))
+    print("\n  %s\n" % secret)
+    print("That is the only time the key is shown. Store it now.")
+    print("Use it as a bearer token:\n")
+    print("  curl -H 'Authorization: Bearer %s' \\" % secret)
+    print("       http://<host>:<port>/api/v1/status")
+    return 0
+
+
+def cmd_list(args):
+    rows = bbapi.listing()
+    if not rows:
+        print("No keys. The /api/v1 surface answers 404 until one exists.")
+        return 0
+    print("%-10s %-9s %-20s %-17s %-17s %s"
+          % ("ID", "STATE", "SCOPES", "CREATED", "LAST USED", "LABEL"))
+    for r in sorted(rows, key=lambda x: x["created"]):
+        print("%-10s %-9s %-20s %-17s %-17s %s"
+              % (r["id"], "revoked" if r["revoked"] else "active",
+                 ",".join(r["scopes"]), when(r["created"]),
+                 when(r["last_used"]), r["label"]))
+    return 0
+
+
+def cmd_revoke(args):
+    if bbapi.revoke(args.id):
+        print("Revoked %s." % args.id)
+        if not bbapi.active():
+            print("No active keys remain, so /api/v1 now answers 404.")
+        return 0
+    sys.exit("bb-apikey: no active key with id %s" % args.id)
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        prog="bb-apikey", description="Manage keys for the Backblaze 64 API.")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    c = sub.add_parser("create", help="mint a key and print it once")
+    c.add_argument("--label", required=True, help="what this key is for")
+    c.add_argument("--scope", action="append", required=True,
+                   choices=bbapi.SCOPES,
+                   help="repeatable; read is all the dashboard plugin needs")
+    c.set_defaults(func=cmd_create)
+
+    l = sub.add_parser("list", help="list keys, without secrets")
+    l.set_defaults(func=cmd_list)
+
+    r = sub.add_parser("revoke", help="revoke a key by id")
+    r.add_argument("id")
+    r.set_defaults(func=cmd_revoke)
+
+    args = ap.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

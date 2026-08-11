@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 # bbdata, so this file and bb-monitor cannot drift apart. This one owns HTTP and
 # the page; the terminal one owns curses. Neither owns data collection.
 sys.path.insert(0, "/usr/local/lib/bb-monitor")
+import bbapi
 import bbdata
 from bbdata import (BUILD_INFO, BUILD_LABEL, INT, eta_str, gather, human,
                      rec_cols, uptime_str, _diag_dump, _threadpush_uid,
@@ -63,6 +64,7 @@ ABOUT = {
 
 # Restated now ABOUT exists, so even the pre-first-sample payload carries it.
 _latest = {"ok": False, "error": "warming up", "about": ABOUT}
+_latest_api = {"ok": False, "error": "warming up"}
 
 
 # ---- JSON snapshot builder ------------------------------------------------
@@ -133,6 +135,226 @@ def snapshot_to_json(d):
     }
 
 
+
+# The key management page, framed by the API tab in the shell. Served from
+# /apikeys, which is reached as /monitor/apikeys and so sits behind the same
+# auth_request as the dashboard. Creating a key must never be reachable from the
+# exempted /api/v1/ path, which is why the management calls live under /manage/.
+KEYS_HTML = """<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backblaze 64 API</title>
+<style>
+  :root{
+    --bg:#0a1830; --panel:#0e2148; --border:#39c5ff; --title:#39c5ff;
+    --text:#d7e6ff; --good:#3ddc6b; --warn:#ffd23d; --bad:#ff5a5a;
+    --dim:#7f9fc8;
+  }
+  html[data-theme="dark"]{ --bg:#000; --panel:#0d0d0d; --border:#333; --title:#ddd;
+    --text:#ddd; --dim:#888; }
+  *{box-sizing:border-box;}
+  body{margin:0;padding:16px;background:var(--bg);color:var(--text);
+    font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    font-size:14px;line-height:1.5;}
+  h1{font-size:18px;margin:0 0 4px;color:var(--title);}
+  h2{font-size:14px;margin:20px 0 8px;color:var(--title);font-weight:600;}
+  p{margin:0 0 12px;max-width:70ch;}
+  .dim{color:var(--dim);}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;
+    padding:14px;margin-bottom:16px;}
+  .state{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;}
+  .on{background:var(--good);color:#04101f;}
+  .off{background:var(--dim);color:#04101f;}
+  label{display:block;margin:10px 0 4px;font-size:13px;}
+  input[type=text]{width:100%;max-width:340px;padding:6px 8px;border-radius:4px;
+    border:1px solid var(--border);background:var(--bg);color:var(--text);font:inherit;}
+  .scopes{display:flex;flex-wrap:wrap;gap:14px;margin:8px 0 4px;}
+  .scopes label{display:flex;gap:6px;align-items:flex-start;margin:0;max-width:30ch;}
+  button{padding:7px 14px;border-radius:4px;border:1px solid var(--border);
+    background:var(--border);color:#04101f;font:inherit;font-weight:600;cursor:pointer;}
+  button.ghost{background:transparent;color:var(--text);font-weight:400;}
+  button:disabled{opacity:.5;cursor:default;}
+  table{width:100%;border-collapse:collapse;margin-top:6px;}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);
+    font-size:13px;white-space:nowrap;}
+  th{color:var(--dim);font-weight:600;}
+  td.label{white-space:normal;}
+  .revoked{opacity:.45;}
+  .secret{margin-top:12px;padding:12px;border:1px solid var(--good);border-radius:4px;
+    background:var(--bg);}
+  .secret code{display:block;word-break:break-all;font-size:13px;margin:8px 0;
+    color:var(--good);}
+  .err{color:var(--bad);margin-top:8px;}
+  @media (max-width:560px){ table,thead,tbody,tr,th,td{display:block;}
+    thead{display:none;} tr{border-bottom:1px solid var(--border);padding:6px 0;}
+    th,td{border:none;padding:2px 0;white-space:normal;} }
+</style></head><body>
+
+<h1>API</h1>
+<p class="dim">A read-only feed for the Unraid dashboard plugin, Home Assistant, or
+anything else outside the browser. It is served on this same port at
+<code>/api/v1/status</code> and authenticates with a key rather than the web login.</p>
+
+<div class="panel">
+  <strong>Status:</strong> <span id="state" class="state off">off</span>
+  <p class="dim" style="margin:8px 0 0">The API is off until a key exists, and answers 404
+  rather than 403 so a container with no key does not advertise it. Revoking the last key
+  turns it off again.</p>
+</div>
+
+<h2>Create a key</h2>
+<div class="panel">
+  <label for="label">What is this key for?</label>
+  <input type="text" id="label" placeholder="Unraid dashboard" autocomplete="off">
+  <div class="scopes" id="scopes"></div>
+  <p class="dim" style="margin:4px 0 12px">The dashboard plugin needs <code>read</code>
+  alone.</p>
+  <button id="create">Create key</button>
+  <div id="err" class="err" hidden></div>
+  <div id="secretbox" class="secret" hidden>
+    <strong>Copy this now.</strong> It is shown once and is not recoverable.
+    <code id="secret"></code>
+    <button class="ghost" id="copy">Copy</button>
+  </div>
+</div>
+
+<h2>Keys</h2>
+<div class="panel">
+  <table id="keys"><thead><tr>
+    <th>ID</th><th>Label</th><th>Scopes</th><th>Created</th><th>Last used</th><th></th>
+  </tr></thead><tbody id="rows"></tbody></table>
+  <p id="none" class="dim" hidden>No keys yet.</p>
+</div>
+
+<script>
+function esc(s){ return String(s==null?'':s).replace(/[&<>\"']/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]; }); }
+function when(ts){ return ts ? new Date(ts*1000).toLocaleString() : '\u2014'; }
+function post(path, body){
+  return fetch(path, {method:'POST', cache:'no-store',
+    headers:{'Content-Type':'application/json','X-Requested-With':'bb64'},
+    body: JSON.stringify(body||{})}).then(function(r){
+      return r.json().then(function(j){ return {ok:r.ok, body:j}; }); });
+}
+var SCOPE_HELP = {
+  read: 'Read status. All the dashboard needs.',
+  control: 'Start and stop the backup.',
+  report: 'Generate and download a diagnostic bundle.'
+};
+function render(d){
+  var on = d.enabled;
+  var st = document.getElementById('state');
+  st.textContent = on ? 'on' : 'off';
+  st.className = 'state ' + (on ? 'on' : 'off');
+
+  var box = document.getElementById('scopes');
+  if(!box.dataset.built){
+    box.innerHTML = d.scopes.map(function(s){
+      var dis = s === 'read' ? '' : ' disabled';
+      var note = s === 'read' ? '' : ' <span class="dim">(not yet available)</span>';
+      return '<label><input type="checkbox" value="'+esc(s)+'"'+dis+
+             (s==='read'?' checked':'')+'><span><strong>'+esc(s)+'</strong>'+note+
+             '<br><span class="dim">'+esc(SCOPE_HELP[s]||'')+'</span></span></label>';
+    }).join('');
+    box.dataset.built = '1';
+  }
+
+  var rows = document.getElementById('rows');
+  rows.innerHTML = d.keys.map(function(k){
+    return '<tr class="'+(k.revoked?'revoked':'')+'">' +
+      '<td><code>'+esc(k.id)+'</code></td>' +
+      '<td class="label">'+esc(k.label)+'</td>' +
+      '<td>'+esc(k.scopes.join(', '))+'</td>' +
+      '<td>'+when(k.created)+'</td>' +
+      '<td>'+when(k.last_used)+'</td>' +
+      '<td>'+(k.revoked ? '<span class="dim">revoked</span>'
+        : '<button class="ghost" data-revoke="'+esc(k.id)+'">Revoke</button>')+'</td></tr>';
+  }).join('');
+  document.getElementById('none').hidden = d.keys.length > 0;
+}
+function load(){
+  return fetch('manage/keys', {cache:'no-store'}).then(function(r){ return r.json(); })
+    .then(render);
+}
+document.getElementById('create').addEventListener('click', function(){
+  var label = document.getElementById('label').value.trim();
+  var scopes = [].slice.call(document.querySelectorAll('#scopes input:checked'))
+                 .map(function(i){ return i.value; });
+  var err = document.getElementById('err');
+  err.hidden = true;
+  post('manage/keys', {label: label, scopes: scopes}).then(function(res){
+    if(!res.ok){ err.textContent = res.body.error || 'Could not create the key.';
+                 err.hidden = false; return; }
+    document.getElementById('secret').textContent = res.body.secret;
+    document.getElementById('secretbox').hidden = false;
+    document.getElementById('label').value = '';
+    return load();
+  });
+});
+document.getElementById('copy').addEventListener('click', function(){
+  var t = document.getElementById('secret').textContent;
+  if(navigator.clipboard) navigator.clipboard.writeText(t);
+  this.textContent = 'Copied';
+});
+document.getElementById('rows').addEventListener('click', function(e){
+  var id = e.target.getAttribute && e.target.getAttribute('data-revoke');
+  if(!id) return;
+  if(!confirm('Revoke key ' + id + '? Anything using it stops working immediately.')) return;
+  post('manage/keys/revoke', {id: id}).then(load);
+});
+try {
+  var t = localStorage.getItem('bbMonitorTheme');
+  if(t) document.documentElement.setAttribute('data-theme', t);
+} catch(e){}
+load();
+</script>
+</body></html>
+"""
+
+def api_v1_payload(d):
+    """The /api/v1/status contract.
+
+    Built from the raw gather() dict rather than from the display payload, and
+    deliberately field by field. Two reasons. The display payload is the web
+    page's internal shape and would become a contract the moment it shipped, and
+    it carries pre-formatted strings ("19.5 TB", "3 days") which are the wrong
+    thing to hand a consumer that wants to graph a number or format for its own
+    locale. Bytes are bytes and seconds are seconds here.
+    """
+    b = d.get("backup") or {}
+    act = d.get("activity") or {}
+    sc = d.get("scan") or {}
+    return {
+        "schema": bbapi.SCHEMA,
+        "ok": True,
+        "build": BUILD_LABEL,
+        "time": int(time.time()),
+        "state": d.get("state"),
+        "activity": {"phase": act.get("phase"), "file": act.get("file"),
+                     "part": act.get("part"), "internal": act.get("internal")} if act else None,
+        "threads": d.get("threads"),
+        "rate_bytes_per_sec": int(d.get("rate", 0) * 1048576) if d.get("rate") else 0,
+        "session_bytes": d.get("sess"),
+        "uptime_seconds": int(time.time() - bbdata.START_TIME),
+        "backup": {"done_bytes": b.get("done"), "total_bytes": b.get("total"),
+                   "pct": round(b["pct"], 2) if b.get("pct") is not None else None,
+                   "done_files": b.get("done_files"), "total_files": b.get("total_files"),
+                   "remaining_files": b.get("remaining_files"),
+                   "eta_seconds": b.get("eta_seconds"),
+                   "eta_samples": b.get("eta_samples", 0)} if b else None,
+        "scan": {"dirs_done": sc.get("dirs_done"), "dirs_total": sc.get("dirs_total"),
+                 "pct": round(sc["pct"], 2) if sc.get("pct") is not None else None,
+                 "files": sc.get("files"), "bytes": sc.get("bytes")} if sc else None,
+        "health": [{"kind": k, "text": t} for k, t in (d.get("health") or [])],
+        "skipped_files": d.get("skipped"),
+        "last_backup_days": d.get("last_backup_days"),
+        "first_backup": d.get("first_backup"),
+        "latency_ms": d.get("latency_ms"),
+        "upload_pod": d.get("upload_pod"),
+        "compress_saved_bytes": d.get("compress_saved"),
+    }
+
+
 def _loop():
     prev = None
     while True:
@@ -140,11 +362,14 @@ def _loop():
             d = gather(prev)
             prev = d["_tx"]
             js = snapshot_to_json(d)
+            api = api_v1_payload(d)
         except Exception as e:
             js = {"ok": False, "error": str(e), "about": ABOUT}
+            api = {"ok": False, "error": str(e)}
         with _lock:
-            global _latest
+            global _latest, _latest_api
             _latest = js
+            _latest_api = api
         time.sleep(INT)
 
 
@@ -791,8 +1016,120 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # keep the container log quiet
 
+    def _json(self, code, obj):
+        payload = json.dumps(obj).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _api_v1(self, path):
+        """Returns True when the request was handled here."""
+        if not path.startswith("/api/v1/"):
+            return False
+        # No key means the surface does not exist, so say so rather than 403.
+        # A 403 would confirm the endpoint is here; with no key there is nothing
+        # to confirm, and every fresh container would be advertising it.
+        if not bbapi.active():
+            self.send_response(404)
+            self.end_headers()
+            return True
+        auth = self.headers.get("Authorization", "")
+        presented = auth[7:] if auth[:7].lower() == "bearer " else ""
+        need = "read"
+        ok, kid = bbapi.verify(presented, need)
+        if not ok:
+            # The public id only, never the secret, and only when one parsed.
+            sys.stderr.write("bb-monitor-web: api/v1 auth failed%s\n"
+                             % (" for key %s" % kid if kid else ""))
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Bearer realm="bb64"')
+            self.end_headers()
+            return True
+        bbapi.touch(kid)
+        if path == "/api/v1/status":
+            with _lock:
+                self._json(200, _latest_api)
+        else:
+            self._json(404, {"schema": bbapi.SCHEMA, "error": "no such endpoint"})
+        return True
+
+    def _guard(self):
+        """Same-origin check for the management calls.
+
+        These sit behind nginx's auth_request, so the browser session is what
+        authorises them, and a browser session is exactly what a cross-site POST
+        can borrow. Requiring a header the form sets forces a CORS preflight on
+        anything cross-origin, which a plain form post cannot satisfy.
+        """
+        if self.headers.get("X-Requested-With") != "bb64":
+            self.send_response(403)
+            self.end_headers()
+            return False
+        return True
+
+    def _manage_get(self, path):
+        if path == "/manage/keys":
+            self._json(200, {"schema": bbapi.SCHEMA, "keys": bbapi.listing(),
+                             "enabled": bool(bbapi.active()), "scopes": list(bbapi.SCOPES)})
+            return True
+        return False
+
+    def do_POST(self):
+        path = urlsplit(self.path).path
+        if not path.startswith("/manage/"):
+            self.send_response(404)
+            self.end_headers()
+            return
+        if not self._guard():
+            return
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n) or "{}") if n else {}
+        except (ValueError, OSError):
+            self._json(400, {"error": "bad request body"})
+            return
+
+        if path == "/manage/keys":
+            label = (body.get("label") or "").strip()
+            scopes = body.get("scopes") or []
+            if not label:
+                self._json(400, {"error": "a label is required"})
+                return
+            try:
+                rec, secret = bbapi.create(label, scopes)
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            # The only time the secret leaves this process.
+            self._json(200, {"schema": bbapi.SCHEMA, "key": rec, "secret": secret})
+        elif path == "/manage/keys/revoke":
+            kid = (body.get("id") or "").strip()
+            if bbapi.revoke(kid):
+                self._json(200, {"schema": bbapi.SCHEMA, "revoked": kid,
+                                 "enabled": bool(bbapi.active())})
+            else:
+                self._json(404, {"error": "no active key with that id"})
+        else:
+            self._json(404, {"error": "no such endpoint"})
+
     def do_GET(self):
         path = urlsplit(self.path).path   # strip any ?query string before routing
+        if self._api_v1(path):
+            return
+        if self._manage_get(path):
+            return
+        if path == "/apikeys":
+            payload = KEYS_HTML.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         if path == "/api/status":
             with _lock:
                 payload = json.dumps(_latest).encode("utf-8")

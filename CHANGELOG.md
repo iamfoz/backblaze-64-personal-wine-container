@@ -70,6 +70,17 @@ stable release.
   through work that is nothing of the sort, so the activity is taken from `current_file`,
   which holds a phrase rather than a name when there is no file: a scan reports
   "Producing file lists" instead of the part in flight.
+- An API tab in the web interface, and a key-authenticated read feed at `/api/v1/status`
+  for things outside the browser: the Unraid dashboard plugin, Home Assistant, a script.
+  It carries raw numbers rather than the formatted strings the dashboard draws, so a
+  consumer can graph or format for itself, and every response is stamped with a schema
+  version since the plugin ships on its own release cycle.
+
+  It is the one path exempted from the web login, so it defends itself with a bearer key
+  instead, and answers 404 rather than 403 until a key exists. Key management stays behind
+  the login. Keys are 256-bit random, shown once, and stored only as a SHA-256. `bb-apikey`
+  does the same job from a terminal. Scopes for starting and stopping the backup and for
+  pulling a diagnostic bundle are reserved but not yet issued.
 - The file in hand is named in both monitors, which is the only way most of them appear at
   all: a small file is usually gone before the next poll and never gets a row of its own.
   What the client says it is doing with that file is shown alongside it, from a vocabulary
