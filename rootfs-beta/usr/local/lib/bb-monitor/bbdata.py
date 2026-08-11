@@ -47,6 +47,7 @@ BZINFO = BZ + "/bzinfo.xml"
 _logged = set()
 _inflight = {}
 _recent = []
+_last_named = [None]        # last whole file the client named
 _sess = 0
 _rate_ema = 0.0
 # Throughput history for the ETA: (bytes, seconds) per genuinely-completed
@@ -656,6 +657,10 @@ def _parts_progress(name, fsize, part):
 
 
 def rec_cols(r):
+    # A file too small to catch in flight has no thread, no measured size and no
+    # rate. Its name and the time it was dealt with are all there is.
+    if r.get("small"):
+        return ("\u2014", "\u2014", "\u2014")
     if r["chunked"]:
         span = r["last"] - r["first"]
         if span < 0:
@@ -906,6 +911,19 @@ def gather(prev):
         files.append((name, part, fsize, pct, _parts_progress(name, fsize, part)))
         cur[x] = (name, fsize, part, thr, newest_line(thr))
     act = activity()
+    # Small files are gone before a poll can catch a thread carrying one, so they
+    # never enter the in-flight table and so never reach the completed one either.
+    # Backblaze pushes them in bundles rather than singly, which is why the log has
+    # no per-file record of them. The client does name each one as it deals with
+    # it, so a change of name means it has finished with the one before.
+    if act and not act["internal"] and act["part"] is None and act["file"] \
+            and act["phase"] == "Uploading":
+        prev = _last_named[0]
+        if prev and prev != act["file"] and not any(r["name"] == prev for r in _recent):
+            _recent.append({"chunked": False, "small": True, "name": prev, "thr": 0,
+                            "t": time.strftime("%H:%M:%S"), "bytes": 0,
+                            "secs": 0, "kbit": 0})
+        _last_named[0] = act["file"]
     # bzcurrentlargefile/ is not cleared when a file finishes, so its presence
     # proves nothing: it still named a completed film, at 0/21, while the client
     # was producing file lists. The map is only real while that file is the one

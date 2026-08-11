@@ -117,6 +117,11 @@ stable release.
   so a feature appears in both or neither.
 
 ### Fixed
+- Small files never reached Recently Completed. The table is fed from files caught in
+  flight, and a small file is gone before a poll can catch a thread carrying one; Backblaze
+  also pushes them in bundles rather than singly, so the log holds no per-file record of
+  them either. They are now taken from the client naming each one in turn, and listed
+  without a thread, size or rate, none of which exist for them.
 - The compact multi-part view drew one row per thread, so nine threads on one film gave
   nine identical "0/21" rows plus the chunk strip above them. The compact row counts the
   file's parts rather than the thread's own progress, so there is now one row per file and
