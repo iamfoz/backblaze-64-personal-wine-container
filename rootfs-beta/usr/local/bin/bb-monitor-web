@@ -26,6 +26,7 @@ from urllib.parse import urlsplit
 # the page; the terminal one owns curses. Neither owns data collection.
 sys.path.insert(0, "/usr/local/lib/bb-monitor")
 import bbapi
+import bbctl
 import bbdata
 from bbdata import (BUILD_INFO, BUILD_LABEL, INT, eta_str, gather, human,
                      rec_cols, uptime_str, _diag_dump, _threadpush_uid,
@@ -238,7 +239,7 @@ function post(path, body){
 }
 var SCOPE_HELP = {
   read: 'Read status. All the dashboard needs.',
-  control: 'Start and stop the backup.',
+  control: 'Start a backup, or ask a running one to pause. Uses Backblaze\\u2019s own bzcli, so a pause is cooperative rather than a kill.',
   report: 'Generate and download a diagnostic bundle.'
 };
 function render(d){
@@ -250,8 +251,8 @@ function render(d){
   var box = document.getElementById('scopes');
   if(!box.dataset.built){
     box.innerHTML = d.scopes.map(function(s){
-      var dis = s === 'read' ? '' : ' disabled';
-      var note = s === 'read' ? '' : ' <span class="dim">(not yet available)</span>';
+      var dis = s === 'report' ? ' disabled' : '';
+      var note = s === 'report' ? ' <span class="dim">(not yet available)</span>' : '';
       return '<label><input type="checkbox" value="'+esc(s)+'"'+dis+
              (s==='read'?' checked':'')+'><span><strong>'+esc(s)+'</strong>'+note+
              '<br><span class="dim">'+esc(SCOPE_HELP[s]||'')+'</span></span></label>';
@@ -1025,9 +1026,46 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def _api_v1(self, path):
+    def _api_route(self, method, path):
+        """(scope, handler) for a v1 route, or (None, None).
+
+        The scope is chosen here, per route, rather than assumed. A read key must
+        not be able to stop a backup because both arrive on the same surface.
+        """
+        if method == "GET" and path == "/api/v1/status":
+            return "read", self._api_status
+        if method == "GET" and path == "/api/v1/control":
+            return "control", self._api_control_list
+        if method == "POST" and path.startswith("/api/v1/control/"):
+            name = path[len("/api/v1/control/"):]
+            # The segment selects a key in a fixed table. It is never used to
+            # build an argument list, so a caller cannot reach --clear-pek by
+            # spelling it in a URL.
+            if name in bbctl.ACTIONS:
+                return "control", lambda: self._api_control_run(name)
+        return None, None
+
+    def _api_status(self):
+        with _lock:
+            self._json(200, _latest_api)
+
+    def _api_control_list(self):
+        self._json(200, {"schema": bbapi.SCHEMA,
+                         "available": bbctl.available(),
+                         "actions": [{"name": n, "does": d}
+                                     for n, (_, d) in sorted(bbctl.ACTIONS.items())]})
+
+    def _api_control_run(self, name):
+        if not bbctl.available():
+            self._json(503, {"schema": bbapi.SCHEMA, "error": "bzcli is not present"})
+            return
+        ok, msg = bbctl.run(name)
+        self._json(200 if ok else 502,
+                   {"schema": bbapi.SCHEMA, "action": name, "ok": ok, "detail": msg})
+
+    def _api_v1(self, method, path):
         """Returns True when the request was handled here."""
-        if not path.startswith("/api/v1/"):
+        if not path.startswith("/api/v1/") and path != "/api/v1":
             return False
         # No key means the surface does not exist, so say so rather than 403.
         # A 403 would confirm the endpoint is here; with no key there is nothing
@@ -1036,10 +1074,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return True
+        need, handler = self._api_route(method, path)
         auth = self.headers.get("Authorization", "")
         presented = auth[7:] if auth[:7].lower() == "bearer " else ""
-        need = "read"
-        ok, kid = bbapi.verify(presented, need)
+        # An unknown path is still authenticated first, so that the set of
+        # endpoints is not enumerable without a key.
+        ok, kid = bbapi.verify(presented, need or "read")
         if not ok:
             # The public id only, never the secret, and only when one parsed.
             sys.stderr.write("bb-monitor-web: api/v1 auth failed%s\n"
@@ -1049,11 +1089,10 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return True
         bbapi.touch(kid)
-        if path == "/api/v1/status":
-            with _lock:
-                self._json(200, _latest_api)
-        else:
+        if handler is None:
             self._json(404, {"schema": bbapi.SCHEMA, "error": "no such endpoint"})
+        else:
+            handler()
         return True
 
     def _guard(self):
@@ -1079,6 +1118,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path
+        # Key auth, so no same-origin guard here: that guard exists for /manage/,
+        # which rides the browser session a cross-site post could borrow.
+        if self._api_v1("POST", path):
+            return
         if not path.startswith("/manage/"):
             self.send_response(404)
             self.end_headers()
@@ -1117,7 +1160,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path   # strip any ?query string before routing
-        if self._api_v1(path):
+        if self._api_v1("GET", path):
             return
         if self._manage_get(path):
             return
