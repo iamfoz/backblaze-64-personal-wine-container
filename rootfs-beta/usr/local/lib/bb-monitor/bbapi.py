@@ -1,9 +1,9 @@
 # Key store for the /api/v1 surface, shared by bb-monitor-web and bb-apikey.
 #
-# The dashboard plugin lives in its own repository and cannot reach the monitor's
-# data any other way: the plugin is PHP on the host, the data is inside the
-# container, and /monitor/ sits behind nginx's auth_request. So /api/v1 is
-# exempted from that and defends itself with a key.
+# A consumer outside the browser cannot reach the monitor's data any other way:
+# it runs on the host or elsewhere on the network, the data is inside the
+# container, and /monitor/ sits behind nginx's auth_request, which expects a
+# browser session. So /api/v1 is exempted from that and defends itself with a key.
 #
 # There is no separate on/off setting. The surface is live exactly when an
 # unrevoked key exists, which is one less thing to get out of step, and it means
@@ -17,7 +17,7 @@ KEYS = DIR + "/keys.json"
 
 SCHEMA = 1                      # payload contract version, sent on every response
 
-# Permissions are per operation, not per group. A key wired into Home Assistant to
+# Permissions are per operation, not per group. A key issued so that something can
 # kick off a backup has no business also being able to pause one, and the two are
 # not a ladder: neither implies the other. Groups exist only so a person can say
 # "all of control" without ticking every box, and are expanded on the way in, so

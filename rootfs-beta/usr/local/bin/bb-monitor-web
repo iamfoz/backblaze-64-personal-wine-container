@@ -197,8 +197,8 @@ KEYS_HTML = """<!doctype html>
 </style></head><body>
 
 <h1>API</h1>
-<p class="dim">A read-only feed for the Unraid dashboard plugin, Home Assistant, or
-anything else outside the browser. It is served on this same port at
+<p class="dim">A feed for anything outside the browser: a dashboard, an automation
+system, a script. It is served on this same port at
 <code>/api/v1/status</code> and authenticates with a key rather than the web login.</p>
 
 <div class="panel">
@@ -211,10 +211,10 @@ anything else outside the browser. It is served on this same port at
 <h2>Create a key</h2>
 <div class="panel">
   <label for="label">What is this key for?</label>
-  <input type="text" id="label" placeholder="Unraid dashboard" autocomplete="off">
+  <input type="text" id="label" placeholder="Status display" autocomplete="off">
   <div class="scopes" id="scopes"></div>
-  <p class="dim" style="margin:4px 0 12px">The dashboard plugin needs <code>read</code>
-  alone. Grant each operation separately, or tick a group to take all of it.</p>
+  <p class="dim" style="margin:4px 0 12px"><code>read</code> alone is enough to display
+  status. Grant each operation separately, or tick a group to take all of it.</p>
   <button id="create">Create key</button>
   <div id="err" class="err" hidden></div>
   <div id="secretbox" class="secret" hidden>

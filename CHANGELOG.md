@@ -71,10 +71,10 @@ stable release.
   which holds a phrase rather than a name when there is no file: a scan reports
   "Producing file lists" instead of the part in flight.
 - An API tab in the web interface, and a key-authenticated read feed at `/api/v1/status`
-  for things outside the browser: the Unraid dashboard plugin, Home Assistant, a script.
+  for anything outside the browser: a dashboard, an automation system, a script.
   It carries raw numbers rather than the formatted strings the dashboard draws, so a
   consumer can graph or format for itself, and every response is stamped with a schema
-  version since the plugin ships on its own release cycle.
+  version, since a consumer is released independently of this container.
 
   It is the one path exempted from the web login, so it defends itself with a bearer key
   instead, and answers 404 rather than 403 until a key exists. Key management stays behind
@@ -85,8 +85,8 @@ stable release.
   progress, container memory and swap, round-trip time, health warnings, skipped files,
   compression saved, uploads and failures for the day, Backblaze's own measured throughput,
   and the in-flight and recently completed files with their chunk positions. A key granted
-  `read` alone gets none of the file names, which is what a dashboard tile showing rate and
-  progress actually needs; `read:files` adds them.
+  `read` alone gets none of the file names, which is all a status display needs;
+  `read:files` adds them.
 
   Permissions are granted per operation rather than per group, so a key that starts backups
   need not also be able to pause them. Ticking a group name takes all of its operations, and

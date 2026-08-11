@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Manage keys for the /api/v1 surface.
 #
-#   bb-apikey create --label "unraid dashboard" --scope read
+#   bb-apikey create --label "status display" --scope read
 #   bb-apikey list
 #   bb-apikey revoke <id>
 #
@@ -87,7 +87,7 @@ def main():
                    metavar="PERM",
                    help="repeatable. An operation such as control:pause, or a "
                         "group name such as control to take all of it. "
-                        "read is all the dashboard plugin needs")
+                        "read alone is enough to display status")
     c.add_argument("--all", action="store_true",
                    help="every operation that is currently available")
     c.set_defaults(func=cmd_create)
