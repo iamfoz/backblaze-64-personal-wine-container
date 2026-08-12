@@ -93,6 +93,11 @@ stable release.
   length, including the ones with no body, without which a kept-alive connection stalls
   waiting for a body that never arrives.
 
+  The state read as the literal string "None" when the client had nothing to report. It
+  writes `cur_state="none"`, which was being capitalised rather than treated as no answer,
+  so a payload looked as though a null had leaked into it. It falls back to what the running
+  processes show, as it did before the client's own word was preferred.
+
   The key store takes its ownership from `/config`. `bb-apikey` is normally run through
   `docker exec`, which is root, while the service runs as the container's own user, so a key
   created on the command line landed in a root-owned directory the service could not open:

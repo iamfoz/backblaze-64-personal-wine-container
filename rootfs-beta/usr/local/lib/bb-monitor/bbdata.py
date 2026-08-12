@@ -841,6 +841,12 @@ def gather(prev):
     # The client's own state when it offers one, since it knows what it is doing
     # better than a guess from which processes exist.
     reported = client_state()[0]
+    # The client writes cur_state="none" when it has nothing to say, and
+    # capitalising that produced the literal string "None", which reads like a
+    # null that leaked into the payload. Treat it as no answer and fall back to
+    # what the running processes show.
+    if reported and reported.strip().lower() in ("none", "unknown", ""):
+        reported = None
     o["state"] = (reported.capitalize() if reported else
                   ("Transmitting" if threads else
                    "Scanning" if has_fl else
