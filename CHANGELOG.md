@@ -88,6 +88,11 @@ stable release.
   `read` alone gets none of the file names, which is all a status display needs;
   `read:files` adds them.
 
+  The dashboard's own service speaks HTTP/1.1, so a consumer polling every couple of seconds
+  reuses one connection rather than opening a fresh one each time. Every response carries a
+  length, including the ones with no body, without which a kept-alive connection stalls
+  waiting for a body that never arrives.
+
   Changes to the key store are serialised against a lock. Recording a key's last use is a
   read-modify-write, and so is creating one, so without it a key created while anything was
   polling could be written straight back out of existence. Forty of forty-one were lost in a

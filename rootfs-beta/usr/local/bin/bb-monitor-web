@@ -1166,6 +1166,13 @@ setInterval(tick, 2000);
 
 
 class Handler(BaseHTTPRequestHandler):
+    # HTTP/1.1 so a consumer polling every couple of seconds reuses one
+    # connection instead of opening a fresh one each time. This is only safe
+    # because every response here carries a Content-Length, including the
+    # bodyless ones: without it a client waits for a body that never comes and
+    # the reused connection desynchronises.
+    protocol_version = "HTTP/1.1"
+
     def log_message(self, fmt, *args):
         pass  # keep the container log quiet
 
@@ -1188,6 +1195,7 @@ class Handler(BaseHTTPRequestHandler):
         # one. It reveals only that cross-origin access is configured.
         if not CORS_ORIGINS or not path.startswith("/api/v1/"):
             self.send_response(405)
+            self.send_header("Content-Length", "0")
             self.end_headers()
             return
         self.send_response(204)
@@ -1334,6 +1342,7 @@ class Handler(BaseHTTPRequestHandler):
         # to confirm, and every fresh container would be advertising it.
         if not bbapi.active():
             self.send_response(404)
+            self.send_header("Content-Length", "0")
             self.end_headers()
             return True
         need, handler = self._api_route(method, path)
@@ -1349,6 +1358,7 @@ class Handler(BaseHTTPRequestHandler):
                              % (" for key %s" % kid if kid else ""))
             self.send_response(401)
             self.send_header("WWW-Authenticate", 'Bearer realm="bb64"')
+            self.send_header("Content-Length", "0")
             self.end_headers()
             return True
         bbapi.touch(kid)
@@ -1369,6 +1379,7 @@ class Handler(BaseHTTPRequestHandler):
         """
         if self.headers.get("X-Requested-With") != "bb64":
             self.send_response(403)
+            self.send_header("Content-Length", "0")
             self.end_headers()
             return False
         return True
@@ -1394,6 +1405,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not path.startswith("/manage/"):
             self.send_response(404)
+            self.send_header("Content-Length", "0")
             self.end_headers()
             return
         if not self._guard():
@@ -1463,6 +1475,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(payload)
         else:
             self.send_response(404)
+            self.send_header("Content-Length", "0")
             self.end_headers()
 
 

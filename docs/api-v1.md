@@ -364,6 +364,9 @@ coarse: recording every request would mean rewriting the key store on each poll.
 
 ## Notes for consumers
 
+The service speaks HTTP/1.1 and keeps connections alive, so a polling client should reuse
+its connection rather than opening one per request.
+
 Poll no faster than `poll_interval_seconds`. The container refreshes on its own schedule and
 a faster poll returns the same snapshot.
 
