@@ -174,13 +174,25 @@ def perms(kid):
     return []
 
 
+TOUCH_RESOLUTION = 60     # seconds; see touch()
+
+
 def touch(kid):
-    """Record use. Best effort: a read must not fail because this could not write."""
+    """Record use. Best effort: a read must not fail because this could not write.
+
+    Rewriting the key store on every request would mean a full read and an atomic
+    replace per poll, which for a consumer polling every couple of seconds is a
+    steady stream of writes to /config for a timestamp nobody reads at that
+    resolution. Coarse to the minute instead.
+    """
     try:
         records = _read()
         for r in records:
             if r["id"] == kid:
-                r["last_used"] = _now()
+                now = _now()
+                if r["last_used"] and now - r["last_used"] < TOUCH_RESOLUTION:
+                    return
+                r["last_used"] = now
                 _write(records)
                 return
     except OSError:

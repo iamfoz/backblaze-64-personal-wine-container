@@ -272,6 +272,18 @@ costs a round trip.
 Chunks that finished before the container started are in neither array: they cannot be told
 apart from chunks not yet started.
 
+## What is recorded
+
+A successful control action is written to the container log with the public id of the key
+that asked for it, so there is a trace of anything that changed the system. Reads are not
+logged: a consumer polling every few seconds would bury everything else.
+
+Secrets never appear in a log. A failed authentication records the key's public id where one
+could be parsed, and nothing otherwise.
+
+`bb-apikey list` shows when each key was last used, to the nearest minute. It is deliberately
+coarse: recording every request would mean rewriting the key store on each poll.
+
 ## Notes for consumers
 
 Poll no faster than `poll_interval_seconds`. The container refreshes on its own schedule and

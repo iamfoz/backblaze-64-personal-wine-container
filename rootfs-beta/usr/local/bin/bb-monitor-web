@@ -65,7 +65,7 @@ ABOUT = {
 
 # Restated now ABOUT exists, so even the pre-first-sample payload carries it.
 _latest = {"ok": False, "error": "warming up", "about": ABOUT}
-_latest_api = {"ok": False, "error": "warming up"}
+_latest_api = {"schema": bbapi.SCHEMA, "ok": False, "error": "warming up"}
 
 
 # ---- JSON snapshot builder ------------------------------------------------
@@ -484,7 +484,9 @@ def _loop():
             api = api_v1_payload(d)
         except Exception as e:
             js = {"ok": False, "error": str(e), "about": ABOUT}
-            api = {"ok": False, "error": str(e)}
+            # schema is on every response, including this one: a consumer that
+            # reads it first must not break precisely when collection fails.
+            api = {"schema": bbapi.SCHEMA, "ok": False, "error": str(e)}
         with _lock:
             global _latest, _latest_api
             _latest = js
@@ -1195,6 +1197,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json(503, {"schema": bbapi.SCHEMA, "error": "bzcli is not present"})
             return
         ok, msg = bbctl.run(name)
+        # Anything that changes the system is recorded with the key that asked for
+        # it. The public id only, never the secret. Reads are not logged: they are
+        # constant and would bury this.
+        sys.stderr.write("bb-monitor-web: key %s ran %s: %s\n"
+                         % (self._kid, name, "ok" if ok else "failed, " + msg))
         self._json(200 if ok else 502,
                    {"schema": bbapi.SCHEMA, "action": name, "ok": ok, "detail": msg})
 
