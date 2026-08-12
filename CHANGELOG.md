@@ -93,6 +93,10 @@ stable release.
   length, including the ones with no body, without which a kept-alive connection stalls
   waiting for a body that never arrives.
 
+  The API tab listed an empty "read (0)" group. A colon in a permission name was being read
+  as a group prefix, so `read:files` invented a group that does not exist. Only `control` is
+  a group; the rest sit at the top level.
+
   The state read as the literal string "None" when the client had nothing to report. It
   writes `cur_state="none"`, which was being capitalised rather than treated as no answer,
   so a payload looked as though a null had leaked into it. It falls back to what the running

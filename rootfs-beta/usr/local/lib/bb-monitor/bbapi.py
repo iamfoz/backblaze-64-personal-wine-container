@@ -51,7 +51,7 @@ PERMISSIONS = {
     "read":               "Read status: rates, progress, memory, latency, health.",
     "read:files":         "Also see the names of files being backed up.",
     "control:backup-now": "Start a backup if one is not already running.",
-    "control:pause":      "Ask a running backup to pause, cooperatively.",
+    "control:pause":      "Pause a running backup.",
     "report":             "Generate and download a diagnostic bundle.",
 }
 

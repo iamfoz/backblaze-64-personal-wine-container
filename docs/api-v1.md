@@ -56,7 +56,7 @@ Granted per operation, not in tiers, because these are not a ladder — none imp
 | `read` | Status: rates, progress, memory, latency, health. No file names. |
 | `read:files` | Adds the names of files being backed up. |
 | `control:backup-now` | Start a backup if one is not already running. |
-| `control:pause` | Ask a running backup to pause. |
+| `control:pause` | Pause a running backup. |
 | `report` | Generate and download a diagnostic bundle. |
 
 `control` is accepted as shorthand for both control operations and expands when the key is

@@ -212,15 +212,13 @@ KEYS_HTML = """<!doctype html>
 </style></head><body>
 
 <h1>API</h1>
-<p class="dim">A feed for anything outside the browser: a dashboard, an automation
-system, a script. It is served on this same port at
-<code>/api/v1/status</code> and authenticates with a key rather than the web login.</p>
+<p class="dim">Read status and control the backup from outside the browser. It runs on this
+port at <code>/api/v1/status</code> and takes a key instead of the web login.</p>
 
 <div class="panel">
   <strong>Status:</strong> <span id="state" class="state off">off</span>
-  <p class="dim" style="margin:8px 0 0">The API is off until a key exists, and answers 404
-  rather than 403 so a container with no key does not advertise it. Revoking the last key
-  turns it off again.</p>
+  <p class="dim" style="margin:8px 0 0">No keys, no API. Every path answers 404 until you
+  make one. Revoke the last key and it switches off again.</p>
 </div>
 
 <h2>Create a key</h2>
@@ -235,14 +233,14 @@ system, a script. It is served on this same port at
     <option value="90">In 90 days</option>
     <option value="365">In a year</option>
   </select>
-  <p class="dim" style="margin:4px 0 12px">Never is right for something long-running.
-  Put a date on a key you are handing to someone for a one-off.</p>
-  <p class="dim" style="margin:4px 0 12px"><code>read</code> alone is enough to display
-  status. Grant each operation separately, or tick a group to take all of it.</p>
+  <p class="dim" style="margin:4px 0 12px">Leave this at Never unless the key is for a
+  one-off.</p>
+  <p class="dim" style="margin:4px 0 12px"><code>read</code> on its own is enough for a
+  status display. Ticking a group selects everything in it.</p>
   <button id="create">Create key</button>
   <div id="err" class="err" hidden></div>
   <div id="secretbox" class="secret" hidden>
-    <strong>Copy this now.</strong> It is shown once and is not recoverable.
+    <strong>Copy this now.</strong> You will not see it again.
     <code id="secret"></code>
     <button class="ghost" id="copy">Copy</button>
   </div>
@@ -299,7 +297,7 @@ function render(d){
   var box = document.getElementById('scopes');
   if(!box.dataset.built){
     var html = '<label class="everyone"><input type="checkbox" id="all">' +
-               '<span><strong>Everything available</strong></span></label>';
+               '<span><strong>Select all</strong></span></label>';
     var done = {};
     d.permissions.forEach(function(p){
       if(p.group && !done[p.group]){
@@ -1390,7 +1388,11 @@ class Handler(BaseHTTPRequestHandler):
                 "schema": bbapi.SCHEMA, "keys": bbapi.listing(),
                 "enabled": bool(bbapi.active()),
                 "permissions": [{"name": n, "does": bbapi.PERMISSIONS[n],
-                                 "group": n.split(":")[0] if ":" in n else None,
+                                 # A colon does not make a group. read:files is
+                                 # its own permission and belongs at the top
+                                 # level; only names in GROUPS get a box.
+                                 "group": (n.split(":")[0]
+                                           if n.split(":")[0] in bbapi.GROUPS else None),
                                  "reserved": n in bbapi.RESERVED}
                                 for n in bbapi.ORDER],
                 "groups": {g: list(m) for g, m in bbapi.GROUPS.items()}})
