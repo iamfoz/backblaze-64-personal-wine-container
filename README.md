@@ -30,6 +30,7 @@ It runs the Backblaze client and starts a virtual X server and a VNC server with
       * [Sizing Your Host](#sizing-your-host)
       * [Health and Auto-Recovery](#health-and-auto-recovery)
       * [Upload Monitor](#upload-monitor)
+      * [HTTP API](#http-api)
       * [Checking Versions](#checking-versions)
       * [Fixing Problems](#fixing-problems)
       * [Reporting a Problem](#reporting-a-problem)
@@ -330,6 +331,34 @@ Files larger than ~100 MB are split into parts by Backblaze: the parts appear
 individually while uploading, then bundle into a single row once completed, with the
 thread column showing parts done out of total. Scroll with the arrow keys or
 PgUp/PgDn when many files are in flight, and quit with `q`.
+
+## HTTP API
+
+The container serves a key-authenticated API on the same port as the web interface, for
+anything outside the browser: a status display, an automation system, a script, or a plugin
+of your own. It reports everything the upload monitor knows, in raw units, and can start or
+pause a backup.
+
+It is off until you create a key, and answers `404` until then. Create one from the **API**
+tab of the web interface, or from a terminal:
+
+```
+docker exec backblaze-personal-wine bb-apikey create --label "status display" --scope read
+```
+
+The key is shown once. Send it as a bearer token:
+
+```
+curl -H "Authorization: Bearer <key>" https://<host>:<port>/api/v1/status
+```
+
+Permissions are granted per operation, so a display that shows progress can be given
+`read` alone and nothing else — not the names of your files, and no ability to touch the
+backup. Pausing uses the backup client's own mechanism rather than killing anything.
+
+**Full reference: [docs/api-v1.md](docs/api-v1.md)** — endpoints, permissions, every field
+with its units, and the schema-versioning promise. Build against that rather than against
+the monitor's own web feed, which is an internal shape and can change without notice.
 
 ## Checking Versions
 
