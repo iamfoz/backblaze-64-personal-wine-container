@@ -192,6 +192,14 @@ stable release.
   chunks" against a film while the client was producing file lists. `bzcurrentlargefile/`
   is not cleared when a file finishes, so it still described the last one split. The view
   now appears only while that file is the one being worked on.
+- Multi-part totals were wrong again, in a different way: a 221 MB file with 10 MB parts
+  listed as "22/236". The part size is constant for a file, but a reading was only
+  remembered when it came from the fallback path, so a line that carried the size returned
+  it without recording it. A later line without the size then fell back to the live counter,
+  which describes the part a thread happens to be carrying, and one short reading fixed a
+  row's total for good. The largest credible reading for a file is now remembered whichever
+  path it came from and cannot be undone by a short one, and a total is no longer set at all
+  from a part size below a mebibyte, which cannot be the configured one.
 - Scan progress stuck at a figure like "50% 14/28 directories" and stayed there while files
   uploaded. The `.future` files a scan writes are not removed when it ends, so their presence
   proved nothing. Progress now shows only while `bzfilelist` is running and the files are

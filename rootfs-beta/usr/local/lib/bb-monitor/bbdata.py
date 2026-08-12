@@ -650,20 +650,33 @@ _part_seen = {}
 
 
 def _part_size(fields, live):
-    """Configured part size for this upload, in bytes."""
+    """Configured part size for this upload, in bytes.
+
+    The part size is constant for a file, so the largest credible reading seen for
+    it is the answer, and a later short reading cannot undo it. Field 12 used to
+    return early without recording, so a line that lacked the field fell back to
+    the live counter with nothing better remembered, and one short reading set a
+    bundle's total for good: a 221 MB file came out as 236 parts rather than 22,
+    which is that file divided by about 937 KB.
+    """
+    key = fields[-1] if fields else ""
+    best = _part_seen.get(key, 0)
     if len(fields) > _PART_FIELD:
         try:
             v = int(fields[_PART_FIELD])
             if v >= _MIN_PART:
-                return v
+                best = max(best, v)
         except ValueError:
             pass
-    # No usable field: the largest live reading seen for this file is the closest
-    # thing to the part size, since the counter starts full and falls.
-    key = fields[-1] if fields else ""
-    best = max(_part_seen.get(key, 0), live)
-    _part_seen[key] = best
-    return best or live
+    # The live counter belongs to the part a thread is carrying. A file's last
+    # part is short by definition, so it is only worth believing when it is at
+    # least a part-sized reading and nothing better is known.
+    if live >= _MIN_PART:
+        best = max(best, live)
+    if best:
+        _part_seen[key] = best
+        return best
+    return live
 
 
 def _parts_progress(name, fsize, part):
@@ -1010,7 +1023,20 @@ def gather(prev):
                 # upload, so it is dropped rather than opening a second row.
                 if any(r["chunked"] and r["name"] == nm for r in _recent):
                     continue
-                b = {"chunked": True, "name": nm, "done": 0, "total": max(1, -(-fs // part)),
+                if part < _MIN_PART:
+                    # A part size this small cannot be the configured one, and a
+                    # total set from it is wrong for the life of the row. Wait for
+                    # a reading that makes sense: the next push for this file
+                    # brings one, at the cost of one uncounted part.
+                    continue
+                total = max(1, -(-fs // part))
+                try:
+                    with open(MPLOG, "a") as fh:
+                        fh.write("%s  BUNDLE %s file=%d part=%d total=%d\n"
+                                 % (time.strftime("%F %T"), nm[:60], fs, part, total))
+                except OSError:
+                    pass
+                b = {"chunked": True, "name": nm, "done": 0, "total": total,
                      "bytes": 0, "first": end - el, "last": end}
                 _recent.append(b)
             b["done"] += 1
