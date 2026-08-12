@@ -88,6 +88,12 @@ stable release.
   `read` alone gets none of the file names, which is all a status display needs;
   `read:files` adds them.
 
+  Both monitors and the feed now report whether a backup is paused, from
+  `bzdata/pauseinfo.xml`, which the client writes only while one is set. Without it a pause
+  read as "Uploading" with nothing moving, because bztransmit stays running and keeps naming
+  the last file it had. A pause the client set for its own reasons looks the same as one
+  asked for over the API.
+
   A `report` permission generates a diagnostic bundle and hands back a single-use link that
   expires in minutes, so the key never appears in a URL where a browser would keep it in
   history. One bundle is built at a time.

@@ -445,6 +445,8 @@ def api_v1_payload(d):
         "time": int(time.time()),
         "poll_interval_seconds": INT,
         "state": d.get("state"),
+        "paused": (d.get("pause") or {}).get("paused", False),
+        "pause": d.get("pause"),
         "activity": {"phase": act.get("phase"), "file": act.get("file"),
                      "part": act.get("part"), "internal": act.get("internal")} if act else None,
         "threads": d.get("threads"),

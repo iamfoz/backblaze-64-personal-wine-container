@@ -181,7 +181,8 @@ for its own locale.
 | `build` | string | Running build of this container. Quote it in a bug report. |
 | `time` | int | When this snapshot was taken, epoch seconds. |
 | `poll_interval_seconds` | number | How often the container refreshes. Polling faster gains nothing. |
-| `state` | string | What the client is doing, in its own words. |
+| `state` | string | What the client is doing, in its own words. Reads `Paused` when paused. |
+| `paused` | bool | Whether a backup is paused. The field to render a pause button from. |
 | `threads` | int | Upload threads currently running. |
 | `rate_bytes_per_sec` | int | Current upload rate. |
 | `session_bytes` | int | Uploaded since this container started. |
@@ -202,6 +203,17 @@ What the client has in hand right now. `null` when it is doing nothing.
 | `file` | string, null | The file. Always `null` without `read:files`. |
 | `part` | int, null | Which part of a multi-part file. |
 | `internal` | bool | `true` when this is the client's own bookkeeping rather than one of your files. |
+
+### `pause`
+
+| Field | Type | Meaning |
+|---|---|---|
+| `paused` | bool | Same as the top-level `paused`. |
+| `until` | int, null | Epoch seconds the pause runs to. `null` means it holds until a backup is started. |
+| `reason` | string, null | The client's own word for why, when it paused itself. |
+
+A pause the client set for its own reasons looks the same as one requested through the API.
+There is no separate resume: starting a backup is what lifts it.
 
 ### `backup`
 

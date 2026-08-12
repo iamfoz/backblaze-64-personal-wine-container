@@ -272,6 +272,29 @@ def activity():
     return {"phase": "Uploading", "file": cur, "part": None, "internal": False}
 
 
+# bzdata/pauseinfo.xml exists only while a pause is set. bzcli, bzserv and
+# bztransmit all name it, and bzserv's own wording is that the file has to go
+# "to come out of pause", so its presence is the state rather than a flag inside
+# it. Read every poll: it is a small file and costs nothing, where asking bzcli
+# would spawn a Wine process.
+PAUSEINFO = BZ + "/pauseinfo.xml"
+
+
+def pause_state():
+    """{"paused": bool, "until": epoch or None, "reason": str or None}."""
+    t = read(PAUSEINFO)
+    if not t:
+        return {"paused": False, "until": None, "reason": None}
+    m = re.search(r'pauseuntil_gmt_millis="(\d+)"', t)
+    until = int(m.group(1)) // 1000 if m else None
+    r = re.search(r'reason="([^"]*)"', t)
+    # A pause with a deadline that has passed is over, whether or not the client
+    # has got round to removing the file.
+    paused = True if until is None else time.time() < until
+    return {"paused": paused, "until": until if paused else None,
+            "reason": r.group(1) if r else None}
+
+
 def scan_progress(live=None):
     """Progress of a file-list scan, or None when no scan is running.
 
@@ -943,6 +966,12 @@ def gather(prev):
     o["state_reported"], o["current_file"] = client_state()
     o["scan"] = scan_progress(has_fl)
     o["activity"] = act
+    o["pause"] = pause_state()
+    # A paused backup still leaves bztransmit running and current_file naming
+    # whatever it had last, so without this the monitors read "Uploading" while
+    # nothing moves.
+    if o["pause"]["paused"]:
+        o["state"] = "Paused"
     o["perf"] = measured_perf()
     o["health"] = health()
     o["upload_success"] = upload_success_today()
