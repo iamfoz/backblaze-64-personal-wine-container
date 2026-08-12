@@ -10,10 +10,34 @@
 # a fresh container answers 404 rather than 403 on every /api/v1 path. A 403
 # would confirm the endpoint is there; with no key there is nothing to confirm.
 
-import base64, hashlib, hmac, json, os, re, tempfile, time
+import base64, contextlib, fcntl, hashlib, hmac, json, os, re, tempfile, threading, time
 
 DIR = "/config/bb-api"
 KEYS = DIR + "/keys.json"
+LOCK = DIR + "/.lock"
+
+# Every change to the store is read-modify-write, and there are two writers: this
+# service, threaded, and bb-apikey in its own process. Without a lock, recording
+# a key's last use writes back a list read before a key was created, and the new
+# key is gone. Measured before this existed: 40 of 41 keys created during a poll
+# were lost. The threading lock covers this process, the file lock covers the
+# other one.
+_tlock = threading.RLock()
+
+
+@contextlib.contextmanager
+def _mutate():
+    os.makedirs(DIR, exist_ok=True)
+    with _tlock:
+        fd = os.open(LOCK, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
 
 SCHEMA = 1                      # payload contract version, sent on every response
 
@@ -107,6 +131,11 @@ def create(label, scopes, expires_in_days=None):
         raise ValueError("not available yet: %s" % ", ".join(held))
     if not scopes:
         raise ValueError("a key needs at least one permission")
+    with _mutate():
+        return _create_locked(label, scopes, expires_in_days)
+
+
+def _create_locked(label, scopes, expires_in_days):
     records = _read()
     while True:
         kid = os.urandom(4).hex()
@@ -132,12 +161,13 @@ def create(label, scopes, expires_in_days=None):
 
 
 def revoke(kid):
-    records = _read()
-    for r in records:
-        if r["id"] == kid and not r["revoked"]:
-            r["revoked"] = _now()
-            _write(records)
-            return True
+    with _mutate():
+        records = _read()
+        for r in records:
+            if r["id"] == kid and not r["revoked"]:
+                r["revoked"] = _now()
+                _write(records)
+                return True
     return False
 
 
@@ -219,14 +249,21 @@ def touch(kid):
     resolution. Coarse to the minute instead.
     """
     try:
-        records = _read()
-        for r in records:
-            if r["id"] == kid:
-                now = _now()
-                if r["last_used"] and now - r["last_used"] < TOUCH_RESOLUTION:
-                    return
-                r["last_used"] = now
-                _write(records)
+        # Cheap check outside the lock: at a poll every couple of seconds this
+        # returns almost every time, so the lock is barely contended.
+        for r in _read():
+            if r["id"] == kid and r["last_used"] \
+                    and _now() - r["last_used"] < TOUCH_RESOLUTION:
                 return
+        with _mutate():
+            records = _read()
+            for r in records:
+                if r["id"] == kid:
+                    now = _now()
+                    if r["last_used"] and now - r["last_used"] < TOUCH_RESOLUTION:
+                        return
+                    r["last_used"] = now
+                    _write(records)
+                    return
     except OSError:
         pass

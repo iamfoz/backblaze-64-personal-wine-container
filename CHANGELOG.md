@@ -88,6 +88,12 @@ stable release.
   `read` alone gets none of the file names, which is all a status display needs;
   `read:files` adds them.
 
+  Changes to the key store are serialised against a lock. Recording a key's last use is a
+  read-modify-write, and so is creating one, so without it a key created while anything was
+  polling could be written straight back out of existence. Forty of forty-one were lost in a
+  test of it. The lock covers this container's own threads and `bb-apikey` in its separate
+  process.
+
   Both monitors and the feed now report whether a backup is paused, from
   `bzdata/pauseinfo.xml`, which the client writes only while one is set. Without it a pause
   read as "Uploading" with nothing moving, because bztransmit stays running and keeps naming
