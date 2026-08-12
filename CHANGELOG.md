@@ -93,6 +93,11 @@ stable release.
   length, including the ones with no body, without which a kept-alive connection stalls
   waiting for a body that never arrives.
 
+  The key store takes its ownership from `/config`. `bb-apikey` is normally run through
+  `docker exec`, which is root, while the service runs as the container's own user, so a key
+  created on the command line landed in a root-owned directory the service could not open:
+  it never appeared in the settings tab and the API answered 404 as though no key existed.
+
   Changes to the key store are serialised against a lock. Recording a key's last use is a
   read-modify-write, and so is creating one, so without it a key created while anything was
   polling could be written straight back out of existence. Forty of forty-one were lost in a

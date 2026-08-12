@@ -28,6 +28,7 @@ _tlock = threading.RLock()
 @contextlib.contextmanager
 def _mutate():
     os.makedirs(DIR, exist_ok=True)
+    _own_like_config(DIR)
     with _tlock:
         fd = os.open(LOCK, os.O_CREAT | os.O_RDWR, 0o600)
         try:
@@ -92,9 +93,28 @@ def _read():
     return data if isinstance(data, list) else []
 
 
+def _own_like_config(path):
+    """Give `path` the ownership /config already has.
+
+    bb-apikey is normally run through `docker exec`, which is root, while the
+    service runs as the container's own user. Left alone, root creates the store
+    0700 root-owned and the service cannot open it: keys created on the command
+    line simply never appear, and the API answers 404 as though none existed.
+    /config is already owned correctly, so its ownership is the answer, and this
+    repairs a store created before the fix the next time a key is written.
+    """
+    try:
+        st = os.stat(os.path.dirname(DIR) or "/config")
+        if os.stat(path).st_uid != st.st_uid or os.stat(path).st_gid != st.st_gid:
+            os.chown(path, st.st_uid, st.st_gid)
+    except OSError:
+        pass    # not privileged enough to change it, so it is already ours
+
+
 def _write(records):
     os.makedirs(DIR, exist_ok=True)
     os.chmod(DIR, 0o700)
+    _own_like_config(DIR)
     # Written through a temporary file in the same directory so a crash mid-write
     # cannot leave a truncated key store, which would lock the owner out.
     fd, tmp = tempfile.mkstemp(dir=DIR)
@@ -102,6 +122,7 @@ def _write(records):
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(records, fh, indent=2, sort_keys=True)
         os.chmod(tmp, 0o600)
+        _own_like_config(tmp)
         os.replace(tmp, KEYS)
     except BaseException:
         try:
