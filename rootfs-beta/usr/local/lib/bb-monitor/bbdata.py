@@ -287,7 +287,9 @@ def pause_state():
         return {"paused": False, "until": None, "reason": None}
     m = re.search(r'pauseuntil_gmt_millis="(\d+)"', t)
     until = int(m.group(1)) // 1000 if m else None
-    r = re.search(r'reason="([^"]*)"', t)
+    # pauseuntil_reason, spelled out: a bare reason=" would match this by
+    # accident today and stop doing so the moment a real reason attribute appears.
+    r = re.search(r'pauseuntil_reason="([^"]*)"', t)
     # A pause with a deadline that has passed is over, whether or not the client
     # has got round to removing the file.
     paused = True if until is None else time.time() < until
