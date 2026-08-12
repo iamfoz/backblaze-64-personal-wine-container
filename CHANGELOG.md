@@ -88,6 +88,17 @@ stable release.
   `read` alone gets none of the file names, which is all a status display needs;
   `read:files` adds them.
 
+  A `report` permission generates a diagnostic bundle and hands back a single-use link that
+  expires in minutes, so the key never appears in a URL where a browser would keep it in
+  history. One bundle is built at a time.
+
+  Keys can carry an expiry, or none, which is the default and the right answer for something
+  long-running. An expired key stops working and stops keeping the API alive.
+
+  A consumer running in a browser needs its origin listed in `API_CORS_ORIGINS`, which is
+  unset by default. There is no wildcard: a key is still required either way, but with one,
+  any page the browser loaded could poll the container in the background.
+
   Permissions are granted per operation rather than per group, so a key that starts backups
   need not also be able to pause them. Ticking a group name takes all of its operations, and
   it expands on the way in, so what is stored is always the explicit list. The API exposes

@@ -356,6 +356,11 @@ Permissions are granted per operation, so a display that shows progress can be g
 `read` alone and nothing else — not the names of your files, and no ability to touch the
 backup. Pausing uses the backup client's own mechanism rather than killing anything.
 
+Keys never expire unless you give them a lifetime, which suits something long-running; put a
+date on one you are handing to someone for a one-off. A consumer running in a browser needs
+its origin naming in `API_CORS_ORIGINS` before it can call the API cross-origin, and there is
+no wildcard.
+
 **Full reference: [docs/api-v1.md](docs/api-v1.md)** — endpoints, permissions, every field
 with its units, and the schema-versioning promise. Build against that rather than against
 the monitor's own web feed, which is an internal shape and can change without notice.

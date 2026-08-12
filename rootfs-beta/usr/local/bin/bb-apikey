@@ -37,13 +37,14 @@ def cmd_create(args):
         sys.exit("bb-apikey: give at least one --scope, or --all\n\n"
                  + available())
     try:
-        rec, secret = bbapi.create(args.label, scopes)
+        rec, secret = bbapi.create(args.label, scopes, args.expires_days)
     except ValueError as exc:
         sys.exit("bb-apikey: %s" % exc)
     print("Key created.\n")
     print("  id      %s" % rec["id"])
     print("  label   %s" % rec["label"])
     print("  scopes  %s" % ", ".join(rec["scopes"]))
+    print("  expires %s" % (when(rec["expires"]) if rec["expires"] else "never"))
     print("\n  %s\n" % secret)
     print("That is the only time the key is shown. Store it now.")
     print("Use it as a bearer token:\n")
@@ -57,13 +58,13 @@ def cmd_list(args):
     if not rows:
         print("No keys. The /api/v1 surface answers 404 until one exists.")
         return 0
-    print("%-10s %-9s %-20s %-17s %-17s %s"
-          % ("ID", "STATE", "SCOPES", "CREATED", "LAST USED", "LABEL"))
+    print("%-10s %-8s %-20s %-17s %-17s %-17s %s"
+          % ("ID", "STATE", "SCOPES", "CREATED", "LAST USED", "EXPIRES", "LABEL"))
     for r in sorted(rows, key=lambda x: x["created"]):
-        print("%-10s %-9s %-20s %-17s %-17s %s"
-              % (r["id"], "revoked" if r["revoked"] else "active",
-                 ",".join(r["scopes"]), when(r["created"]),
-                 when(r["last_used"]), r["label"]))
+        print("%-10s %-8s %-20s %-17s %-17s %-17s %s"
+              % (r["id"], r["state"], ",".join(r["scopes"]), when(r["created"]),
+                 when(r["last_used"]),
+                 when(r["expires"]) if r["expires"] else "never", r["label"]))
     return 0
 
 
@@ -90,6 +91,9 @@ def main():
                         "read alone is enough to display status")
     c.add_argument("--all", action="store_true",
                    help="every operation that is currently available")
+    c.add_argument("--expires-days", type=float, metavar="N",
+                   help="expire the key after N days. Omit for a key that never "
+                        "expires, which is what something long-running wants")
     c.set_defaults(func=cmd_create)
 
     l = sub.add_parser("list", help="list keys, without secrets")

@@ -37,9 +37,10 @@ ORDER = ("read", "read:files", "control:backup-now", "control:pause", "report")
 # that should see file names is granted read:files alongside it.
 GROUPS = {"control": ("control:backup-now", "control:pause")}
 
-# Defined but not issuable yet: the bundle flow needs a job to poll and a
-# single-use download, and neither exists.
-RESERVED = ("report",)
+# Nothing is held back at present. An entry here is refused at creation as well as
+# being greyed in the settings tab, so a permission cannot be granted before the
+# thing it governs exists.
+RESERVED = ()
 
 
 def expand(names):
@@ -90,8 +91,13 @@ def _hash(secret):
     return hashlib.sha256(secret.encode("ascii")).hexdigest()
 
 
-def create(label, scopes):
-    """Mint a key. Returns (record, secret_once) — the secret is never stored."""
+def create(label, scopes, expires_in_days=None):
+    """Mint a key. Returns (record, secret_once) — the secret is never stored.
+
+    `expires_in_days` of None means it never expires, which is the right answer
+    for something wired into a dashboard that should keep working. A key handed
+    to someone for a support thread is the case that wants a date on it.
+    """
     scopes = expand(scopes)
     bad = [s for s in scopes if s not in PERMISSIONS]
     if bad:
@@ -107,9 +113,19 @@ def create(label, scopes):
         if not any(r["id"] == kid for r in records):
             break
     secret = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+    if expires_in_days is not None:
+        try:
+            days = float(expires_in_days)
+        except (TypeError, ValueError):
+            raise ValueError("expiry must be a number of days, or none")
+        if days <= 0:
+            raise ValueError("expiry must be more than zero days")
+        expires = _now() + int(days * 86400)
+    else:
+        expires = None
     rec = {"id": kid, "label": label, "scopes": sorted(scopes),
            "hash": _hash(secret), "created": _now(),
-           "last_used": None, "revoked": None}
+           "last_used": None, "revoked": None, "expires": expires}
     records.append(rec)
     _write(records)
     return rec, "bb64_%s_%s" % (kid, secret)
@@ -126,12 +142,29 @@ def revoke(kid):
 
 
 def listing():
-    """Records without the hash, for display."""
-    return [{k: v for k, v in r.items() if k != "hash"} for r in _read()]
+    """Records without the hash, for display. `state` saves every caller from
+    working out the same three-way answer."""
+    now = _now()
+    out = []
+    for r in _read():
+        row = {k: v for k, v in r.items() if k != "hash"}
+        row.setdefault("expires", None)      # keys minted before expiry existed
+        row["state"] = ("revoked" if r["revoked"]
+                        else "expired" if expired(r, now) else "active")
+        out.append(row)
+    return out
+
+
+def expired(rec, now=None):
+    exp = rec.get("expires")
+    return bool(exp) and (now or _now()) >= exp
 
 
 def active():
-    return [r for r in _read() if not r["revoked"]]
+    """Keys that would authenticate right now. An expired key does not keep the
+    surface alive any more than a revoked one does."""
+    now = _now()
+    return [r for r in _read() if not r["revoked"] and not expired(r, now)]
 
 
 def verify(presented, scope):
@@ -155,7 +188,7 @@ def verify(presented, scope):
         # the cost is nothing and it keeps the comparison free of timing shape.
         if not hmac.compare_digest(r["hash"], want):
             return False, kid
-        if r["revoked"]:
+        if r["revoked"] or expired(r):
             return False, kid
         if scope is not None:
             want = scope if isinstance(scope, (tuple, list)) else (scope,)
@@ -169,7 +202,7 @@ def perms(kid):
     """What a key holds, so a caller can be told what it may do rather than
     having to probe each endpoint and collect 401s."""
     for r in _read():
-        if r["id"] == kid and not r["revoked"]:
+        if r["id"] == kid and not r["revoked"] and not expired(r):
             return list(r["scopes"])
     return []
 

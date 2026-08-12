@@ -28,6 +28,7 @@ sys.path.insert(0, "/usr/local/lib/bb-monitor")
 import bbapi
 import bbctl
 import bbdata
+import bbreport
 from bbdata import (BUILD_INFO, BUILD_LABEL, INT, eta_str, gather, human,
                      rec_cols, uptime_str, _diag_dump, _threadpush_uid,
                      _upload_host, _upload_rtt)
@@ -66,6 +67,18 @@ ABOUT = {
 # Restated now ABOUT exists, so even the pre-first-sample payload carries it.
 _latest = {"ok": False, "error": "warming up", "about": ABOUT}
 _latest_api = {"schema": bbapi.SCHEMA, "ok": False, "error": "warming up"}
+
+# Cross-origin access for a consumer that runs in a browser, which cannot reach
+# the API at all without it. Off unless API_CORS_ORIGINS names origins, and an
+# allow-list rather than "*": the key is still required either way, but with "*"
+# any page the user happens to visit could poll their container in the
+# background, and the answer names every file being backed up.
+#
+# This applies to /api/v1/ only. /manage/ is authorised by the browser session,
+# so allowing another origin to call it would hand key creation to any page the
+# user has open. That is the CSRF hole the X-Requested-With guard exists to close.
+CORS_ORIGINS = tuple(o.strip().rstrip("/") for o in
+                     os.environ.get("API_CORS_ORIGINS", "").split(",") if o.strip())
 
 
 # ---- JSON snapshot builder ------------------------------------------------
@@ -169,6 +182,8 @@ KEYS_HTML = """<!doctype html>
   label{display:block;margin:10px 0 4px;font-size:13px;}
   input[type=text]{width:100%;max-width:340px;padding:6px 8px;border-radius:4px;
     border:1px solid var(--border);background:var(--bg);color:var(--text);font:inherit;}
+  select{padding:6px 8px;border-radius:4px;border:1px solid var(--border);
+    background:var(--bg);color:var(--text);font:inherit;}
   .scopes{margin:8px 0 4px;}
   .scopes label{display:flex;gap:8px;align-items:flex-start;margin:0 0 8px;max-width:52ch;}
   .scopes code{font-size:12px;}
@@ -213,6 +228,15 @@ system, a script. It is served on this same port at
   <label for="label">What is this key for?</label>
   <input type="text" id="label" placeholder="Status display" autocomplete="off">
   <div class="scopes" id="scopes"></div>
+  <label for="expiry">Expires</label>
+  <select id="expiry">
+    <option value="">Never</option>
+    <option value="30">In 30 days</option>
+    <option value="90">In 90 days</option>
+    <option value="365">In a year</option>
+  </select>
+  <p class="dim" style="margin:4px 0 12px">Never is right for something long-running.
+  Put a date on a key you are handing to someone for a one-off.</p>
   <p class="dim" style="margin:4px 0 12px"><code>read</code> alone is enough to display
   status. Grant each operation separately, or tick a group to take all of it.</p>
   <button id="create">Create key</button>
@@ -227,7 +251,8 @@ system, a script. It is served on this same port at
 <h2>Keys</h2>
 <div class="panel">
   <table id="keys"><thead><tr>
-    <th>ID</th><th>Label</th><th>Scopes</th><th>Created</th><th>Last used</th><th></th>
+    <th>ID</th><th>Label</th><th>Permissions</th><th>Created</th><th>Last used</th>
+    <th>Expires</th><th></th>
   </tr></thead><tbody id="rows"></tbody></table>
   <p id="none" class="dim" hidden>No keys yet.</p>
 </div>
@@ -308,14 +333,16 @@ function render(d){
 
   var rows = document.getElementById('rows');
   rows.innerHTML = d.keys.map(function(k){
-    return '<tr class="'+(k.revoked?'revoked':'')+'">' +
+    return '<tr class="'+(k.state === 'active' ? '' : 'revoked')+'">' +
       '<td><code>'+esc(k.id)+'</code></td>' +
       '<td class="label">'+esc(k.label)+'</td>' +
       '<td>'+esc(k.scopes.join(', '))+'</td>' +
       '<td>'+when(k.created)+'</td>' +
       '<td>'+when(k.last_used)+'</td>' +
-      '<td>'+(k.revoked ? '<span class="dim">revoked</span>'
-        : '<button class="ghost" data-revoke="'+esc(k.id)+'">Revoke</button>')+'</td></tr>';
+      '<td>'+(k.expires ? when(k.expires) : '<span class="dim">never</span>')+'</td>' +
+      '<td>'+(k.state === 'active'
+        ? '<button class="ghost" data-revoke="'+esc(k.id)+'">Revoke</button>'
+        : '<span class="dim">'+esc(k.state)+'</span>')+'</td></tr>';
   }).join('');
   document.getElementById('none').hidden = d.keys.length > 0;
 }
@@ -329,12 +356,15 @@ document.getElementById('create').addEventListener('click', function(){
                  .map(function(i){ return i.value; });
   var err = document.getElementById('err');
   err.hidden = true;
-  post('manage/keys', {label: label, scopes: scopes}).then(function(res){
+  var exp = document.getElementById('expiry').value;
+  post('manage/keys', {label: label, scopes: scopes,
+                       expires_days: exp ? Number(exp) : null}).then(function(res){
     if(!res.ok){ err.textContent = res.body.error || 'Could not create the key.';
                  err.hidden = false; return; }
     document.getElementById('secret').textContent = res.body.secret;
     document.getElementById('secretbox').hidden = false;
     document.getElementById('label').value = '';
+    document.getElementById('expiry').value = '';
     return load();
   });
 });
@@ -1137,9 +1167,39 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # keep the container log quiet
 
+    def _cors(self, path):
+        """Echo the origin back when it is on the list. Never a wildcard, and
+        never credentials: the API authenticates with a header, so a browser has
+        no reason to send cookies and every reason not to be allowed to."""
+        if not CORS_ORIGINS or not path.startswith("/api/v1/"):
+            return
+        origin = (self.headers.get("Origin") or "").rstrip("/")
+        # Vary regardless of the outcome, so a cache cannot serve one origin's
+        # allowed response to another origin.
+        self.send_header("Vary", "Origin")
+        if origin and origin in CORS_ORIGINS:
+            self.send_header("Access-Control-Allow-Origin", origin)
+
+    def do_OPTIONS(self):
+        path = urlsplit(self.path).path
+        # A preflight carries no Authorization header, so it is answered without
+        # one. It reveals only that cross-origin access is configured.
+        if not CORS_ORIGINS or not path.startswith("/api/v1/"):
+            self.send_response(405)
+            self.end_headers()
+            return
+        self.send_response(204)
+        self._cors(path)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _json(self, code, obj):
         payload = json.dumps(obj).encode("utf-8")
         self.send_response(code)
+        self._cors(urlsplit(self.path).path)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
@@ -1163,6 +1223,12 @@ class Handler(BaseHTTPRequestHandler):
             # Only a key that holds some control, and it lists only that key's
             # own operations. A read-only key is not told what control exists.
             return tuple(bbapi.GROUPS["control"]), self._api_control_list
+        if method == "POST" and path == "/api/v1/report":
+            return "report", self._api_report_start
+        if method == "GET" and path.startswith("/api/v1/report/") \
+                and not path.startswith("/api/v1/report/download/"):
+            return "report", lambda: self._api_report_status(
+                path[len("/api/v1/report/"):])
         if method == "POST" and path.startswith("/api/v1/control/"):
             name = path[len("/api/v1/control/"):]
             # The segment selects a key in a fixed table. It is never used to
@@ -1178,6 +1244,53 @@ class Handler(BaseHTTPRequestHandler):
         if "read:files" not in bbapi.perms(self._kid):
             payload = strip_file_names(payload)
         self._json(200, payload)
+
+    def _api_report_start(self):
+        if not bbreport.available():
+            self._json(503, {"schema": bbapi.SCHEMA, "error": "bb-report is not present"})
+            return
+        jid, joined = bbreport.start()
+        sys.stderr.write("bb-monitor-web: key %s %s report job %s\n"
+                         % (self._kid, "joined" if joined else "started", jid))
+        st = bbreport.status(jid) or {"job": jid, "state": "running"}
+        st["schema"] = bbapi.SCHEMA
+        st["joined_existing"] = joined
+        self._json(202, st)
+
+    def _api_report_status(self, jid):
+        st = bbreport.status(jid)
+        if st is None:
+            self._json(404, {"schema": bbapi.SCHEMA, "error": "no such job"})
+            return
+        st["schema"] = bbapi.SCHEMA
+        self._json(200, st)
+
+    def _serve_report(self, token):
+        """The token is the credential here, so no bearer is required: this is the
+        URL a browser follows, and a key in a URL ends up in history and logs."""
+        path = bbreport.claim(token)
+        if not path:
+            self._json(404, {"schema": bbapi.SCHEMA,
+                             "error": "link unknown, expired or already used"})
+            return
+        try:
+            size = os.path.getsize(path)
+            with open(path, "rb") as fh:
+                self.send_response(200)
+                self._cors(urlsplit(self.path).path)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Length", str(size))
+                self.send_header("Content-Disposition",
+                                 'attachment; filename="%s"' % os.path.basename(path))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                while True:
+                    chunk = fh.read(65536)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except OSError as exc:
+            sys.stderr.write("bb-monitor-web: report download failed: %s\n" % exc)
 
     def _api_key_self(self):
         held = bbapi.perms(self._kid)
@@ -1209,6 +1322,11 @@ class Handler(BaseHTTPRequestHandler):
         """Returns True when the request was handled here."""
         if not path.startswith("/api/v1/") and path != "/api/v1":
             return False
+        # Ahead of the key check: the single-use token in the path is what
+        # authorises this one, which is the whole point of issuing it.
+        if method == "GET" and path.startswith("/api/v1/report/download/"):
+            self._serve_report(path[len("/api/v1/report/download/"):])
+            return True
         # No key means the surface does not exist, so say so rather than 403.
         # A 403 would confirm the endpoint is here; with no key there is nothing
         # to confirm, and every fresh container would be advertising it.
@@ -1291,8 +1409,10 @@ class Handler(BaseHTTPRequestHandler):
             if not label:
                 self._json(400, {"error": "a label is required"})
                 return
+            exp = body.get("expires_days")
             try:
-                rec, secret = bbapi.create(label, scopes)
+                rec, secret = bbapi.create(label, scopes,
+                                           exp if exp not in (None, "", 0) else None)
             except ValueError as exc:
                 self._json(400, {"error": str(exc)})
                 return

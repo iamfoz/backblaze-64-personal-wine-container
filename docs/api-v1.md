@@ -57,7 +57,7 @@ Granted per operation, not in tiers, because these are not a ladder — none imp
 | `read:files` | Adds the names of files being backed up. |
 | `control:backup-now` | Start a backup if one is not already running. |
 | `control:pause` | Ask a running backup to pause. |
-| `report` | Reserved. Refused until the diagnostic bundle flow exists. |
+| `report` | Generate and download a diagnostic bundle. |
 
 `control` is accepted as shorthand for both control operations and expands when the key is
 created, so what is stored is always the explicit list.
@@ -111,6 +111,46 @@ Both return:
 Pausing is cooperative: the backup client is asked to stop, and its own process is left
 alone. Nothing here kills a process. Starting a backup is how a pause is lifted; there is no
 separate resume.
+
+### `POST /api/v1/report`
+
+Requires `report`. Starts a diagnostic bundle and returns `202` at once, because
+generating one is not instant and a request that blocks is a request that times out
+somewhere in between.
+
+```json
+{ "schema": 1, "job": "a0bee5df9a11", "state": "running", "joined_existing": false }
+```
+
+One bundle is built at a time. A second request while one is in flight returns the same
+job with `joined_existing: true` rather than running it twice over the same config.
+
+### `GET /api/v1/report/<job>`
+
+Requires `report`. Poll until `state` is `done` or `failed`.
+
+```json
+{
+  "schema": 1, "job": "a0bee5df9a11", "state": "done", "size_bytes": 148213,
+  "download": "report/download/xh-qAnV10It3gPqS4YCfcwGGNjClD4",
+  "download_expires_in": 298
+}
+```
+
+`download` is relative to `/api/v1/`. A finished job is forgotten an hour after it started.
+
+### `GET /api/v1/report/download/<token>`
+
+**No bearer token, and none should be sent.** The link is the credential, which is the
+reason it exists: this is the URL a browser follows, and a key in a URL ends up in browser
+history, in server logs and in a `Referer` header.
+
+The link is single use and lives about five minutes. Fetching it returns the zip and burns
+the token; a second fetch, or one made after it expires, returns `404`. Generate another
+bundle if you need it again.
+
+The bundle contains no file names, no account details and no keys, but it does describe the
+host. Look through it before sending it anywhere.
 
 ## Schema versioning
 
@@ -271,6 +311,32 @@ costs a round trip.
 
 Chunks that finished before the container started are in neither array: they cannot be told
 apart from chunks not yet started.
+
+## Cross-origin requests
+
+A consumer running in a browser cannot reach the API from another origin unless you say so.
+Set `API_CORS_ORIGINS` on the container to a comma-separated list:
+
+```
+API_CORS_ORIGINS=https://dash.example.com,https://other.example
+```
+
+Unset, which is the default, no cross-origin request succeeds. There is deliberately no
+wildcard: a key is still required either way, but with `*` any page the browser happens to
+load could poll the container in the background, and the answer describes what is being
+backed up.
+
+Only `/api/v1/` is covered. The key management pages are authorised by the browser session,
+so allowing another origin to call them would hand key creation to any page you have open.
+
+## Key expiry
+
+A key never expires unless you give it a lifetime. That is the right default for something
+long-running, which should not stop working at a date nobody remembers setting.
+
+Put a date on a key you are handing to someone for a one-off. An expired key stops
+authenticating, stops appearing as active, and does not keep the API alive on its own: if it
+is the only key, the surface returns to answering `404`.
 
 ## What is recorded
 
