@@ -167,6 +167,14 @@ stable release.
   `bzstat_lastbackupcompleted.xml` marks a pass finishing rather than the whole set: on the
   machine this was developed against it read four days old while 87% of 85 TB was still
   unsent, and warning about that would be warning about a first upload behaving normally.
+- `bb-doctor` works out why files were skipped. It groups them by the client's own reason,
+  then reads a sample to tell apart the ones that no longer exist, the ones that are readable
+  again and will clear on the next scan, and the ones this container still cannot read. For
+  those it names the directory, its ownership and mode, and the command to run on the host.
+
+  It repairs nothing, even with `--fix`. These are the user's own files on a mounted share,
+  often thousands of them, and other software on the host may depend on who owns them.
+  Changing that from inside a container is the case this tool's own rule was written for.
 - Files Backblaze has given up on are now reported. `bzlist_skipped_files.txt` records
   them with a reason, and they are neither queued nor retried, so nothing else says they
   are unprotected. Under this container the usual cause is a file the container user cannot

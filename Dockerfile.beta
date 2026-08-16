@@ -181,6 +181,36 @@ COPY rootfs/ /
 # one; when this work reaches a stable release the two merge back and this
 # directory goes away.
 COPY rootfs-beta/ /
+# Add the skipped-file check to bb-doctor, beta only.
+#
+# bb-doctor itself ships in rootfs/ and is stable's file. Rather than keep a
+# second copy here, which would drift the way the two monitors did before they
+# shared a data layer, the check lives in one beta-only file and this patches in
+# the single line that sources it. The anchor check fails the build if bb-doctor
+# is restructured, rather than quietly producing an image where the check never
+# runs.
+RUN python3 - <<'PATCH'
+import sys
+doc = "/usr/local/bin/bb-doctor"
+anchor = 'echo "-----------------------------------------------------------------"'
+add = '''# Skipped files. Beta only: see rootfs-beta/usr/local/lib/bb-doctor-skipped.sh,
+# to be folded into this script at the next stable release.
+[ -r /usr/local/lib/bb-doctor-skipped.sh ] && . /usr/local/lib/bb-doctor-skipped.sh
+
+'''
+src = open(doc, encoding="utf-8").read()
+if "bb-doctor-skipped.sh" in src:
+    print("bb-doctor: skipped-file check already present")
+    sys.exit(0)
+if anchor not in src:
+    sys.exit("bb-doctor: anchor not found, refusing to guess where the summary starts")
+# Before the summary, so its warnings are counted in the totals.
+src = src.replace(anchor, add + anchor, 1)
+open(doc, "w", encoding="utf-8").write(src)
+print("bb-doctor: skipped-file check added")
+PATCH
+RUN sh -n /usr/local/bin/bb-doctor && grep -q "bb-doctor-skipped.sh" /usr/local/bin/bb-doctor
+
 RUN chmod +x /startapp.sh /usr/local/bin/bb-monitor /usr/local/bin/bb-monitor-web \
         /usr/local/bin/bb-health /usr/local/bin/bb-watchdog /usr/local/bin/bb-version \
         /usr/local/bin/bb-doctor /usr/local/bin/bb-report /usr/local/bin/bb-apikey \
