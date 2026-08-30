@@ -44,7 +44,15 @@ echo "Files the client has given up on"
 if [ ! -r "$SKIPLIST" ]; then
     OK "no skipped-file list yet (nothing has been given up on)"
 else
-    total="$(grep -c . "$SKIPLIST" 2>/dev/null || echo 0)"
+    # A record has a tab-separated reason; the file also carries comment lines
+    # ("# SkippedFilesReportStarted: ...") and other non-record lines, which a
+    # bare non-empty count read as skipped files. Seen live: a clean list with
+    # only its header reported "2 file(s) skipped". The same rule bbdata's
+    # counter always applied — real fields, non-empty reason — applies here.
+    # awk alone does the counting: grep -c prints 0 AND exits nonzero on no
+    # matches, so a trailing "|| echo 0" produced the two-line string "0\n0",
+    # which is not equal to "0" and sailed past the no-files branch.
+    total="$(grep -v '^#' "$SKIPLIST" 2>/dev/null | awk -F'\t' 'NF>=3 && $2!="" {n++} END{print n+0}')"
     if [ "$total" = 0 ]; then
         OK "no files skipped"
     else
@@ -52,7 +60,8 @@ else
         NOTE "these are not queued and not retried, and the desktop Issues tab does not list them"
         echo
         NOTE "by reason:"
-        cut -f2 "$SKIPLIST" 2>/dev/null | sort | uniq -c | sort -rn | while read -r n reason; do
+        grep -v '^#' "$SKIPLIST" 2>/dev/null | awk -F'\t' 'NF>=3 && $2!=""' \
+            | cut -f2 | sort | uniq -c | sort -rn | while read -r n reason; do
             NOTE "  ${n}  ${reason}"
         done
 

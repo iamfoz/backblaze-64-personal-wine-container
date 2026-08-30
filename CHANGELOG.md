@@ -201,6 +201,11 @@ stable release.
   colour, the tooltip says what it is, and the API carries the per-reason breakdown. The
   number that means data is not backed up is the skipped-file count, which is reported
   separately and loudly.
+- The skipped-file check counted the list's own header as a skipped file: a clean list
+  holding only "# SkippedFilesReportStarted" reported two files skipped. Only lines with a
+  tab-separated reason count now, the same rule the monitor's counter always applied. Found
+  on the first run against a real machine, which also confirmed a directory ownership fix
+  clears the list on the next scan.
 - `bb-doctor` works out why files were skipped. It groups them by the client's own reason,
   then reads a sample to tell apart the ones that no longer exist, the ones that are readable
   again and will clear on the next scan, and the ones this container still cannot read. For
