@@ -473,7 +473,11 @@ def api_v1_payload(d):
         "compress_saved_bytes": d.get("compress_saved"),
         # Backblaze's own measurement, not ours.
         "client_measured_kbit": d.get("perf"),
-        "uploads_today": {"success": us[0], "failures": us[1]} if us else None,
+        # "failures" kept for the schema promise; they are retried attempts,
+        # not files. The reasons breakdown says so in the data itself.
+        "uploads_today": ({"success": us[0], "failures": us[1],
+                           "retried_attempts": us[1], "reasons": us[2]}
+                          if us else None),
         "files": {
             "in_flight": files,
             "recent": recent,
@@ -1015,9 +1019,11 @@ async function tick(){
                 'set once. Until it catches up, gaps between completed passes are expected.">' +
                 'First backup: day '+d.first_backup.days+' \u2022 '+d.first_backup.pct+'%</span>' : '') +
       (d.upload_success ? '<span class="stat" title="Uploads the client recorded for ' +
-                'the most recent day, with failures broken out.">Uploads: ' +
+                'the most recent day. Retries are attempts a busy storage vault turned ' +
+                'away; the client tried another and the file still went up. Not lost ' +
+                'files: for those, watch skipped files.">Uploads: ' +
                 d.upload_success[0].toLocaleString() +
-                (d.upload_success[1] ? ' <span class="bad">'+d.upload_success[1]+' failed</span>' : '') +
+                (d.upload_success[1] ? ' <span class="dim">('+d.upload_success[1]+' retried)</span>' : '') +
                 '</span>' : '') +
       (d.compress_saved ? '<span class="stat dim">Compression saved: '+esc(d.compress_saved)+'</span>' : '') +
       (d.perf ? '<span class="stat dim" title="Measured by the Backblaze client itself. ' +

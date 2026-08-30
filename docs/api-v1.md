@@ -283,7 +283,17 @@ costs a round trip.
 
 ### `uploads_today`
 
-`success` and `failures` counts for the current day, or `null` if not yet reported.
+Counts for the client's most recent recorded day, or `null` if not yet reported.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `success` | int | Uploads completed. |
+| `failures` | int | Failed **attempts**, not failed files. Kept under this name for the schema promise; `retried_attempts` is the same number under an honest one. |
+| `retried_attempts` | int | Attempts a storage vault turned away. The client retries against another vault and the file still goes up, so these name no file and appear in no per-file log. |
+| `reasons` | object | The breakdown: `vault_busy`, `vault_full`, `unknown`. |
+
+Do not alert on `failures`. A handful per day is Backblaze's own load balancing working as
+designed. The field that means data is not backed up is `skipped_files`.
 
 ### `files`
 

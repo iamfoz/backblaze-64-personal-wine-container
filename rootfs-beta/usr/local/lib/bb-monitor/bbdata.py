@@ -471,7 +471,16 @@ def last_backup_days():
 
 
 def upload_success_today():
-    """(successes, failures) from the most recent day the client recorded."""
+    """(successes, retried_attempts, reasons) from the client's most recent day.
+
+    The second figure is failed ATTEMPTS, not failed files. CvtTooBusy and
+    CvtNoRoom mean the storage vault turned an attempt away and the client
+    retried against another, which is routine load balancing on Backblaze's
+    side; the file still goes up. Nothing here names a file, because no file
+    failed, and displaying this as "failed" sent people hunting through logs
+    for five files that never existed. The number that means data at risk is
+    skipped_files, not this.
+    """
     rows = re.findall(r'<one_upload_success_stat ([^/]*)/>', read(RPTS + "/bzstat_upload_success.xml"))
     if not rows:
         return None
@@ -479,9 +488,10 @@ def upload_success_today():
     def g(k):
         m = re.search(k + r'="(\d+)"', last)
         return int(m.group(1)) if m else 0
-    fails = (g("num_upload_fail_CvtTooBusy") + g("num_upload_fail_CvtNoRoom")
-             + g("num_upload_fail_UnknownReason"))
-    return (g("num_upload_success"), fails)
+    reasons = {"vault_busy": g("num_upload_fail_CvtTooBusy"),
+               "vault_full": g("num_upload_fail_CvtNoRoom"),
+               "unknown": g("num_upload_fail_UnknownReason")}
+    return (g("num_upload_success"), sum(reasons.values()), reasons)
 
 
 def compress_saved():

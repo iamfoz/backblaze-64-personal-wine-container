@@ -256,7 +256,9 @@ def draw(scr,d,st):
     us=d.get("upload_success")
     if us:
         parts=[("Uploads: ",NORM),("{:,}".format(us[0]),NORM)]
-        if us[1]: parts.append((" (%d failed)"%us[1],BAD))
+        # Retried attempts against a busy vault, not failed files: routine, so
+        # not painted as an alarm. See upload_success_today() in bbdata.
+        if us[1]: parts.append((" (%d retried)"%us[1],NORM))
         chunks.append(txt(parts))
     cs=d.get("compress_saved")
     if cs: chunks.append(txt([("Compression saved: ",NORM),(human(cs),NORM)]))

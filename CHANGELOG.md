@@ -167,6 +167,13 @@ stable release.
   `bzstat_lastbackupcompleted.xml` marks a pass finishing rather than the whole set: on the
   machine this was developed against it read four days old while 87% of 85 TB was still
   unsent, and warning about that would be warning about a first upload behaving normally.
+- The upload counter no longer calls retried attempts "failed". The figure it shows is
+  attempts a storage vault turned away (too busy, or full), which the client retries against
+  another vault; the file still goes up. Painting that red as "5 failed" sent people hunting
+  through logs for five files that never existed. It now reads "retried", without the alarm
+  colour, the tooltip says what it is, and the API carries the per-reason breakdown. The
+  number that means data is not backed up is the skipped-file count, which is reported
+  separately and loudly.
 - `bb-doctor` works out why files were skipped. It groups them by the client's own reason,
   then reads a sample to tell apart the ones that no longer exist, the ones that are readable
   again and will clear on the next scan, and the ones this container still cannot read. For
