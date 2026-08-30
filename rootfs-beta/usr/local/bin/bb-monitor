@@ -644,4 +644,11 @@ if __name__=="__main__":
         print(HELP, end=""); sys.exit(0)
     if os.environ.get("TERM") in (None,"","dumb","unknown"):
         os.environ["TERM"]="xterm-256color"   # sane default for `docker exec` consoles
-    curses.wrapper(main)
+    # curses needs a real terminal, and the way to not have one is docker exec
+# without -it, which otherwise dies in a two-deep curses traceback ("cbreak()
+# returned ERR") that names neither the cause nor the fix.
+if not (sys.stdin.isatty() and sys.stdout.isatty()):
+    sys.exit("bb-monitor needs a terminal.\n"
+             "Run it with:  docker exec -it <container> bb-monitor\n"
+             "(or use the container's Console on the Unraid Docker page)")
+curses.wrapper(main)
