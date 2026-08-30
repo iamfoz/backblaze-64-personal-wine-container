@@ -24,8 +24,8 @@ from collections import deque
 # round-trip time while this one kept the original narrower view. A feature
 # added to bbdata now shows up in both. This file owns curses and nothing else.
 sys.path.insert(0, "/usr/local/lib/bb-monitor")
-from bbdata import (BUILD_INFO, BUILD_LABEL, INT, eta_str, gather, human,
-                     rec_cols, uptime_str, _upload_host, _upload_rtt)
+from bbdata import (BUILD_INFO, BUILD_LABEL, INT, eta_date, eta_str, gather,
+                     human, rec_cols, uptime_str, _upload_host, _upload_rtt)
 
 
 # ---- themes -------------------------------------------------------------------
@@ -203,9 +203,12 @@ def draw(scr,d,st):
             cx=x
             for s,a in parts: aw(scr,y,cx,s,a); cx+=len(s)
         return {"w":wd,"draw":dr}
-    def gauge(label,us,ts_,pct,high_is_good=False,note=""):
+    def gauge(label,us,ts_,pct,high_is_good=False,note="",note2=""):
         # Mem and Swap are bad when full; Backup is good when full. Same widget,
         # opposite reading, so the direction has to be told rather than assumed.
+        # note2 is drawn in NORM after the severity-coloured suffix, for text
+        # that is not itself a reading of the gauge (e.g. an ETA calendar date)
+        # and so should not borrow the good/warn/bad colouring of the percentage.
         pre="%s %s/%s "%(label,us,ts_); suf=" %d%%"%int(pct)+(" %s"%note if note else "")
         if high_is_good: sev=0 if pct>=67 else (1 if pct>=34 else 2)
         else:            sev=2 if pct>=90 else (1 if pct>=70 else 0)
@@ -213,7 +216,8 @@ def draw(scr,d,st):
             aw(scr,y,x,pre,NORM)
             draw_bar(scr,y,x+len(pre),12,pct,curses.color_pair((7,8,9)[sev]))
             aw(scr,y,x+len(pre)+12,suf,(GOOD,WARN,BAD)[sev])
-        return {"w":len(pre)+12+len(suf),"draw":dr}
+            if note2: aw(scr,y,x+len(pre)+12+len(suf),note2,NORM)
+        return {"w":len(pre)+12+len(suf)+len(note2),"draw":dr}
     chunks=[
         txt([("Threads: ",NORM),("%d"%d["threads"],NORM)]),
         txt([("Up: ",NORM),("%.2f MB/s"%r,rcol),(" (~%d Mbit/s) "%(r*8),NORM),
@@ -236,8 +240,10 @@ def draw(scr,d,st):
         fr=b.get("remaining_files")
         if fr is not None:
             chunks.append(txt([("Files Remaining: ",NORM),("{:,}".format(fr),NORM)]))
+        eta_secs=b.get("eta_seconds"); ed=eta_date(eta_secs)
         chunks.append(gauge("Backup:",human(b["done"]),human(b["total"]),b["pct"],
-                             high_is_good=True,note="ETA "+eta_str(b.get("eta_seconds"))))
+                             high_is_good=True,note="ETA "+eta_str(eta_secs),
+                             note2=(" (%s)"%ed if ed else "")))
     chunks.append(txt([("Uptime: ",NORM),(uptime_str(),NORM)]))
     # The web dashboard has this in its footer, which has the width for it. Here
     # the footer already carries the key hints and the build label, and a 29
@@ -260,6 +266,17 @@ def draw(scr,d,st):
         # not painted as an alarm. See upload_success_today() in bbdata.
         if us[1]: parts.append((" (%d retried)"%us[1],NORM))
         chunks.append(txt(parts))
+    hist=d.get("upload_history")
+    if hist and len(hist)>=2:
+        # Reuses spark() rather than a new bar-builder: it already scales values
+        # to the same " ▁▂▃▄▅▆▇█" glyph set and left-pads to a constant width,
+        # which is exactly what a status chunk needs. The count alongside it is
+        # padded to a fixed field for the same reason spark() pads its bar: a
+        # day's tally gaining a digit must not reflow every chunk to its right,
+        # the way an earlier, variable-width sparkline once did (see spark()).
+        wk=spark([h["success"] for h in hist],7)
+        chunks.append(txt([("Week: ",NORM),(wk,GOOD),
+                           ("  %s/day"%("{:>9,}".format(hist[-1]["success"])),NORM)]))
     cs=d.get("compress_saved")
     if cs: chunks.append(txt([("Compression saved: ",NORM),(human(cs),NORM)]))
     pf=d.get("perf")
@@ -319,7 +336,17 @@ def draw(scr,d,st):
                 aw(scr,yy,2+i,ch,cp)
             aw(scr,yy,2+cw,wclip(" %d/%d chunks  %s"%(len(sent),cm["total"],cm["file"]),
                                  iw-cw),NORM); yy+=1
-        act=d.get("activity"); shown=False
+        shown=False
+        comp=d.get("completion")
+        if comp and yy<rec_top-1:
+            # The moment a first backup catches up is worth a line of its own for
+            # the week bbdata keeps celebrating it: it answers "is it actually
+            # done yet", the question people watching a first backup keep coming
+            # back to, in a way "day 6 • 99.8%" up in Status does not quite land.
+            aw(scr,yy,2,wclip("First backup complete: %s in %d days"
+                              %(human(comp["total_bytes"]),comp["days"]),iw),GOOD)
+            yy+=1; shown=True
+        act=d.get("activity")
         if act and yy<rec_top-1 and not any(f[0]==act.get("file") for f in files):
             lbl=act["phase"]+(" part %d"%act["part"] if act.get("part") else "")
             aw(scr,yy,2,wclip("%s  %s"%(lbl,act.get("file") or ""),iw),NORM)

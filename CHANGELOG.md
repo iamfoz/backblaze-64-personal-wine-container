@@ -167,6 +167,17 @@ stable release.
   `bzstat_lastbackupcompleted.xml` marks a pass finishing rather than the whole set: on the
   machine this was developed against it read four days old while 87% of 85 TB was still
   unsent, and warning about that would be warning about a first upload behaving normally.
+- The backup ETA is also given as a date. "171 days" is a number; "17 Feb 2027" is a thing
+  a person can picture. Day resolution on purpose, since an estimate from a moving average
+  should not pretend to know the hour. In both monitors and the feed.
+- A seven-day upload chart, in both monitors and the feed. The client has kept one row per
+  day all along and only the newest was being read; the chart answers the question anyone
+  running a long backup actually has, which is whether it did anything while they were not
+  looking.
+- The day a first backup catches up, both monitors say so, plainly, for a week: how much and
+  how many days it took. The moment is latched on disk so it fires once; files added later
+  cannot replay it. Months of watching a progress bar deserves better than the banner
+  quietly disappearing.
 - The upload counter no longer calls retried attempts "failed". The figure it shows is
   attempts a storage vault turned away (too busy, or full), which the client retries against
   another vault; the file still goes up. Painting that red as "5 failed" sent people hunting

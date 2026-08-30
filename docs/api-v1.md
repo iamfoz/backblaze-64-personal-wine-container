@@ -225,6 +225,7 @@ Overall progress. `null` before the client has reported totals.
 | `pct` | number | Percentage complete. |
 | `done_files` / `total_files` / `remaining_files` | int, null | File counts. |
 | `eta_seconds` | int, null | Estimate, weighted by completed transfers. |
+| `eta_date` | string, null | The same estimate as a calendar date, e.g. `17 Feb 2027`. Day resolution on purpose: an estimate from a moving average should not pretend to know the hour. |
 | `eta_samples` | int | How many completions the estimate rests on. A low number means a rough estimate. |
 
 ### `scan`
@@ -294,6 +295,28 @@ Counts for the client's most recent recorded day, or `null` if not yet reported.
 
 Do not alert on `failures`. A handful per day is Backblaze's own load balancing working as
 designed. The field that means data is not backed up is `skipped_files`.
+
+### `upload_history`
+
+The client's own per-day upload record, oldest first, up to seven days, or `null` before
+anything has been recorded. Each entry:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `day` | string, null | `YYYYMMDD`. Can be `null` if the client's record carried no recognisable date; order still holds. |
+| `success` | int | Uploads completed that day. |
+| `retried` | int | Attempts turned away and retried. See `uploads_today`. |
+
+### `completion`
+
+Present for the seven days after a first backup finishes, then `null` forever. It fires
+once: the moment is latched on disk, so files added later cannot replay it.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `done_at` | int | When the backup first caught up, epoch seconds. |
+| `days` | int | How long the first pass took. |
+| `total_bytes` | int | The size of the set it worked through. |
 
 ### `files`
 

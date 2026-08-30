@@ -494,6 +494,84 @@ def upload_success_today():
     return (g("num_upload_success"), sum(reasons.values()), reasons)
 
 
+def upload_history(days=7):
+    """The last `days` recorded days, oldest first: [{day, success, retried}].
+
+    The client keeps one row per day and only the newest was read before. The
+    date attribute's name was never established from a real file (only the
+    num_* counters were), so the date is found by shape: whichever attribute
+    holds an eight-digit YYYYMMDD value. Rows with no such value still count,
+    labelled by position, so the chart degrades to "last N days" rather than
+    vanishing on a naming surprise.
+    """
+    rows = re.findall(r'<one_upload_success_stat ([^/]*)/>',
+                      read(RPTS + "/bzstat_upload_success.xml"))
+    if not rows:
+        return None
+    out = []
+    for row in rows[-days:]:
+        def g(k):
+            m = re.search(k + r'="(\d+)"', row)
+            return int(m.group(1)) if m else 0
+        md = re.search(r'[a-z_]+="((?:19|20)\d{6})"', row)
+        out.append({"day": md.group(1) if md else None,
+                    "success": g("num_upload_success"),
+                    "retried": (g("num_upload_fail_CvtTooBusy")
+                                + g("num_upload_fail_CvtNoRoom")
+                                + g("num_upload_fail_UnknownReason"))})
+    return out
+
+
+# ---- the completion moment ----------------------------------------------
+DONE_MARK = "/config/.bb-first-backup-done"
+CELEBRATE_DAYS = 7
+
+
+def completion():
+    """The first time the backup catches up, remember it and say so for a week.
+
+    A latch rather than a live reading: once written it is never celebrated
+    again, so new files pushing the remainder back over the threshold cannot
+    replay it. Returns {days, total_bytes, done_at} while the moment is fresh,
+    None otherwise.
+    """
+    b = backup_totals()
+    fb = first_backup()
+    mark = read(DONE_MARK)
+    if mark:
+        m = re.search(r'done_at=(\d+) days=(\d+) bytes=(\d+)', mark)
+        if not m:
+            return None
+        done_at = int(m.group(1))
+        if time.time() - done_at > CELEBRATE_DAYS * 86400:
+            return None
+        return {"done_at": done_at, "days": int(m.group(2)),
+                "total_bytes": int(m.group(3))}
+    # Not yet marked. The moment is: totals exist, caught up, and a first pass
+    # was previously in progress (fb goes None once caught up, so the days
+    # figure has to be taken while it is still there or not at all).
+    if not b or not _caught_up():
+        return None
+    days = int(fb["days"]) if fb else 0
+    try:
+        with open(DONE_MARK, "w", encoding="utf-8") as fh:
+            fh.write("done_at=%d days=%d bytes=%d\n"
+                     % (int(time.time()), days, b.get("total") or 0))
+    except OSError:
+        return None
+    return {"done_at": int(time.time()), "days": days,
+            "total_bytes": b.get("total") or 0}
+
+
+def eta_date(eta_seconds):
+    """An ETA as a date, because "done around 30 January" is a thing a person
+    can picture and "171 days" is not. Day resolution on purpose: an estimate
+    from a moving average should not pretend to know the hour."""
+    if not eta_seconds or eta_seconds <= 0:
+        return None
+    return time.strftime("%d %b %Y", time.localtime(time.time() + eta_seconds))
+
+
 def compress_saved():
     """Bytes the client says compression has saved, or None."""
     m = re.search(r'num_bytes_saved="(\d+)"', read(RPTS + "/bzstat_compress_save.xml"))
@@ -1006,6 +1084,8 @@ def gather(prev):
     o["perf"] = measured_perf()
     o["health"] = health()
     o["upload_success"] = upload_success_today()
+    o["upload_history"] = upload_history()
+    o["completion"] = completion()
     o["compress_saved"] = compress_saved()
     o["last_backup_days"] = last_backup_days()
     o["first_backup"] = first_backup()

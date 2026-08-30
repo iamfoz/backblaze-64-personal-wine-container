@@ -115,6 +115,10 @@ def snapshot_to_json(d):
                      "files": ("%d/%d files" % (d["backup"]["done_files"], d["backup"]["total_files"]))
                                if d["backup"]["done_files"] is not None else "",
                      "eta": eta_str(d["backup"].get("eta_seconds")),
+                     # The same estimate as a calendar date. A duration answers
+                     # "how long", a date answers "when", and only the second one
+                     # can be compared against anything the user has planned.
+                     "eta_date": bbdata.eta_date(d["backup"].get("eta_seconds")),
                      "eta_samples": d["backup"].get("eta_samples", 0),
                      "remaining_files": d["backup"].get("remaining_files")}
                     if d.get("backup") else None),
@@ -133,6 +137,15 @@ def snapshot_to_json(d):
         "perf": d.get("perf"),
         "health": [{"kind": k, "text": t} for k, t in (d.get("health") or [])],
         "upload_success": d.get("upload_success"),
+        # Raw counts rather than a pre-drawn chart: the page scales the bars to
+        # its own tallest day, and the day strings are already display-ready.
+        "upload_history": d.get("upload_history"),
+        # The size is formatted here because the banner states it as prose, and
+        # the days figure is a whole number of days by construction.
+        "completion": ({"done_at": d["completion"]["done_at"],
+                         "days": d["completion"]["days"],
+                         "total_str": human(d["completion"]["total_bytes"])}
+                        if d.get("completion") else None),
         "compress_saved": human(d["compress_saved"]) if d.get("compress_saved") else None,
         "skipped": d.get("skipped"),
         "first_backup": ({"days": round(d["first_backup"]["days"]),
@@ -459,6 +472,10 @@ def api_v1_payload(d):
                    "done_files": b.get("done_files"), "total_files": b.get("total_files"),
                    "remaining_files": b.get("remaining_files"),
                    "eta_seconds": b.get("eta_seconds"),
+                   # Seconds stay the contract; the date is added alongside so a
+                   # consumer that only wants to print "when" need not reimplement
+                   # the day-resolution rounding the monitor already applies.
+                   "eta_date": bbdata.eta_date(b.get("eta_seconds")),
                    "eta_samples": b.get("eta_samples", 0)} if b else None,
         "scan": {"dirs_done": sc.get("dirs_done"), "dirs_total": sc.get("dirs_total"),
                  "pct": round(sc["pct"], 2) if sc.get("pct") is not None else None,
@@ -478,6 +495,13 @@ def api_v1_payload(d):
         "uploads_today": ({"success": us[0], "failures": us[1],
                            "retried_attempts": us[1], "reasons": us[2]}
                           if us else None),
+        # uploads_today is one row of this; both stay, because a consumer already
+        # reading uploads_today must not have to change to keep working. "day" is
+        # null on any row whose date the client did not record.
+        "upload_history": d.get("upload_history"),
+        # Present only while the first completion is recent, null the rest of the
+        # time, so a consumer can treat its arrival as the event itself.
+        "completion": d.get("completion"),
         "files": {
             "in_flight": files,
             "recent": recent,
@@ -704,6 +728,11 @@ INDEX_HTML = """<!doctype html>
   #err{color:var(--bad);padding:10px;}
   #health{color:var(--hi-bg);background:var(--bad);padding:7px 10px;margin-bottom:10px;
        border-radius:2px;font-weight:bold;}
+  /* The one thing this dashboard ever has to celebrate, so it takes the good
+     colour instead of the neutral panel border. It states a fact and expires by
+     itself after a week, which is why it carries no dismiss control. */
+  #completion{border-color:var(--good);color:var(--good);font-weight:bold;
+       text-align:center;padding:8px 14px;}
   /* ---- settings modal ---------------------------------------------------- */
   #settings-btn{font-family:inherit;font-size:15px;line-height:1;background:transparent;
        color:var(--hi-fg);border:1px solid var(--hi-fg);border-radius:2px;padding:2px 7px;
@@ -841,6 +870,7 @@ INDEX_HTML = """<!doctype html>
 <main>
   <div id="err" style="display:none"></div>
   <div id="health" style="display:none"></div>
+  <div class="panel" id="completion" style="display:none"></div>
   <div class="panel" id="panel-status">
     <span class="ptitle">Status</span>
     <div id="status-grid"></div>
@@ -920,6 +950,35 @@ function gaugeHtml(label, g, highIsGood, extra, suffix){
   return '<span class="stat gauge '+cls+'"'+tip+'>'+label+': '+esc(g.used_str)+'/'+esc(g.total_str)+
          ' <span class="track"><span class="fill" style="width:'+Math.min(100,g.pct)+'%"></span></span> '+g.pct+'%'+suf+'</span>';
 }
+// The week of daily upload counts as a bar strip beside today's figure, scaled
+// to the busiest day so the shape of the week reads the same whether the client
+// is moving thousands of files a day or dozens. A single day is not a trend, so
+// anything shorter than two rows draws nothing rather than one bar that implies
+// one. Inline styles rather than a class because the bar heights are data.
+function uploadStripHtml(hist){
+  if(!hist || hist.length < 2) return '';
+  var max = hist.reduce(function(m, r){ return Math.max(m, r.success || 0); }, 0);
+  if(max <= 0) return '';
+  var tip = hist.map(function(r, i){
+    // The client does not always record the date on a row, so one without it is
+    // named by where it sits in the run instead of being left out of the list.
+    var when = (r.day && r.day.length === 8)
+      ? r.day.slice(0, 4) + '-' + r.day.slice(4, 6) + '-' + r.day.slice(6, 8)
+      : 'day ' + (i + 1);
+    return esc(when + ': ' + (r.success || 0).toLocaleString() + ' uploads');
+  }).join('&#10;');
+  var bars = hist.map(function(r){
+    // A floor of two pixels so a quiet day still reads as a day that happened
+    // rather than as a gap in the strip.
+    var h = Math.max(2, Math.round((r.success || 0) / max * 14));
+    return '<span style="display:inline-block;width:4px;margin-right:2px;height:' + h + 'px;' +
+           'background:var(--good);vertical-align:bottom"></span>';
+  }).join('');
+  return '<span class="stat" title="' + tip + '">' +
+         '<span style="display:inline-block;height:14px;line-height:0;' +
+         'vertical-align:middle">' + bars + '</span>' +
+         ' <span style="color:var(--dim)">' + hist.length + 'd</span></span>';
+}
 var lastState = null;
 var compactParts = false;
 function updateFavicon(state){
@@ -987,6 +1046,18 @@ async function tick(){
       hw.style.display = 'block';
       hw.innerHTML = d.health.map(function(h){ return esc(h.text); }).join(' &bull; ');
     } else { hw.style.display = 'none'; }
+    var cw = document.getElementById('completion');
+    if(d.completion){
+      // days comes from the first-pass counter, which the client drops the
+      // moment it catches up. If the mark was written after that point the
+      // count is zero, and "in 0 days" would be worse than saying nothing.
+      var span = d.completion.days > 0
+        ? ' in ' + esc(d.completion.days) + ' day' + (d.completion.days === 1 ? '' : 's')
+        : '';
+      cw.style.display = 'block';
+      cw.innerHTML = 'First backup complete \u2014 ' + esc(d.completion.total_str) +
+                     span + '.';
+    } else { cw.style.display = 'none'; }
     document.getElementById('clock').textContent = d.clock;
     document.getElementById('build').textContent = d.build_label || '';
     document.getElementById('footer-server').textContent =
@@ -1025,6 +1096,7 @@ async function tick(){
                 d.upload_success[0].toLocaleString() +
                 (d.upload_success[1] ? ' <span class="dim">('+d.upload_success[1]+' retried)</span>' : '') +
                 '</span>' : '') +
+      uploadStripHtml(d.upload_history) +
       (d.compress_saved ? '<span class="stat dim">Compression saved: '+esc(d.compress_saved)+'</span>' : '') +
       (d.perf ? '<span class="stat dim" title="Measured by the Backblaze client itself. ' +
                 'Small files are slower because each costs a round trip.">Client est: ' +
@@ -1034,7 +1106,8 @@ async function tick(){
       '<span class="stat">Files Remaining: '+(d.backup && d.backup.remaining_files!=null ? d.backup.remaining_files.toLocaleString() : 'n/a')+'</span>' +
       gaugeHtml('Backup', d.backup, true,
                 d.backup ? (d.backup.files + ' \u2022 ETA based on last ' + d.backup.eta_samples + ' completed transfer' + (d.backup.eta_samples===1?'':'s')) : '',
-                d.backup ? ('ETA '+d.backup.eta) : '');
+                d.backup ? ('ETA '+esc(d.backup.eta) +
+                            (d.backup.eta_date ? ' \u2022 '+esc(d.backup.eta_date) : '')) : '');
 
     var up = document.getElementById('uploading');
     document.getElementById('uploading-title').textContent = d.files.length
