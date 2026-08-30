@@ -18,7 +18,7 @@ Imported by path rather than installed as a package, since both callers live in
     sys.path.insert(0, "/usr/local/lib/bb-monitor")
     import bbdata
 """
-import calendar, html, ipaddress, os, re, socket, struct, threading, time, unicodedata
+import calendar, html, ipaddress, json, os, re, socket, struct, threading, time, unicodedata
 from collections import deque
 
 # ---- config (identical to bb-monitor) ------------------------------------
@@ -572,6 +572,101 @@ def eta_date(eta_seconds):
     return time.strftime("%d %b %Y", time.localtime(time.time() + eta_seconds))
 
 
+def composition():
+    """What the backup is made of, from the completed filestats.xml.
+
+    The category attributes (docsnum, pictnum, videonum, musicnum alongside
+    everythingnum) are established from a real capture. "other" is the
+    remainder, so the parts always account for the whole even if the client
+    counts categories this does not know about.
+    """
+    t = read(FLISTS + "/filestats.xml")
+    if not t:
+        return None
+    def g(k):
+        m = re.search(k + r'="(\d+)"', t)
+        return int(m.group(1)) if m else None
+    total = g("everythingnum")
+    if not total:
+        return None
+    cats = {"photos": g("pictnum"), "documents": g("docsnum"),
+            "music": g("musicnum"), "video": g("videonum")}
+    cats = {k: v for k, v in cats.items() if v}
+    other = total - sum(cats.values())
+    if other > 0:
+        cats["other"] = other
+    return {"files": total, "bytes": g("everythingtotbytes"),
+            "categories": cats}
+
+
+def backing_up_since():
+    """When this backup began, as YYYYMMDD, or None.
+
+    ahguidcreated is established from a real capture and marks the account-host
+    pairing. firstfilescantime.xml is older still but its internal shape was
+    never captured, so it contributes by shape (any YYYYMMDD attribute) and,
+    failing that, by its own mtime, since it is written once at install and the
+    observed timestamp matched the install date.
+    """
+    for t in (read(FLISTS + "/filestats.xml"), read(BZINFO)):
+        m = re.search(r'ahguidcreated="((?:19|20)\d{6})"', t)
+        if m:
+            return m.group(1)
+    f = FLISTS + "/firstfilescantime.xml"
+    m = re.search(r'[a-z_]+="((?:19|20)\d{6})"', read(f))
+    if m:
+        return m.group(1)
+    mt = _mtime(f)
+    return time.strftime("%Y%m%d", time.localtime(mt)) if mt else None
+
+
+ETA_HIST = "/config/.bb-eta-history"
+ETA_STEADY = 0.02         # the steady band: see _eta_trend
+
+
+def _eta_trend(backup):
+    """Is the estimate getting better? {direction, delta_seconds} or None.
+
+    One sample per day is recorded, because the question this answers is "is it
+    better than yesterday", and an estimate compared with itself an hour ago
+    only measures the jitter of the moving average it came from.
+    """
+    if not backup or not backup.get("eta_seconds"):
+        return None
+    eta = backup["eta_seconds"]
+    today = time.strftime("%Y%m%d")
+    try:
+        hist = json.loads(read(ETA_HIST) or "{}")
+        if not isinstance(hist, dict):
+            hist = {}
+    except ValueError:
+        hist = {}
+    if hist.get(today) is None:
+        hist[today] = eta
+        for day in sorted(hist)[:-14]:      # keep a fortnight
+            del hist[day]
+        try:
+            with open(ETA_HIST, "w", encoding="utf-8") as fh:
+                json.dump(hist, fh)
+        except OSError:
+            pass
+    prev_days = [d for d in sorted(hist) if d < today]
+    if not prev_days:
+        return None
+    prev = hist[prev_days[-1]]
+    if not prev:
+        return None
+    delta = eta - prev
+    # Steady means within two percent or within a day, whichever is larger: a
+    # sub-day wobble on a short ETA is sampling noise, and on a six-month one
+    # even two percent is several days, which is genuinely news.
+    if abs(delta) <= max(86400, prev * ETA_STEADY):
+        direction = "steady"
+    else:
+        direction = "improving" if delta < 0 else "worsening"
+    return {"direction": direction, "delta_seconds": delta}
+
+
 def compress_saved():
     """Bytes the client says compression has saved, or None."""
     m = re.search(r'num_bytes_saved="(\d+)"', read(RPTS + "/bzstat_compress_save.xml"))
@@ -1086,6 +1181,9 @@ def gather(prev):
     o["upload_success"] = upload_success_today()
     o["upload_history"] = upload_history()
     o["completion"] = completion()
+    o["composition"] = composition()
+    o["backing_up_since"] = backing_up_since()
+    o["eta_trend"] = _eta_trend(o.get("backup"))
     o["compress_saved"] = compress_saved()
     o["last_backup_days"] = last_backup_days()
     o["first_backup"] = first_backup()

@@ -16,7 +16,7 @@ open port.
 Standalone, for testing:
     python3 bb-monitor-web --host 127.0.0.1 --port 8099
 """
-import argparse, json, os, socket, sys, threading, time
+import argparse, json, os, re, socket, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
@@ -146,6 +146,21 @@ def snapshot_to_json(d):
                          "days": d["completion"]["days"],
                          "total_str": human(d["completion"]["total_bytes"])}
                         if d.get("completion") else None),
+        # What the set is actually made of. Counts only, and only the categories
+        # the client itself counted, so the page can say what a couple of million
+        # files are rather than only how many there are.
+        "composition": d.get("composition"),
+        # YYYYMMDD as the client records it. The page formats it for display,
+        # because the raw string is also what the API hands a consumer that wants
+        # to parse the date rather than read it, and one shape serves both.
+        "backing_up_since": d.get("backing_up_since"),
+        # Whether the estimate is better or worse than the last day recorded.
+        # An ETA on its own says nothing about whether it is being caught up.
+        "eta_trend": d.get("eta_trend"),
+        # The pause state as a single flag, which is all the title bar button
+        # needs to choose its label. The full pause record, with the deadline and
+        # the reason, stays in the API payload where a consumer can act on it.
+        "paused": (d.get("pause") or {}).get("paused", False),
         "compress_saved": human(d["compress_saved"]) if d.get("compress_saved") else None,
         "skipped": d.get("skipped"),
         "first_backup": ({"days": round(d["first_backup"]["days"]),
@@ -502,6 +517,17 @@ def api_v1_payload(d):
         # Present only while the first completion is recent, null the rest of the
         # time, so a consumer can treat its arrival as the event itself.
         "completion": d.get("completion"),
+        # What the set is made of, from the client's own category totals. Counts
+        # only: the client does not break its byte total down the same way, so a
+        # per-category size would have to be invented rather than reported.
+        "composition": d.get("composition"),
+        # The date this backup began, YYYYMMDD, which is exactly the resolution
+        # the client records it at. Not an epoch, because turning a calendar day
+        # into a timestamp would have to pick a time of day that was never known.
+        "backing_up_since": d.get("backing_up_since"),
+        # Whether the ETA is improving or worsening against the last day
+        # recorded, with the signed difference in seconds.
+        "eta_trend": d.get("eta_trend"),
         "files": {
             "in_flight": files,
             "recent": recent,
@@ -739,6 +765,19 @@ INDEX_HTML = """<!doctype html>
        cursor:pointer;font-weight:bold;transition:background .15s,color .15s;
        min-width:34px;min-height:30px;}
   #settings-btn:hover,#settings-btn:focus{background:var(--hi-fg);color:var(--hi-bg);}
+  /* The pause control takes the settings button's shape and its variables
+     rather than naming any colour of its own, which is the only way a control
+     added to the title bar stays legible in all thirteen themes. It starts
+     hidden and is revealed by the first poll that succeeds, so it never offers
+     to act on a state the page has not read yet. */
+  #pause-btn{font-family:inherit;font-size:12px;line-height:1;background:transparent;
+       color:var(--hi-fg);border:1px solid var(--hi-fg);border-radius:2px;padding:6px 8px;
+       cursor:pointer;font-weight:bold;transition:background .15s,color .15s;
+       min-height:30px;white-space:nowrap;}
+  #pause-btn:hover:not(:disabled),#pause-btn:focus:not(:disabled){background:var(--hi-fg);color:var(--hi-bg);}
+  /* In flight: the next poll, not the click, is what changes the label, so the
+     button has to look busy for the second or two in between. */
+  #pause-btn:disabled{opacity:.5;cursor:progress;}
   #backdrop{position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:100;
        display:flex;align-items:center;justify-content:center;padding:16px;}
   #backdrop[hidden]{display:none;}
@@ -786,6 +825,10 @@ INDEX_HTML = """<!doctype html>
     #status-grid{gap:5px 16px;}
     #topbar,#footer{padding:7px 10px;}
     #settings-btn{min-width:40px;min-height:36px;}
+    /* The title, the clock and two controls is more than 375px holds at the
+       full size, and the button label is the one part that cannot be shortened
+       without losing what it does. */
+    #pause-btn{font-size:11px;padding:5px 6px;}
     /* The uptime is the least useful thing in the title bar and the first to
        push it onto a second line. The footer keeps it on the monitor's own
        page, and the shell tab shows it too. */
@@ -802,6 +845,11 @@ INDEX_HTML = """<!doctype html>
     .file-row{display:block;}
     .file-row .track{width:100%;flex:none;}
     .file-row .meta{margin-top:2px;gap:4px 10px;}
+    /* .stat is nowrap, which is right for the short readouts but not for the
+       composition line: five categories on one line is wider than the screen
+       and was the one thing pushing the page sideways at 375px. It carries its
+       own separators, so it can break at them. */
+    .stat.wraps{white-space:normal;}
     /* The Backup gauge carries a label, a bar, a percentage and an ETA, which
        is more than fits on one line here. Let it wrap instead of pushing the
        page sideways. */
@@ -822,6 +870,7 @@ INDEX_HTML = """<!doctype html>
   <span id="topbar-title">Backblaze 64 &bull; Upload Monitor</span>
   <div id="topbar-right">
     <span id="clock">--:--:--</span>
+    <button id="pause-btn" type="button" style="display:none">Pause backup</button>
     <button id="settings-btn" title="Settings" aria-haspopup="dialog">&#9881;</button>
   </div>
 </div>
@@ -979,6 +1028,77 @@ function uploadStripHtml(hist){
          'vertical-align:middle">' + bars + '</span>' +
          ' <span style="color:var(--dim)">' + hist.length + 'd</span></span>';
 }
+// A count in the hundreds of thousands cannot be read at a glance in full, and
+// the status row is meant to be glanced at. One decimal from a million up,
+// because 1.0M and 1.9M are a real difference; none at the thousand mark,
+// because 75k and 75.3k are not. The exact figure lives in the tooltip.
+function fmtCount(n){
+  if(n == null) return '';
+  if(n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if(n >= 1000) return Math.round(n / 1000) + 'k';
+  return String(n);
+}
+// What the set is made of, beside how much of it is left. The order is fixed
+// rather than sorted by size so the line reads the same shape from one poll to
+// the next, and only the categories the client actually counted are drawn: the
+// data layer omits the empty ones rather than sending zeroes.
+var COMP_ORDER = [['photos','photos'],['documents','docs'],['music','music'],
+                  ['video','video'],['other','other']];
+function compositionHtml(c){
+  if(!c || !c.categories) return '';
+  var parts = [], tips = [];
+  COMP_ORDER.forEach(function(p){
+    var n = c.categories[p[0]];
+    if(!n) return;
+    parts.push(fmtCount(n) + ' ' + p[1]);
+    tips.push(esc(n.toLocaleString() + ' ' + p[0]));
+  });
+  if(!parts.length) return '';
+  // The newline in the tooltip is written as a character entity rather than as
+  // a backslash escape. This whole script is inside a Python triple-quoted
+  // string, so a backslash-n here would be turned into a real line break before
+  // the browser ever saw it, which would end the JavaScript string in mid-air.
+  var tip = esc(c.files.toLocaleString() + ' files in total') + '&#10;' +
+            tips.join('&#10;');
+  return '<span class="stat dim wraps" title="' + tip + '">' +
+         esc(fmtCount(c.files)) + ' files: ' + esc(parts.join(' • ')) + '</span>';
+}
+// An estimate says more against yesterday's than on its own, so the gauge
+// carries the change as well as the figure. The arrow and the colour are both
+// redundant with the words "better" and "slower" on purpose: a reader who
+// cannot tell the good colour from the bad one still gets the answer.
+function etaTrendHtml(t){
+  if(!t || t.direction === 'steady') return '';
+  var secs = Math.abs(t.delta_seconds || 0);
+  var span = secs < 86400 ? (Math.round(secs / 3600) + 'h')
+                          : (Math.round(secs / 86400) + 'd');
+  var better = t.direction === 'improving';
+  return ' <span style="color:var(--' + (better ? 'good' : 'bad') + ')">' +
+         (better ? '▾ ' : '▴ ') + esc(span) +
+         (better ? ' better' : ' slower') + '</span>';
+}
+// YYYYMMDD as the client records it, drawn as "1 Jun 2026". Parsed by hand
+// rather than handed to Date(), which reads a bare digit string as UTC and can
+// therefore show the day before the one the client wrote down.
+var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function fmtDay(s){
+  if(!s || String(s).length !== 8) return '';
+  s = String(s);
+  var m = parseInt(s.slice(4, 6), 10), day = parseInt(s.slice(6, 8), 10);
+  if(!(m >= 1 && m <= 12) || !(day >= 1 && day <= 31)) return '';
+  return day + ' ' + MONTHS[m - 1] + ' ' + s.slice(0, 4);
+}
+// The error strip belongs to the poll, which clears it every couple of seconds.
+// A failed control call has to outlive that or it would never be read, so it is
+// held for a few seconds and the poll is told to leave it alone until then.
+var errHoldUntil = 0;
+function showError(text){
+  var el = document.getElementById('err');
+  el.style.display = 'block';
+  el.textContent = text;
+  el.title = text;
+  errHoldUntil = Date.now() + 6000;
+}
 var lastState = null;
 var compactParts = false;
 function updateFavicon(state){
@@ -1000,14 +1120,23 @@ function esc(s){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
   });
 }
-var aboutDone = false;
-function renderAbout(a){
-  if(aboutDone) return;          // build metadata never changes while we run
+var aboutDone = false, aboutSince = null;
+// The start date travels at the top level of the payload rather than inside
+// about, because it describes this backup and not this build, so it is passed
+// in as a second argument instead of being dug out of a.
+function renderAbout(a, since){
+  // Build metadata never changes while we run, so this normally draws once. The
+  // exception is the date: the payload sent when collection fails still carries
+  // about but has no backing_up_since, and latching on that first draw would
+  // lose the row for the life of the page. So a date arriving later reopens it.
+  if(aboutDone && (since == null || since === aboutSince)) return;
   aboutDone = true;
+  aboutSince = (since == null ? null : since);
   var b = a.build || {}, rows = '';
   function row(k, v){ if(v) rows += '<dt>'+esc(k)+'</dt><dd>'+esc(v)+'</dd>'; }
   row('Version', b.version); row('Build', b.build);
   row('Revision', b.revision); row('Variant', b.variant); row('Built', b.built);
+  row('Backing up since', fmtDay(since));
   var html =
     '<div class="asec" style="border-top:0;padding-top:0;margin-top:0">' +
       '<h3>'+esc(a.name)+' \u2022 '+esc(a.component)+'</h3>' +
@@ -1028,19 +1157,71 @@ function renderAbout(a){
   }
   document.getElementById('pane-about').innerHTML = html;
 }
+// The page's own pause control. It posts to /manage/, which rides the same
+// browser session that was allowed to load the page, so it needs no API key;
+// the X-Requested-With header is the same-origin guard those endpoints require,
+// and a cross-site form post cannot set it. The action name is one of two fixed
+// strings chosen here, never anything typed or received.
+var pauseBusy = false;
+function wirePauseButton(){
+  var btn = document.getElementById('pause-btn');
+  btn.addEventListener('click', async function(){
+    if(pauseBusy) return;
+    pauseBusy = true;
+    btn.disabled = true;
+    var action = btn.getAttribute('data-action') === 'backup-now' ? 'backup-now' : 'pause';
+    var verb = action === 'pause' ? 'pause the backup' : 'resume the backup';
+    try{
+      // Relative, like the status poll: the page is served under /monitor/ when
+      // proxied and at the root standalone, and the prefix is stripped either way.
+      const res = await fetch('manage/control/' + action,
+                              {method:'POST', cache:'no-store',
+                               headers:{'X-Requested-With':'bb64'}});
+      var body = {};
+      try { body = await res.json(); } catch(e){}
+      if(!res.ok || !body.ok){
+        showError('Could not ' + verb + ': ' +
+                  (body.detail || body.error || ('HTTP ' + res.status)));
+      }
+    }catch(e){
+      showError('Could not ' + verb + ': ' + e);
+    }
+    // Whatever happened, the button goes live again and the next poll two
+    // seconds from now is what decides which label it carries.
+    pauseBusy = false;
+    btn.disabled = false;
+  });
+}
 async function tick(){
   try{
     // Relative, so it resolves under /monitor/ when proxied and at / when standalone.
     const res = await fetch('api/status', {cache:'no-store'});
     const d = await res.json();
-    if(d.about) renderAbout(d.about);   // before the ok check: About must work when collection is broken
+    if(d.about) renderAbout(d.about, d.backing_up_since);   // before the ok check: About must work when collection is broken
     if(!d.ok){
+      // No state read means no state to act on, so the control goes away rather
+      // than sitting there offering to pause something we cannot see.
+      document.getElementById('pause-btn').style.display = 'none';
       document.getElementById('err').style.display='block';
       document.getElementById('err').textContent = 'Waiting for data: ' + (d.error||'unknown');
       document.title = 'Backblaze 64 \u2022 Upload Monitor';
       return;
     }
-    document.getElementById('err').style.display='none';
+    // A message from a failed control call is held for a few seconds; until it
+    // expires the poll leaves the strip alone rather than wiping it unread.
+    if(Date.now() >= errHoldUntil) document.getElementById('err').style.display='none';
+    var pb = document.getElementById('pause-btn');
+    pb.style.display = 'inline-block';
+    // Nothing is set optimistically. While a request is in flight the label is
+    // left as it was, and the next poll reports what the client actually did.
+    if(!pauseBusy){
+      // backup-now is Backblaze's own documented way out of a pause, which is
+      // why resuming posts that rather than any unpause verb.
+      pb.setAttribute('data-action', d.paused ? 'backup-now' : 'pause');
+      pb.textContent = d.paused ? 'Resume backup' : 'Pause backup';
+      pb.title = d.paused ? 'Ask the client to start a backup now'
+                          : 'Ask the running backup to pause, cooperatively';
+    }
     var hw = document.getElementById('health');
     if(d.health && d.health.length){
       hw.style.display = 'block';
@@ -1104,10 +1285,17 @@ async function tick(){
       gaugeHtml('Mem', d.mem, false) +
       gaugeHtml('Swap', d.swap, false) +
       '<span class="stat">Files Remaining: '+(d.backup && d.backup.remaining_files!=null ? d.backup.remaining_files.toLocaleString() : 'n/a')+'</span>' +
+      // What is left, then what the whole thing is made of, then how long it has
+      // been running: the three sit together because they answer one question.
+      compositionHtml(d.composition) +
+      (fmtDay(d.backing_up_since) ? '<span class="stat dim" title="When this backup ' +
+                'began, from the date the client recorded at install.">Backing up since: ' +
+                esc(fmtDay(d.backing_up_since)) + '</span>' : '') +
       gaugeHtml('Backup', d.backup, true,
                 d.backup ? (d.backup.files + ' \u2022 ETA based on last ' + d.backup.eta_samples + ' completed transfer' + (d.backup.eta_samples===1?'':'s')) : '',
                 d.backup ? ('ETA '+esc(d.backup.eta) +
-                            (d.backup.eta_date ? ' \u2022 '+esc(d.backup.eta_date) : '')) : '');
+                            (d.backup.eta_date ? ' \u2022 '+esc(d.backup.eta_date) : '') +
+                            etaTrendHtml(d.eta_trend)) : '');
 
     var up = document.getElementById('uploading');
     document.getElementById('uploading-title').textContent = d.files.length
@@ -1205,6 +1393,8 @@ async function tick(){
     try { localStorage.setItem('bbCompactParts', compactParts ? '1' : '0'); } catch(e){}
     tick();   // redraw at once rather than waiting out the poll interval
   });
+
+  wirePauseButton();
 
   var backdrop = document.getElementById('backdrop');
   var openBtn  = document.getElementById('settings-btn');
@@ -1330,6 +1520,18 @@ class Handler(BaseHTTPRequestHandler):
             payload = _latest_api
         if "read:files" not in bbapi.perms(self._kid):
             payload = strip_file_names(payload)
+        # ?fields=rate_bytes_per_sec,paused trims the payload to what a consumer
+        # actually wants, plus schema and ok, which every response carries so a
+        # filtered reply is still recognisably the same contract. Unknown names
+        # are ignored rather than erroring: a consumer built against a newer
+        # container should not break on an older one that lacks a field.
+        q = urlsplit(self.path).query
+        m = re.search(r'(?:^|&)fields=([^&]*)', q)
+        if m:
+            want = {f.strip() for f in m.group(1).split(",") if f.strip()}
+            if want:
+                want |= {"schema", "ok", "error"}
+                payload = {k: v for k, v in payload.items() if k in want}
         self._json(200, payload)
 
     def _api_report_start(self):
@@ -1498,6 +1700,24 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "bad request body"})
             return
 
+        if path.startswith("/manage/control/"):
+            # The page's own pause button. Session-authorised like the rest of
+            # /manage/ (auth_request plus the same-origin guard), so no API key
+            # is needed to use the page you are already logged into. The action
+            # name selects from the same fixed whitelist the API uses; nothing
+            # from the request reaches an argument list.
+            name = path[len("/manage/control/"):]
+            if name not in bbctl.ACTIONS:
+                self._json(404, {"error": "no such action"})
+                return
+            if not bbctl.available():
+                self._json(503, {"error": "bzcli is not present"})
+                return
+            ok, msg = bbctl.run(name)
+            sys.stderr.write("bb-monitor-web: web session ran %s: %s\n"
+                             % (name, "ok" if ok else "failed, " + msg))
+            self._json(200 if ok else 502, {"action": name, "ok": ok, "detail": msg})
+            return
         if path == "/manage/keys":
             label = (body.get("label") or "").strip()
             scopes = body.get("scopes") or []

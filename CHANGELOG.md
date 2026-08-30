@@ -167,6 +167,22 @@ stable release.
   `bzstat_lastbackupcompleted.xml` marks a pass finishing rather than the whole set: on the
   machine this was developed against it read four days old while 87% of 85 TB was still
   unsent, and warning about that would be warning about a first upload behaving normally.
+- A pause button in the web dashboard's top bar, becoming a resume button while paused. It
+  uses the browser session you are already logged in with, so no API key is involved, and it
+  goes through the same fixed whitelist of client actions as everything else. The page never
+  guesses: the button reflects what the next poll reports, not what the click hoped.
+- The status panel says what a backup is made of: "2.4M files: 1.0M photos, 401k docs, 75k
+  music, 53k video". The client has counted by category all along; nothing showed it. Exact
+  counts in the tooltip, and the whole is always accounted for, with a remainder bucket for
+  whatever the client counts that these categories do not.
+- "Backing up since 1 Jun 2026", in the About tab of both monitors and in the feed.
+- The ETA says whether it moved: "(17 Feb 2027, 9d better)" against yesterday's estimate.
+  One sample is kept per day, because an estimate compared with itself an hour ago only
+  measures the jitter of the moving average it came from. Within two percent, or a day,
+  it stays quiet.
+- The API takes `?fields=rate_bytes_per_sec,paused` to trim the status payload to what a
+  consumer wants. Unknown names are ignored rather than refused, so something built against
+  a newer container keeps working on an older one.
 - The backup ETA is also given as a date. "171 days" is a number; "17 Feb 2027" is a thing
   a person can picture. Day resolution on purpose, since an estimate from a moving average
   should not pretend to know the hour. In both monitors and the feed.

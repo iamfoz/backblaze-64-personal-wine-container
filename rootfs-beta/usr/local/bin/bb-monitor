@@ -146,6 +146,22 @@ def spark(values, width):
     out = [SPARK[int(round(min(v, top) / top * (len(SPARK) - 1)))] for v in vals]
     return "".join(out).rjust(width)
 
+# ---- compact count formatter ---------------------------------------------------
+# bbdata.human() does the same job for byte counts (KB..PB); this is the item-count
+# equivalent for the composition chunk below, e.g. file tallies in the hundreds of
+# thousands. Kept separate rather than folded into human() because it has no unit
+# suffix to reason about, just a scale letter.
+CATEGORY_LABELS = {"photos": "photos", "documents": "docs", "music": "music",
+                    "video": "video", "other": "other"}
+
+def count_str(n):
+    """Compact item count: 999, 75k, 401k, 1.0M, 2.4M."""
+    if n >= 1000000:
+        return "%.1fM" % (n / 1000000)
+    if n >= 1000:
+        return "%dk" % (n // 1000)
+    return str(n)
+
 # ---- curses-only helper -------------------------------------------------------
 def wclip(s,width):
     """Clip to terminal cells, not codepoints (CJK/emoji are 2 cells wide)."""
@@ -182,6 +198,8 @@ def draw_bar(scr,y,x,w,pct,pair):
         aw(scr,y,x+n,"▏▎▍▌▋▊▉"[int(frac*8)-1],pair|curses.A_BOLD)
 
 def draw(scr,d,st):
+    global _backing_up_since
+    _backing_up_since=d.get("backing_up_since")   # for the About tab; see _about_lines()
     h,w=scr.getmaxyx(); scr.erase()
     NORM=curses.color_pair(1); HI=curses.color_pair(2)|curses.A_BOLD
     BORD=curses.color_pair(6)|curses.A_BOLD; TIT=curses.color_pair(2)|curses.A_BOLD
@@ -241,9 +259,18 @@ def draw(scr,d,st):
         if fr is not None:
             chunks.append(txt([("Files Remaining: ",NORM),("{:,}".format(fr),NORM)]))
         eta_secs=b.get("eta_seconds"); ed=eta_date(eta_secs)
+        # eta_trend compares today's moving-average estimate with yesterday's. A
+        # smaller ETA (direction "improving") reads as "better", a larger one
+        # ("worsening") as "slower" -- said in words rather than colour, since
+        # note2 always draws in NORM (see gauge()) and has no severity of its own.
+        trend=d.get("eta_trend"); trend_txt=""
+        if trend and ed and trend["direction"]!="steady":
+            tsecs=abs(trend["delta_seconds"])
+            mag=("%dh"%round(tsecs/3600)) if tsecs<86400 else ("%dd"%round(tsecs/86400))
+            trend_txt=", %s %s"%(mag,"better" if trend["direction"]=="improving" else "slower")
         chunks.append(gauge("Backup:",human(b["done"]),human(b["total"]),b["pct"],
                              high_is_good=True,note="ETA "+eta_str(eta_secs),
-                             note2=(" (%s)"%ed if ed else "")))
+                             note2=(" (%s%s)"%(ed,trend_txt) if ed else "")))
     chunks.append(txt([("Uptime: ",NORM),(uptime_str(),NORM)]))
     # The web dashboard has this in its footer, which has the width for it. Here
     # the footer already carries the key hints and the build label, and a 29
@@ -277,6 +304,16 @@ def draw(scr,d,st):
         wk=spark([h["success"] for h in hist],7)
         chunks.append(txt([("Week: ",NORM),(wk,GOOD),
                            ("  %s/day"%("{:>9,}".format(hist[-1]["success"])),NORM)]))
+    ycomp=d.get("composition")
+    if ycomp:
+        # Unlike Week above, this chunk's width is not something a live refresh can
+        # change: the counts come from filestats.xml, which only moves when a scan
+        # completes. That is rare enough that the fixed-width treatment the other
+        # chunks need (see spark() and the Week comment above) would be wasted here.
+        cats=ycomp["categories"]
+        parts=" • ".join("%s %s"%(count_str(v),CATEGORY_LABELS.get(k,k))
+                              for k,v in cats.items())
+        chunks.append(txt([("Yours: ",NORM),(parts,NORM)]))
     cs=d.get("compress_saved")
     if cs: chunks.append(txt([("Compression saved: ",NORM),(human(cs),NORM)]))
     pf=d.get("perf")
@@ -398,6 +435,15 @@ def draw(scr,d,st):
 #   S        open        Tab / Shift-Tab   switch tab
 #   Up/Down  move        Enter             open a chooser, or pick the highlighted
 #   Esc      close, or back out of an open chooser
+# The About pane is rendered from static constants and BUILD_INFO, both fixed at
+# import time, but "backing up since" comes from bbdata.gather() each refresh.
+# draw_overlay(scr, st) -- and so _about_lines() -- never sees d, and the call
+# chain (main -> draw -> draw_overlay -> _about_lines) has three hops, so
+# threading a parameter through all of them for one field would outweigh the
+# field. Instead draw() drops the latest value here each refresh, the same
+# latest-value-wins approach _rate_hist already uses at module scope.
+_backing_up_since = None
+
 def _about_lines():
     b = BUILD_INFO
     out = [("%s \u2022 %s" % (APP_NAME, APP_COMPONENT), True)]
@@ -407,6 +453,12 @@ def _about_lines():
             out.append(("  %-9s %s" % (label + ":", b[key]), False))
     if not any(b.get(k) for k in ("version","build","revision","variant","built")):
         out.append(("  no build stamp (running outside a built image)", False))
+    if _backing_up_since:
+        try:
+            since = time.strftime("%d %b %Y", time.strptime(_backing_up_since, "%Y%m%d"))
+            out.append(("  Backing up since %s" % since, False))
+        except ValueError:
+            pass       # malformed date from bbdata: skip the row rather than show garbage
     out += [("", False), ("Licence", True),
             ("  " + APP_COPYRIGHT, False), ("  " + APP_LICENSE, False),
             ("  " + APP_URL, False)]

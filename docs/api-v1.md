@@ -72,6 +72,16 @@ the array.
 
 Requires `read`. The whole monitor payload. See the field reference below.
 
+`?fields=` trims the response to the top-level fields named, comma-separated, plus
+`schema` and `ok`, which every response carries:
+
+```
+curl -H "Authorization: Bearer <key>" "https://<host>:<port>/api/v1/status?fields=rate_bytes_per_sec,paused"
+```
+
+Names the payload does not have are ignored rather than refused, so a consumer built
+against a newer container keeps working on an older one that lacks a field.
+
 ### `GET /api/v1/key`
 
 Any valid key. Describes the key presenting it, so a consumer can discover its own
@@ -295,6 +305,33 @@ Counts for the client's most recent recorded day, or `null` if not yet reported.
 
 Do not alert on `failures`. A handful per day is Backblaze's own load balancing working as
 designed. The field that means data is not backed up is `skipped_files`.
+
+### `composition`
+
+What the backup is made of, from the client's completed file statistics, or `null` before a
+scan has finished. Categories carry only nonzero counts; `other` is the remainder, so the
+parts account for the whole.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `files` | int | Files selected for backup. |
+| `bytes` | int | Their total size. |
+| `categories` | object | Counts by kind: `photos`, `documents`, `music`, `video`, `other`. |
+
+### `backing_up_since`
+
+`YYYYMMDD` string: when this backup began. `null` if the client's records carry no date.
+
+### `eta_trend`
+
+Whether the estimate moved since yesterday, or `null` when there is no estimate or no
+history yet. One sample is kept per day, because an estimate compared with itself an hour
+ago only measures the jitter of the moving average it came from.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `direction` | string | `improving`, `worsening`, or `steady` (within two percent or one day, whichever is larger). |
+| `delta_seconds` | int | Signed change since the previous recorded day. Negative is better. |
 
 ### `upload_history`
 
