@@ -201,6 +201,17 @@ stable release.
   colour, the tooltip says what it is, and the API carries the per-reason breakdown. The
   number that means data is not backed up is the skipped-file count, which is reported
   separately and loudly.
+- The ETA no longer reports absurd figures while a backup gets going. A backup starts on its
+  small files, and a handful of those gives a per-byte rate low enough to extrapolate into
+  the millennia: one run read "4259966d", about 11,600 years, and the trend feature then
+  dutifully compared today's nonsense against yesterday's. An estimate beyond a century is
+  withheld rather than shown, and the trend ignores estimates resting on fewer than three
+  completed transfers and does not record them, so a bad reading cannot poison the next day's
+  comparison either. A genuinely dismal estimate still shows: 100 TB on a 1 Mbit/s uplink is
+  about 25 years and that is a true answer.
+- With no usable estimate the ETA now reads "not yet" rather than "stalled". Stalled was true
+  when the only cause was a dead rate; it is wrong when the backup is uploading briskly and
+  only the projection is unusable.
 - `bb-monitor` run without a terminal says so and names the fix, instead of dying in a
   two-deep curses traceback. The usual way to have no terminal is `docker exec` without
   `-it`, which is exactly what the message suggests.

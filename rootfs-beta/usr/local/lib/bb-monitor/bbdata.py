@@ -620,6 +620,15 @@ def backing_up_since():
     return time.strftime("%Y%m%d", time.localtime(mt)) if mt else None
 
 
+# A century. The worst plausible real case is something like a 100 TB set on a
+# 1 Mbit/s uplink, which is roughly 25 years, so a bound has to sit above that
+# to avoid hiding an estimate that is dismal but true. The startup arithmetic
+# that prompted this lands in the thousands of years, so there is a wide gap
+# between the worst real answer and the first absurd one, and the bound goes in
+# the gap rather than near either edge.
+ETA_MAX = 100 * 365 * 86400
+ETA_MIN_SAMPLES = 3       # see _eta_trend
+
 ETA_HIST = "/config/.bb-eta-history"
 ETA_STEADY = 0.02         # the steady band: see _eta_trend
 
@@ -632,6 +641,13 @@ def _eta_trend(backup):
     only measures the jitter of the moving average it came from.
     """
     if not backup or not backup.get("eta_seconds"):
+        return None
+    # Do not record, or compare against, an estimate resting on a couple of
+    # completed transfers. Those are whatever the client happened to send first,
+    # and comparing today's against yesterday's measures the sample, not the
+    # backup. A recorded bad value is worse than a missing one: it stays in the
+    # history and poisons tomorrow's comparison too.
+    if backup.get("eta_samples", 0) < ETA_MIN_SAMPLES:
         return None
     eta = backup["eta_seconds"]
     today = time.strftime("%Y%m%d")
@@ -775,9 +791,17 @@ def human(n):
 
 
 def eta_str(secs):
-    """Human ETA from a seconds estimate. None = rate too low/unknown to project."""
+    """Human ETA from a seconds estimate.
+
+    None covers two cases that both mean "no usable estimate": no measurable
+    rate at all, and a rate so low the projection is absurd, which is what the
+    first few small files produce at startup. "Stalled" was the old word and it
+    is wrong for the second case, where the backup is uploading briskly and only
+    the estimate is unusable. There is no way to tell them apart here, so the
+    word has to be true of both.
+    """
     if secs is None:
-        return "stalled"
+        return "not yet"
     if secs <= 0:
         return "done"
     secs = int(secs)
@@ -1062,7 +1086,14 @@ def gather(prev):
         if remaining == 0:
             o["backup"]["eta_seconds"] = 0
         elif rate_bps > 1e-6:
-            o["backup"]["eta_seconds"] = remaining / rate_bps
+            eta = remaining / rate_bps
+            # A backup starts on the small files, and a handful of those gives a
+            # per-byte rate low enough to extrapolate into the millennia: one
+            # observed run read "4259966d", about 11,600 years. A slow uplink
+            # genuinely can take years, so the ceiling is generous, but past it
+            # the number is arithmetic rather than an estimate and saying
+            # nothing is more honest than saying that.
+            o["backup"]["eta_seconds"] = eta if eta <= ETA_MAX else None
         else:
             o["backup"]["eta_seconds"] = None
         o["backup"]["eta_samples"] = len(_completed_hist)
