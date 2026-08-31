@@ -163,6 +163,11 @@ def snapshot_to_json(d):
         "paused": (d.get("pause") or {}).get("paused", False),
         "compress_saved": human(d["compress_saved"]) if d.get("compress_saved") else None,
         "skipped": d.get("skipped"),
+        # The skipped files themselves, not just the counts. The Skipped Files
+        # page needs the names to be useful at all, and it reads them from the
+        # cached snapshot rather than calling gather() itself, so the raw list
+        # has to travel in the snapshot the collector thread already builds.
+        "skipped_list": d.get("skipped_list"),
         "first_backup": ({"days": round(d["first_backup"]["days"]),
                            "pct": round(d["first_backup"]["pct"], 1)}
                           if d.get("first_backup") else None),
@@ -220,7 +225,7 @@ KEYS_HTML = """<!doctype html>
   .grouphead{margin-bottom:6px;}
   .members{padding-left:22px;border-left:2px solid var(--border);}
   button{padding:7px 14px;border-radius:4px;border:1px solid var(--border);
-    background:var(--border);color:#04101f;font:inherit;font-weight:600;cursor:pointer;}
+    background:var(--title);color:var(--bg);font:inherit;font-weight:600;cursor:pointer;}
   button.ghost{background:transparent;color:var(--text);font-weight:400;}
   button:disabled{opacity:.5;cursor:default;}
   table{width:100%;border-collapse:collapse;margin-top:6px;}
@@ -414,6 +419,204 @@ load();
 </body></html>
 """
 
+
+# The skipped files page, framed by the Skipped Files tab in the shell. Served
+# from /skipped, reached as /monitor/skipped, so it sits behind the same
+# auth_request as the dashboard. That matters more here than anywhere else in
+# the monitor: this page is a list of paths on the user's own share, and a list
+# of paths is the one thing that must never be readable without the web login.
+SKIPPED_HTML = """<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backblaze 64 Skipped Files</title>
+<style>
+  :root{
+    --bg:#0a1830; --panel:#0e2148; --border:#39c5ff; --title:#39c5ff;
+    --text:#d7e6ff; --good:#3ddc6b; --warn:#ffd23d; --bad:#ff5a5a;
+    --dim:#7f9fc8;
+  }
+  html[data-theme="dark"]{ --bg:#000; --panel:#0d0d0d; --border:#333; --title:#ddd;
+    --text:#ddd; --dim:#888; }
+  *{box-sizing:border-box;}
+  body{margin:0;padding:16px;background:var(--bg);color:var(--text);
+    font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    font-size:14px;line-height:1.5;}
+  h1{font-size:18px;margin:0 0 4px;color:var(--title);}
+  p{margin:0 0 12px;max-width:70ch;}
+  .dim{color:var(--dim);}
+  .good{color:var(--good);}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;
+    padding:14px;margin-bottom:16px;}
+  button{padding:7px 14px;border-radius:4px;border:1px solid var(--border);
+    background:var(--title);color:var(--bg);font:inherit;font-weight:600;cursor:pointer;}
+  button.ghost{background:transparent;color:var(--text);font-weight:400;}
+  input[type=text]{width:100%;max-width:340px;padding:6px 8px;border-radius:4px;
+    border:1px solid var(--border);background:var(--bg);color:var(--text);font:inherit;}
+  .controls{display:flex;gap:8px;align-items:center;margin-bottom:16px;}
+  /* The reasons double as the filter, so they are buttons rather than text: a
+     count is only half an answer, and the other half is which files it means. */
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
+  .chip{padding:3px 10px;border-radius:10px;font-size:12px;font-weight:400;
+    background:transparent;color:var(--text);}
+  .chip.on{background:var(--title);color:var(--bg);font-weight:600;}
+  table{width:100%;border-collapse:collapse;margin-top:6px;}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);
+    font-size:13px;vertical-align:top;}
+  th{color:var(--dim);font-weight:600;white-space:nowrap;}
+  td.reason{white-space:nowrap;}
+  /* Paths on a mounted share get long and there is nothing to abbreviate them
+     to, so they wrap on the separator rather than overflowing the panel. */
+  td.path{word-break:break-all;color:var(--dim);}
+  .err{color:var(--bad);margin-top:8px;}
+  @media (max-width:560px){ table,thead,tbody,tr,th,td{display:block;}
+    thead{display:none;} tr{border-bottom:1px solid var(--border);padding:6px 0;}
+    th,td{border:none;padding:2px 0;white-space:normal;} }
+</style></head><body>
+
+<h1>Skipped Files</h1>
+<p class="dim">Files Backblaze has given up on. They are not queued and they are not
+retried, so they are not backed up, and the Issues tab on the desktop does not list
+them.</p>
+
+<div class="controls">
+  <input type="text" id="filter" placeholder="Filter by name or path" autocomplete="off" hidden>
+  <button class="ghost" id="refresh">Refresh</button>
+</div>
+
+<div class="panel" id="none" hidden>
+  <strong class="good">Nothing skipped.</strong>
+  <p class="dim" style="margin:8px 0 0">Every file the client has looked at is either backed
+  up or still waiting its turn. Nothing has been given up on.</p>
+</div>
+
+<div id="some" hidden>
+  <div class="panel">
+    <div id="summary"></div>
+    <div class="chips" id="chips"></div>
+    <p id="trunc" class="dim" style="margin:10px 0 0" hidden></p>
+  </div>
+
+  <!-- Only shown when that reason is actually present, because it is a specific
+       diagnosis and not general advice. -->
+  <div class="panel" id="permnote" hidden>
+    <strong>About bad permissions</strong>
+    <p class="dim" style="margin:8px 0 0">Under this container that almost always means the
+    container user cannot read the file. That points at ownership on the mounted share
+    rather than at anything wrong with Backblaze. Run <code>bb-doctor</code>: it diagnoses
+    this case and prints the command that fixes it.</p>
+  </div>
+
+  <div class="panel">
+    <table><thead><tr><th>Reason</th><th>File</th><th>Path</th></tr></thead>
+    <tbody id="rows"></tbody></table>
+    <p id="empty" class="dim" hidden>Nothing matches that filter.</p>
+  </div>
+</div>
+
+<div class="err" id="err" hidden></div>
+
+<script>
+function esc(s){ return String(s==null?'':s).replace(/[&<>\"']/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]; }); }
+// The client reports its own constants, BZ_FILE_PERMANENT_BAD_PERMISSIONS and
+// the like. Shouting an identifier at someone is not an explanation, so the
+// prefix goes and the rest is read as words; the raw value stays in the title
+// attribute for anyone searching Backblaze support for it verbatim.
+function pretty(r){
+  var s = String(r==null?'':r).replace(/^BZ_/, '').replace(/^FILE_/, '');
+  return s ? s.toLowerCase().replace(/_/g, ' ') : String(r==null?'':r);
+}
+var PERM = 'BZ_FILE_PERMANENT_BAD_PERMISSIONS';
+var DATA = null;   // the last answer from /manage/skipped
+var REASON = '';   // the reason chip in force, empty meaning all of them
+
+function render(){
+  var list = DATA && DATA.list;
+  var files = (list && list.files) || [];
+  document.getElementById('none').hidden = files.length > 0;
+  document.getElementById('some').hidden = files.length === 0;
+  document.getElementById('filter').hidden = files.length === 0;
+  if(!files.length) return;
+
+  // Counted from the list rather than from the counter beside it. The counter
+  // reads every line that has three columns, which includes the report header
+  // the client writes at the top, so it reports one file too many under a reason
+  // that is really a date. The list keeps only lines with a real path, so its
+  // total is the one that matches the rows on screen.
+  var reasons = {};
+  // The data layer counts reasons across every skipped file, not only the ones
+  // sent down, so a truncated listing still reports how many of each exist.
+  // Counting the rows here is the fallback for a container old enough not to
+  // send that field.
+  if (list && list.reasons) { reasons = list.reasons; }
+  else { files.forEach(function(f){ reasons[f.reason] = (reasons[f.reason] || 0) + 1; }); }
+  var total = list.total;
+  document.getElementById('summary').innerHTML =
+    '<strong>' + total + (total === 1 ? ' file' : ' files') + ' skipped.</strong>';
+
+  var names = Object.keys(reasons).sort(function(a, b){ return reasons[b] - reasons[a]; });
+  var chips = '<button class="chip' + (REASON ? '' : ' on') + '" data-reason="">All</button>';
+  names.forEach(function(n){
+    chips += '<button class="chip' + (REASON === n ? ' on' : '') + '" data-reason="' +
+             esc(n) + '" title="' + esc(n) + '">' + esc(pretty(n)) +
+             ' (' + reasons[n] + ')</button>';
+  });
+  document.getElementById('chips').innerHTML = chips;
+  document.getElementById('permnote').hidden = !reasons[PERM];
+
+  var trunc = document.getElementById('trunc');
+  trunc.hidden = !(list.shown < list.total);
+  if(!trunc.hidden){
+    // Said plainly, because the counts by reason are then counts of what is
+    // listed and not of everything, and a summary that quietly means something
+    // narrower than it says is worse than no summary.
+    trunc.textContent = 'Listing the ' + list.shown + ' most recent of ' + list.total +
+                        '. The counts by reason cover all of them.';
+  }
+
+  var q = document.getElementById('filter').value.trim().toLowerCase();
+  var shown = files.filter(function(f){
+    if(REASON && f.reason !== REASON) return false;
+    // The name is the tail of the path, so matching the path alone covers both.
+    if(q && String(f.path || '').toLowerCase().indexOf(q) < 0) return false;
+    return true;
+  });
+  document.getElementById('rows').innerHTML = shown.map(function(f){
+    return '<tr><td class="reason" title="' + esc(f.reason) + '">' + esc(pretty(f.reason)) +
+           '</td><td>' + esc(f.name) + '</td><td class="path">' + esc(f.path) + '</td></tr>';
+  }).join('');
+  document.getElementById('empty').hidden = shown.length > 0;
+}
+
+function load(){
+  var err = document.getElementById('err');
+  // No poll loop. This changes only when the client rescans, which is minutes
+  // apart at best, so asking every two seconds would buy nothing.
+  return fetch('manage/skipped', {cache:'no-store'})
+    .then(function(r){ return r.json(); })
+    .then(function(j){ DATA = j; err.hidden = true; render(); })
+    .catch(function(){ err.textContent = 'Could not read the skipped list.';
+                       err.hidden = false; });
+}
+
+document.getElementById('refresh').addEventListener('click', load);
+document.getElementById('filter').addEventListener('input', render);
+document.getElementById('chips').addEventListener('click', function(e){
+  var r = e.target.getAttribute && e.target.getAttribute('data-reason');
+  if(r === null || r === undefined) return;
+  REASON = r;
+  render();
+});
+try {
+  var t = localStorage.getItem('bbMonitorTheme');
+  if(t) document.documentElement.setAttribute('data-theme', t);
+} catch(e){}
+load();
+</script>
+</body></html>
+"""
+
+
 def api_v1_payload(d):
     """The /api/v1/status contract.
 
@@ -497,6 +700,12 @@ def api_v1_payload(d):
                  "files": sc.get("files"), "bytes": sc.get("bytes")} if sc else None,
         "health": [{"kind": k, "text": t} for k, t in (d.get("health") or [])],
         "skipped_files": d.get("skipped"),
+        # The counts above say how many were given up on; this names them. It is
+        # kept at the top level rather than under "files" because it is a
+        # different question -- what is not backed up, rather than what is moving
+        # -- but it names files just the same, so strip_file_names() drops it for
+        # a key without read:files.
+        "skipped_list": d.get("skipped_list"),
         "last_backup_days": d.get("last_backup_days"),
         "first_backup": d.get("first_backup"),
         "latency": {"ms": d.get("latency_ms"), "host": d.get("latency_host"),
@@ -544,6 +753,10 @@ def api_v1_payload(d):
 def strip_file_names(payload):
     out = dict(payload)
     out["files"] = None
+    # Every entry in the skipped list is a full path on the source share, which
+    # names the file just as plainly as the in-flight list does. The counts in
+    # skipped_files stay: they say how much is not backed up without saying what.
+    out["skipped_list"] = None
     act = out.get("activity")
     if act:
         act = dict(act)
@@ -1678,6 +1891,17 @@ class Handler(BaseHTTPRequestHandler):
                                 for n in bbapi.ORDER],
                 "groups": {g: list(m) for g, m in bbapi.GROUPS.items()}})
             return True
+        if path == "/manage/skipped":
+            # Served from the cached display snapshot, the same one /api/status
+            # hands out, so the page costs nothing beyond a dictionary lookup and
+            # never re-reads Backblaze's report file itself. Read under the lock
+            # because the collector thread rebinds _latest wholesale.
+            with _lock:
+                snap = _latest
+            self._json(200, {"schema": bbapi.SCHEMA,
+                             "skipped": snap.get("skipped"),
+                             "list": snap.get("skipped_list")})
+            return True
         return False
 
     def do_POST(self):
@@ -1751,6 +1975,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/apikeys":
             payload = KEYS_HTML.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        if path == "/skipped":
+            payload = SKIPPED_HTML.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))

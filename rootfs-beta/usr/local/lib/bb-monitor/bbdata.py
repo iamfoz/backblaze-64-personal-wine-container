@@ -436,6 +436,13 @@ def skipped_files():
         return None
     reasons = {}
     for line in t.splitlines():
+        # The report opens with a "# SkippedFilesReportStarted" line. As observed
+        # it carries no tabs, so the field test below already excludes it, but a
+        # tabbed variant would be counted as a file with a date for a reason.
+        # Excluding comments outright costs one condition and makes this agree
+        # with skipped_list() and bb-doctor, which both already do it.
+        if not line or line.startswith("#"):
+            continue
         f = line.split("\t")
         if len(f) >= 3 and f[1]:
             reasons[f[1]] = reasons.get(f[1], 0) + 1
@@ -444,6 +451,48 @@ def skipped_files():
     total = sum(reasons.values())
     top = max(reasons, key=reasons.get)
     return {"total": total, "top_reason": top, "reasons": reasons}
+
+
+def skipped_list(limit=500):
+    """The skipped files themselves: [{path, reason, name}], newest first.
+
+    skipped_files() counts them; this names them, which is what someone trying
+    to fix the problem actually needs. Capped, because a permissions mistake on
+    one directory can list tens of thousands and nobody reads past the first
+    screen; the count beside it says how many there are in total.
+
+    Non-record lines are excluded the same way the counter excludes them: the
+    file carries a "# SkippedFilesReportStarted" header and other lines with no
+    reason, which a naive read counts as files. The path is located by drive
+    letter rather than taken from a fixed column, since only the reason column
+    is established from a real capture.
+    """
+    t = read(RPTS + "/bzlist_skipped_files.txt")
+    if not t:
+        return None
+    rows = []
+    for line in t.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        f = line.split("\t")
+        if len(f) < 3 or not f[1]:
+            continue
+        path = next((x for x in f if re.match(r'^[A-Za-z]:\\', x)), None)
+        if not path:
+            continue
+        rows.append({"path": path, "reason": f[1],
+                     "name": path.split("\\")[-1]})
+    if not rows:
+        return None
+    rows.reverse()          # the client appends, so the newest are last
+    # Counted over every row rather than the listed ones, so a display that
+    # shows only the first few hundred can still say truthfully how many of
+    # each reason exist rather than how many it happens to be showing.
+    reasons = {}
+    for r in rows:
+        reasons[r["reason"]] = reasons.get(r["reason"], 0) + 1
+    return {"total": len(rows), "shown": min(len(rows), limit),
+            "reasons": reasons, "files": rows[:limit]}
 
 
 def first_backup():
@@ -1219,6 +1268,7 @@ def gather(prev):
     o["last_backup_days"] = last_backup_days()
     o["first_backup"] = first_backup()
     o["skipped"] = skipped_files()
+    o["skipped_list"] = skipped_list()
     o["files"] = files
 
     for xb, (nm, fs, part, thr, seen) in _inflight.items():

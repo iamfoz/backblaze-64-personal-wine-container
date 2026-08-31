@@ -201,6 +201,16 @@ stable release.
   colour, the tooltip says what it is, and the API carries the per-reason breakdown. The
   number that means data is not backed up is the skipped-file count, which is reported
   separately and loudly.
+- A Skipped Files tab in the web interface, listing the files Backblaze has given up on with
+  their reasons, a filter, and a breakdown you can click to narrow by reason. Reasons read as
+  words with the client's own constant kept in the tooltip. Where the reason is a permissions
+  problem the page says what that means under this container and points at `bb-doctor`, which
+  diagnoses it and prints the command. It sits behind the web login like the rest of the
+  dashboard, because a list of paths is worth protecting, and on the API the same list is
+  withheld from any key without `read:files`.
+- Buttons and chips drawn on the border colour had near-black text hardcoded on them, which
+  in the dark theme was 1.5:1 against a dark grey and effectively invisible. They use the
+  palette's accent and background instead, which every theme guarantees contrast between.
 - The ETA no longer reports absurd figures while a backup gets going. A backup starts on its
   small files, and a handful of those gives a per-byte rate low enough to extrapolate into
   the millennia: one run read "4259966d", about 11,600 years, and the trend feature then

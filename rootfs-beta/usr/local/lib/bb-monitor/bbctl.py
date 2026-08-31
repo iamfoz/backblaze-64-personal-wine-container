@@ -38,12 +38,24 @@ TIMEOUT = 60          # wine start-up is slow; a hung call must not hold a worke
 def run(name):
     """(ok, message). `name` must already be a key of ACTIONS."""
     argv = ACTIONS[name][0]
+    # Matched to the invocation proven by hand: a working directory of the
+    # install folder, and HOME set. This runs from an s6 service rather than a
+    # shell, and s6 hands down a minimal environment, so anything Wine needs has
+    # to be supplied rather than assumed. Wine without HOME tries to build a
+    # fresh prefix somewhere it cannot write and fails in a way that has nothing
+    # to do with the command it was asked to run.
     env = dict(os.environ, WINEPREFIX=PREFIX, WINEDEBUG="-all")
+    env.setdefault("HOME", "/config")
+    if "/opt/wine/bin" not in env.get("PATH", ""):
+        env["PATH"] = "/opt/wine/bin:" + env.get("PATH", "/usr/bin:/bin")
     try:
         p = subprocess.run(["wine", BZCLI] + argv, env=env, timeout=TIMEOUT,
+                           cwd=os.path.dirname(BZCLI),
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except FileNotFoundError:
         return False, "wine is not on PATH"
+    except OSError as exc:
+        return False, "could not run wine: %s" % exc
     except subprocess.TimeoutExpired:
         return False, "bzcli did not finish within %ds" % TIMEOUT
     out = (p.stdout or b"").decode("utf-8", "replace").strip()
@@ -51,8 +63,12 @@ def run(name):
     if p.returncode == 0:
         return True, out or "ok"
     # bzcli documents non-zero as failure with detail on stderr. Passed through
-    # rather than summarised, since the caller cannot see the container's log.
-    return False, err or out or "bzcli exited %d" % p.returncode
+    # rather than summarised, since the caller cannot see the container's log,
+    # and with the exit status kept alongside it: a Wine startup failure writes
+    # to stderr and exits non-zero, and the two together say which happened.
+    detail = err or out
+    return False, ("bzcli exited %d: %s" % (p.returncode, detail) if detail
+                   else "bzcli exited %d with no output" % p.returncode)
 
 
 def report_value(query):

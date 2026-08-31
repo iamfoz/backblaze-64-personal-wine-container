@@ -39,6 +39,7 @@
 <div id="tabs" role="tablist">
   <button role="tab" data-pane="desktop" aria-controls="pane-desktop" aria-selected="true">Desktop</button>
   <button role="tab" data-pane="monitor" aria-controls="pane-monitor" aria-selected="false">Upload Monitor</button>
+  <button role="tab" data-pane="skipped" aria-controls="pane-skipped" aria-selected="false">Skipped Files</button>
   <button role="tab" data-pane="api" aria-controls="pane-api" aria-selected="false">API</button>
   <span id="brand">Backblaze 64</span>
 </div>
@@ -60,6 +61,13 @@
 <iframe id="pane-monitor" class="pane" role="tabpanel" hidden
         title="Upload monitor"></iframe>
 
+<!-- The files Backblaze has given up on. Also lazy, and also served through
+     /monitor/ so it inherits the login: this pane is a list of paths on the
+     user's own share, which is the last thing that should be readable without
+     one. -->
+<iframe id="pane-skipped" class="pane" role="tabpanel" hidden
+        title="Skipped files"></iframe>
+
 <!-- Key management. Served through /monitor/ so it inherits the same login as
      the dashboard: creating a key must never sit on the exempted /api/v1/ path. -->
 <iframe id="pane-api" class="pane" role="tabpanel" hidden
@@ -68,13 +76,15 @@
 <script>
 (function(){
   var MON = '/monitor/';
+  var SKIP = '/monitor/skipped';
   var API = '/monitor/apikeys';
   var tabs = Array.prototype.slice.call(document.querySelectorAll('#tabs button'));
   var panes = { desktop: document.getElementById('pane-desktop'),
                 monitor: document.getElementById('pane-monitor'),
+                skipped: document.getElementById('pane-skipped'),
                 api: document.getElementById('pane-api') };
-  var loaded = { desktop: true, monitor: false, api: false };
-  var SRC = { monitor: MON, api: API };
+  var loaded = { desktop: true, monitor: false, skipped: false, api: false };
+  var SRC = { monitor: MON, skipped: SKIP, api: API };
 
   function show(name){
     if(!panes[name]) name = 'desktop';
