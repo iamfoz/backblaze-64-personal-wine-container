@@ -122,6 +122,14 @@ Pausing is cooperative: the backup client is asked to stop, and its own process 
 alone. Nothing here kills a process. Starting a backup is how a pause is lifted; there is no
 separate resume.
 
+It does stop the uploads. Measured on a live backup: 8 transfers completed in the minute
+before pausing, none at all in the two minutes after, and they resumed on `backup-now`.
+
+Backblaze's own desktop window may still show the backup as running while it is paused. The
+pause is real regardless, and `paused` in the status payload reflects the client's own pause
+file rather than what that window is displaying, so build a pause button from the field
+rather than from a screenshot of the GUI.
+
 ### `POST /api/v1/report`
 
 Requires `report`. Starts a diagnostic bundle and returns `202` at once, because
