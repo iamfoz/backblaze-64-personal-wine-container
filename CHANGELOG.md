@@ -201,6 +201,11 @@ stable release.
   colour, the tooltip says what it is, and the API carries the per-reason breakdown. The
   number that means data is not backed up is the skipped-file count, which is reported
   separately and loudly.
+- A pause now reads as "Pausing" until it has actually taken. The client finishes the
+  transfers already in flight before it stops, so saying "Paused" the moment the request
+  lands was ahead of the truth: uploads were still completing. Backblaze's own window, which
+  appeared not to notice a pause, turns out to have been right all along and ours was early.
+  The feed carries a `draining` flag for the same distinction.
 - While paused, the monitors said "Preparing <file>" beside a state of Paused, which reads
   as stalled and says the opposite of what is happening. The client parks on the file it was
   about to take, so paused it is the next file rather than the current one, and both monitors

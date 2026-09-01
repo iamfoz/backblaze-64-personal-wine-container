@@ -125,10 +125,12 @@ separate resume.
 It does stop the uploads. Measured on a live backup: 8 transfers completed in the minute
 before pausing, none at all in the two minutes after, and they resumed on `backup-now`.
 
-Backblaze's own desktop window may still show the backup as running while it is paused. The
-pause is real regardless, and `paused` in the status payload reflects the client's own pause
-file rather than what that window is displaying, so build a pause button from the field
-rather than from a screenshot of the GUI.
+Pausing is not instant. The client finishes the transfers already in flight before it stops,
+which is the point of asking it rather than killing it, and Backblaze's own window shows the
+backup as still running until that drain completes. That window is not lagging; it is
+waiting for the same thing. `paused` goes true when the pause is requested and `draining`
+stays true until the client has actually stopped, so a consumer wanting to show a settled
+state should wait for `draining` to clear rather than treat the request as the arrival.
 
 ### `POST /api/v1/report`
 
@@ -226,7 +228,8 @@ What the client has in hand right now. `null` when it is doing nothing.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `paused` | bool | Same as the top-level `paused`. |
+| `paused` | bool | Same as the top-level `paused`. True from the moment the pause is requested. |
+| `draining` | bool | True while the client is still finishing transfers that were already in flight. A pause is not instant, and until this goes false the backup is on its way to stopping rather than stopped. `state` reads `Pausing` meanwhile. |
 | `until` | int, null | Epoch seconds the pause runs to. `null` means it holds until a backup is started. |
 | `reason` | string, null | The client's own word for why, when it paused itself. |
 

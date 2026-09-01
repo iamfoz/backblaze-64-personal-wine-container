@@ -1254,8 +1254,19 @@ def gather(prev):
     # A paused backup still leaves bztransmit running and current_file naming
     # whatever it had last, so without this the monitors read "Uploading" while
     # nothing moves.
+    #
+    # A pause is not instant. The client finishes the transfers already in flight
+    # before it stops, which is the point of asking rather than killing, and only
+    # then does its own window show Paused. Saying "Paused" the moment the pause
+    # file appears is therefore ahead of the truth: observed on a live backup,
+    # transfers kept completing after the request while threads were still
+    # draining. Threads still running means it is on its way, not there yet.
     if o["pause"]["paused"]:
-        o["state"] = "Paused"
+        draining = bool(threads)
+        o["pause"]["draining"] = draining
+        o["state"] = "Pausing" if draining else "Paused"
+    else:
+        o["pause"]["draining"] = False
     o["perf"] = measured_perf()
     o["health"] = health()
     o["upload_success"] = upload_success_today()
