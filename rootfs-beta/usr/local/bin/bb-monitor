@@ -385,7 +385,14 @@ def draw(scr,d,st):
             yy+=1; shown=True
         act=d.get("activity")
         if act and yy<rec_top-1 and not any(f[0]==act.get("file") for f in files):
-            lbl=act["phase"]+(" part %d"%act["part"] if act.get("part") else "")
+            # While paused the client parks on the file it was about to take, so
+            # current_file still reads "Preparing X". Rendering that verb next to
+            # a Paused state says the opposite of what is happening, and reads as
+            # stalled. Paused, it is the next file rather than the current one.
+            if (d.get("pause") or {}).get("paused"):
+                lbl="Paused before"
+            else:
+                lbl=act["phase"]+(" part %d"%act["part"] if act.get("part") else "")
             aw(scr,yy,2,wclip("%s  %s"%(lbl,act.get("file") or ""),iw),NORM)
             yy+=1; shown=True
         if not files and not sc and not cm and not shown:

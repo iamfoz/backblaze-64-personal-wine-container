@@ -201,6 +201,10 @@ stable release.
   colour, the tooltip says what it is, and the API carries the per-reason breakdown. The
   number that means data is not backed up is the skipped-file count, which is reported
   separately and loudly.
+- While paused, the monitors said "Preparing <file>" beside a state of Paused, which reads
+  as stalled and says the opposite of what is happening. The client parks on the file it was
+  about to take, so paused it is the next file rather than the current one, and both monitors
+  now say so.
 - A Skipped Files tab in the web interface, listing the files Backblaze has given up on with
   their reasons, a filter, and a breakdown you can click to narrow by reason. Reasons read as
   words with the client's own constant kept in the tooltip. Where the reason is a permissions

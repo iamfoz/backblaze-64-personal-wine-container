@@ -1533,7 +1533,8 @@ async function tick(){
     if(a && !d.files.some(f => a.file && f.name === a.file)){
       nowHtml = '<div class="nowline"'+(a.internal ? ' title="The client\u2019s own '+
         'bookkeeping going up, not one of your files."' : '')+'>' +
-        '<span class="nowphase">'+esc(a.phase)+(a.part ? ' part '+a.part : '')+'</span>' +
+        '<span class="nowphase">'+(d.paused ? 'Paused before'
+            : esc(a.phase)+(a.part ? ' part '+a.part : ''))+'</span>' +
         (a.file ? '<span class="nowfile">'+esc(a.file)+'</span>' : '') + '</div>';
     }
     var head = scanHtml + stripHtml + nowHtml;
