@@ -48,7 +48,7 @@ else
     # ("# SkippedFilesReportStarted: ...") and other non-record lines, which a
     # bare non-empty count read as skipped files. Seen live: a clean list with
     # only its header reported "2 file(s) skipped". The same rule bbdata's
-    # counter always applied — real fields, non-empty reason — applies here.
+    # counter always applied, real fields with a non-empty reason, applies here.
     # awk alone does the counting: grep -c prints 0 AND exits nonzero on no
     # matches, so a trailing "|| echo 0" produced the two-line string "0\n0",
     # which is not equal to "0" and sailed past the no-files branch.

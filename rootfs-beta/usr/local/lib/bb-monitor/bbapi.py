@@ -137,7 +137,7 @@ def _hash(secret):
 
 
 def create(label, scopes, expires_in_days=None):
-    """Mint a key. Returns (record, secret_once) — the secret is never stored.
+    """Mint a key. Returns (record, secret_once). The secret is never stored.
 
     `expires_in_days` of None means it never expires, which is the right answer
     for something wired into a dashboard that should keep working. A key handed

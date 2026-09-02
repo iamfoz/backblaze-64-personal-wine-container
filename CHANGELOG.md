@@ -243,7 +243,7 @@ stable release.
   dutifully compared today's nonsense against yesterday's. An estimate beyond a century is
   withheld rather than shown, and the trend ignores estimates resting on fewer than three
   completed transfers and does not record them, so a bad reading cannot poison the next day's
-  comparison either. A genuinely dismal estimate still shows: 100 TB on a 1 Mbit/s uplink is
+  comparison either. A dismal estimate still shows: 100 TB on a 1 Mbit/s uplink is
   about 25 years and that is a true answer.
 - With no usable estimate the ETA now reads "not yet" rather than "stalled". Stalled was true
   when the only cause was a dead rate; it is wrong when the backup is uploading briskly and

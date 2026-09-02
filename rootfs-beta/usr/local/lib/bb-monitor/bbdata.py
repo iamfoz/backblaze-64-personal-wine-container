@@ -50,9 +50,8 @@ _recent = []
 _last_named = [None]        # last whole file the client named
 _sess = 0
 _rate_ema = 0.0
-# Throughput history for the ETA: (bytes, seconds) per genuinely-completed
-# transfer (a whole file, or a whole multi-part file once all its parts are
-# in). Weighting by actual bytes/duration over the last several completions
+# Throughput history for the ETA: (bytes, seconds) per completed transfer,
+# meaning a whole file, or a whole multi-part file once all its parts are in. Weighting by actual bytes/duration over the last several completions
 # is far steadier than the live 2s network-counter sample.
 _completed_hist = deque(maxlen=10)
 
@@ -90,7 +89,7 @@ TCPI_RTT_OFFSET = 68
 # socket the kernel reports on ends at the proxy rather than at Backblaze. Its
 # round-trip time is then a fraction of a millisecond and describes nothing
 # useful. Real paths to a storage pod are milliseconds at best, so anything this
-# low means something local is answering, and n/a is the honest reading. Costs
+# low means something local is answering, so the figure is reported as n/a. Costs
 # nothing on Unraid, where containers get real routed networking and this never
 # fires. Also catches a transparent proxy on someone's own network.
 IMPLAUSIBLE_RTT_MS = 1.0
@@ -738,7 +737,7 @@ def _eta_trend(backup):
     delta = eta - prev
     # Steady means within two percent or within a day, whichever is larger: a
     # sub-day wobble on a short ETA is sampling noise, and on a six-month one
-    # even two percent is several days, which is genuinely news.
+    # even two percent is several days, which is news.
     if abs(delta) <= max(86400, prev * ETA_STEADY):
         direction = "steady"
     else:
@@ -1153,9 +1152,9 @@ def gather(prev):
             # A backup starts on the small files, and a handful of those gives a
             # per-byte rate low enough to extrapolate into the millennia: one
             # observed run read "4259966d", about 11,600 years. A slow uplink
-            # genuinely can take years, so the ceiling is generous, but past it
-            # the number is arithmetic rather than an estimate and saying
-            # nothing is more honest than saying that.
+            # can take years, so the ceiling is generous, but past it the
+            # number is arithmetic rather than an estimate, and showing
+            # nothing beats showing that.
             o["backup"]["eta_seconds"] = eta if eta <= ETA_MAX else None
         else:
             o["backup"]["eta_seconds"] = None
