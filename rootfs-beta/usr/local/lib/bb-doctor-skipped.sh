@@ -39,10 +39,10 @@ win_to_container() {
     esac
 }
 
-echo "Files the client has given up on"
+echo "Files that the client did not back up"
 
 if [ ! -r "$SKIPLIST" ]; then
-    OK "no skipped-file list yet (nothing has been given up on)"
+    OK "the client has no skipped-file list yet, so it has not refused any file"
 else
     # A record has a tab-separated reason; the file also carries comment lines
     # ("# SkippedFilesReportStarted: ...") and other non-record lines, which a
@@ -54,10 +54,11 @@ else
     # which is not equal to "0" and sailed past the no-files branch.
     total="$(grep -v '^#' "$SKIPLIST" 2>/dev/null | awk -F'\t' 'NF>=3 && $2!="" {n++} END{print n+0}')"
     if [ "$total" = 0 ]; then
-        OK "no files skipped"
+        OK "the client backed up all of the selected files"
     else
-        WARN "${total} file(s) skipped and not backed up"
-        NOTE "these are not queued and not retried, and the desktop Issues tab does not list them"
+        WARN "the client did not back up ${total} file(s)"
+        NOTE "the client does not queue these files and does not try again. The desktop"
+        NOTE "window does not show them."
         echo
         NOTE "by reason:"
         grep -v '^#' "$SKIPLIST" 2>/dev/null | awk -F'\t' 'NF>=3 && $2!=""' \
@@ -68,7 +69,7 @@ else
         # Work out what is actually wrong with each one, up to a sample. Reading
         # a path is the only way to tell an unreadable file from a deleted one.
         echo
-        NOTE "checking the first few:"
+        NOTE "the first files on the list:"
         unreadable=""; missing=0; readable=0; checked=0; nopath=0
         # The client is a Windows program and writes this file with CRLF, so
         # every line arrives with a carriage return still on it. Python's
@@ -121,32 +122,33 @@ else
             fi
         done < "$SKIPLIST"
 
-        [ "$nopath"   -gt 0 ] && NOTE "  ${nopath} line(s) carried no path this could recognise"
-        [ "$missing"  -gt 0 ] && NOTE "  ${missing} no longer exist, so nothing to fix"
-        [ "$readable" -gt 0 ] && NOTE "  ${readable} readable now, and should clear on the next scan"
+        [ "$nopath"   -gt 0 ] && NOTE "  ${nopath} line(s) do not contain a file path"
+        [ "$missing"  -gt 0 ] && NOTE "  ${missing} file(s) no longer exist. You do not need to do anything."
+        [ "$readable" -gt 0 ] && NOTE "  ${readable} file(s) can be read now. They leave the list at the next scan."
 
         if [ -n "$unreadable" ]; then
             # One bad directory usually explains the lot: mine was 770 files in a
             # single folder that had ended up root-owned and 0700.
             dirs="$(printf '%s' "$unreadable" | sort -u)"
             ndirs="$(printf '%s\n' "$dirs" | grep -c .)"
-            NOTE "  unreadable by this container, in ${ndirs} director$([ "$ndirs" = 1 ] && echo y || echo ies):"
+            NOTE "  this container cannot read these files. They are in ${ndirs} director$([ "$ndirs" = 1 ] && echo y || echo ies):"
             me="$(id -un 2>/dev/null || echo app)"
             printf '%s\n' "$dirs" | while read -r d; do
                 [ -n "$d" ] || continue
                 own="$(stat -c '%U:%G %a' "$d" 2>/dev/null || echo 'unknown')"
                 NOTE "    ${d}"
-                NOTE "      owner/mode ${own}, and this container runs as ${me} ($(id -u):$(id -g))"
+                NOTE "      owner and mode: ${own}. This container runs as ${me} ($(id -u):$(id -g))."
             done
             echo
-            NOTE "This is ownership on the mounted source rather than anything Backblaze has done."
-            NOTE "Fix it on the host, not in here, since these are your files and other"
-            NOTE "software may rely on who owns them. On Unraid something like:"
+            NOTE "The owner of the files on the mounted share is the cause. Backblaze did"
+            NOTE "not cause this. Correct the owner on the host, not in this container."
+            NOTE "These are your files, and other software can depend on the owner."
+            NOTE "On Unraid, use a command like this:"
             NOTE ""
             NOTE "  chown -R $(id -u):$(id -g) '/mnt/user/<share>/<the folder above>'"
             NOTE ""
-            NOTE "They stay on this list until the client rescans, so the count will not"
-            NOTE "drop the moment you fix it."
+            NOTE "The files stay on this list until the client scans again. The count does"
+            NOTE "not decrease immediately after you correct the owner."
         fi
         [ "$checked" -ge 20 ] && NOTE "  (checked the first 20 of ${total})"
     fi

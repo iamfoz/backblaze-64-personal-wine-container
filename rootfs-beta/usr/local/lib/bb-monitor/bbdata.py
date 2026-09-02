@@ -87,11 +87,11 @@ TCPI_RTT_OFFSET = 68
 # Docker Desktop on Mac and Windows routes container traffic through a userspace
 # proxy on the host, and where that proxy terminates the TCP connection the
 # socket the kernel reports on ends at the proxy rather than at Backblaze. Its
-# round-trip time is then a fraction of a millisecond and describes nothing
-# useful. Real paths to a storage pod are milliseconds at best, so anything this
-# low means something local is answering, so the figure is reported as n/a. Costs
-# nothing on Unraid, where containers get real routed networking and this never
-# fires. Also catches a transparent proxy on someone's own network.
+# round-trip time is then a fraction of a millisecond. That value describes
+# nothing useful. A real path to a storage pod needs milliseconds. A lower
+# value shows that something local answered, so the monitor reports n/a. This
+# costs nothing on Unraid, where containers get routed networking and this
+# condition does not occur. It also finds a transparent proxy on your network.
 IMPLAUSIBLE_RTT_MS = 1.0
 
 
@@ -228,10 +228,10 @@ def client_state():
     p = re.search(r'current_file_fullpath="([^"]*)"', t)
     state = m.group(1) if m else None
     cur = unesc(f.group(1)) if f else None
-    # cur_state is coarse and stays "transmitting" through work that is nothing of
-    # the sort. The activity is in current_file, which holds a phrase rather than a
-    # name when there is no file: "Producing File Lists..." with a fullpath of
-    # "none". Where that happens the phrase is the state.
+    # cur_state is coarse. It stays "transmitting" during work that is not a
+    # transmission. The activity is in current_file. That field holds a phrase,
+    # not a name, when there is no file: "Producing File Lists..." with a
+    # fullpath of "none". The phrase is then the state.
     if cur and (not p or p.group(1) in ("none", "")):
         state = cur.rstrip(".").strip() or state
     return (state, cur)
@@ -303,8 +303,9 @@ def scan_progress(live=None):
     totally_final="false" until it finishes. topdirs gives directories indexed
     out of the total, which is the only real percentage the client exposes.
     """
-    # The .future set is not removed when a scan ends, so its mere presence means
-    # nothing: it sat at 14 of 28 for an hour while files uploaded. A scan is live
+    # The client does not remove the .future set when a scan ends. The presence
+    # of the set proves nothing. It stayed at 14 of 28 for one hour while the
+    # client uploaded files. A scan is live
     # only while bzfilelist is running and the files are still being written to.
     if live is False:
         return None
@@ -484,9 +485,9 @@ def skipped_list(limit=500):
     if not rows:
         return None
     rows.reverse()          # the client appends, so the newest are last
-    # Counted over every row rather than the listed ones, so a display that
-    # shows only the first few hundred can still say truthfully how many of
-    # each reason exist rather than how many it happens to be showing.
+    # The count uses every row, not only the rows that this function returns. A
+    # display that shows the first few hundred files can thus give the correct
+    # number for each reason.
     reasons = {}
     for r in rows:
         reasons[r["reason"]] = reasons.get(r["reason"], 0) + 1
@@ -1110,9 +1111,9 @@ def gather(prev):
     # The client's own state when it offers one, since it knows what it is doing
     # better than a guess from which processes exist.
     reported = client_state()[0]
-    # The client writes cur_state="none" when it has nothing to say, and
-    # capitalising that produced the literal string "None", which reads like a
-    # null that leaked into the payload. Treat it as no answer and fall back to
+    # The client writes cur_state="none" when it has no state to report. The
+    # capitalised form is the text "None". A reader sees that as a null value
+    # that reached the payload by mistake. Treat it as no answer and fall back to
     # what the running processes show.
     if reported and reported.strip().lower() in ("none", "unknown", ""):
         reported = None
@@ -1194,12 +1195,12 @@ def gather(prev):
             continue
         win = fields[-1]
         name = win.split("\\")[-1]
-        # numBytes_to_send_in_shm belongs to the part a thread is carrying, not to
-        # the file, and readings well below the part size turned filesize/part into
-        # tens of thousands ("21/36010"). A file's last part is short by definition,
-        # and other readings below the part size have been observed without the
-        # cause being established. The bz_done line carries a part size that is
-        # constant for the file, so it is used instead.
+        # numBytes_to_send_in_shm gives the size of the part that a thread carries.
+        # It does not give the size of the file. A value much smaller than the part
+        # size made filesize/part very large ("21/36010"). The last part of a file
+        # is always short. Other values below the part size also occur, and the
+        # cause of those is not known. The bz_done line gives a part size that
+        # stays constant for the file, so the code uses that value.
         part = _part_size(fields, int(mp.group(1)))
         thr = int(mw.group(1)) if mw else -1
         fsize = 0
@@ -1231,8 +1232,9 @@ def gather(prev):
         files.append((name, part, fsize, pct, _parts_progress(name, fsize, part)))
         cur[x] = (name, fsize, part, thr, newest_line(thr))
     act = activity()
-    # Small files are gone before a poll can catch a thread carrying one, so they
-    # never enter the in-flight table and so never reach the completed one either.
+    # A small file completes before a poll can find a thread that carries it.
+    # These files thus never enter the in-flight table. They also never reach
+    # the completed table.
     # Backblaze pushes them in bundles rather than singly, which is why the log has
     # no per-file record of them. The client does name each one as it deals with
     # it, so a change of name means it has finished with the one before.
