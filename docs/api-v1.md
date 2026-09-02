@@ -1,18 +1,19 @@
 # HTTP API, version 1
 
-A key-authenticated read and control surface for anything outside the browser: a status
-display, an automation system, a script, a plugin of your own. It is served on the same
-port as the web interface, so nothing extra needs publishing.
+The API gives read and control access to any consumer outside the browser. Examples: a
+status display, an automation system, a script, or a plugin of your own. A key
+authenticates each request. The container serves the API on the same port as the web interface, so you do not
+need to publish another port.
 
-The web interface itself sits behind whatever `WEB_AUTHENTICATION` and `SECURE_CONNECTION`
-are configured for the GUI. `/api/v1/` is the one path exempted from that login, because a
-consumer that is not a browser cannot satisfy one. It defends itself with a key instead.
+`WEB_AUTHENTICATION` and `SECURE_CONNECTION` control access to the web interface.
+`/api/v1/` is the one path that this login does not protect, because a consumer that is not
+a browser cannot complete a login. A key protects the API instead.
 
 ## Turning it on
 
-There is no separate switch. The API is live exactly when an unrevoked key exists, and
-answers `404` on every path until then, so a container nobody has configured does not
-advertise it.
+There is no separate switch. The API is active exactly when one key exists and you have not
+revoked it. Until then it answers `404` on every path. A container that nobody has
+configured therefore does not show that the API is present.
 
 Create a key from the **API** tab of the web interface, or from a terminal:
 
@@ -20,9 +21,10 @@ Create a key from the **API** tab of the web interface, or from a terminal:
 docker exec <container> bb-apikey create --label "status display" --scope read
 ```
 
-The secret is printed once and stored only as a SHA-256. If it is lost, revoke the key and
-issue another. `bb-apikey list` shows what exists, `bb-apikey revoke <id>` withdraws one,
-and `bb-apikey permissions` prints what can be granted.
+The container prints the secret one time and stores only a SHA-256 of it. If you lose the
+secret, revoke the key and create another. `bb-apikey list` shows the keys that exist,
+`bb-apikey revoke <id>` revokes one key, and `bb-apikey permissions` prints the permissions
+that you can grant.
 
 ## Authenticating
 
@@ -33,37 +35,39 @@ curl -H "Authorization: Bearer bb64_1a2b3c4d_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
      https://<host>:<port>/api/v1/status
 ```
 
-A key is `bb64_<id>_<secret>`. The `<id>` is public: it identifies the key in listings and
-logs, so a failed request can be traced without the secret appearing anywhere.
+A key has the form `bb64_<id>_<secret>`. The `<id>` is public. It identifies the key in the
+listings and in the log, so you can trace a failed request and the secret does not appear
+anywhere.
 
 | Response | Meaning |
 |---|---|
-| `200` | Fine. |
-| `401` | Missing, malformed, revoked, or lacking the permission for this endpoint. |
+| `200` | The request succeeded. |
+| `401` | The key is missing, malformed, or revoked, or it does not hold the permission for this endpoint. |
 | `404` | No key exists at all, or the endpoint does not exist. |
-| `502` | The action was attempted and the backup client reported failure. |
-| `503` | The backup client's own tool is not present in the container. |
+| `502` | The API tried the action, and the client reported a failure. |
+| `503` | The client's own tool is not present in the container. |
 
-`401` covers "wrong key" and "right key, wrong permission" alike. That is deliberate: a key
-learns nothing about what it does not hold.
+`401` covers a wrong key and a correct key without the necessary permission. This is
+deliberate: a key learns nothing about the permissions that it does not hold.
 
 ## Permissions
 
-Granted per operation, not in tiers, because these are not a ladder — none implies another.
+You grant each permission for one operation. There are no tiers, because no permission
+includes another one.
 
 | Permission | Grants |
 |---|---|
 | `read` | Status: rates, progress, memory, latency, health. No file names. |
-| `read:files` | Adds the names of files being backed up. |
+| `read:files` | Adds the names of the files that the client backs up. |
 | `control:backup-now` | Start a backup if one is not already running. |
 | `control:pause` | Pause a running backup. |
 | `report` | Generate and download a diagnostic bundle. |
 
-`control` is accepted as shorthand for both control operations and expands when the key is
-created, so what is stored is always the explicit list.
+`control` is a shorthand for both control operations. The container expands the shorthand
+when it creates the key, so it always stores the explicit list.
 
-Grant the least that works. A display showing rate and progress needs `read` alone, and
-withholding `read:files` from it means a compromised key does not enumerate everything on
+Grant the smallest set that works. A display that shows the rate and the progress needs
+`read` alone. If you do not grant `read:files`, a compromised key cannot list everything on
 the array.
 
 ## Endpoints
@@ -72,20 +76,21 @@ the array.
 
 Requires `read`. The whole monitor payload. See the field reference below.
 
-`?fields=` trims the response to the top-level fields named, comma-separated, plus
-`schema` and `ok`, which every response carries:
+`?fields=` limits the response to the top-level fields that you name, separated by commas.
+Every response also carries `schema` and `ok`:
 
 ```
 curl -H "Authorization: Bearer <key>" "https://<host>:<port>/api/v1/status?fields=rate_bytes_per_sec,paused"
 ```
 
-Names the payload does not have are ignored rather than refused, so a consumer built
-against a newer container keeps working on an older one that lacks a field.
+The API ignores a name that the payload does not have, and does not refuse the request. A
+consumer that you built for a newer container therefore keeps working on an older container
+that does not have a field.
 
 ### `GET /api/v1/key`
 
-Any valid key. Describes the key presenting it, so a consumer can discover its own
-permissions rather than probing endpoints and collecting refusals.
+Any valid key. This endpoint describes the key that you present. A consumer can therefore
+find its own permissions. It does not have to try each endpoint and collect the refusals.
 
 ```json
 { "schema": 1, "id": "1a2b3c4d", "permissions": ["read", "read:files"] }
@@ -93,8 +98,8 @@ permissions rather than probing endpoints and collecting refusals.
 
 ### `GET /api/v1/control`
 
-Requires at least one `control:` permission. Lists only the operations that key holds, and
-whether the client's control tool is present.
+Requires at least one `control:` permission. It lists only the operations that the key
+holds. It also reports whether the client's control tool is present.
 
 ```json
 {
@@ -118,32 +123,36 @@ Both return:
 { "schema": 1, "action": "pause", "ok": true, "detail": "..." }
 ```
 
-Pausing is cooperative: the backup client is asked to stop, and its own process is left
-alone. Nothing here kills a process. Starting a backup is how a pause is lifted; there is no
-separate resume.
+A pause is cooperative. The API asks the client to stop, and it does not touch the client's
+own process. The API never stops a process by force. To end a pause, start a backup. There
+is no separate resume.
 
-It does stop the uploads. Measured on a live backup: 8 transfers completed in the minute
-before pausing, none at all in the two minutes after, and they resumed on `backup-now`.
+A pause does stop the uploads. Measured on a live backup: 8 transfers completed in the
+minute before the pause, and none at all in the two minutes after. The transfers started
+again on `backup-now`.
 
-Pausing is not instant. The client finishes the transfers already in flight before it stops,
-which is the point of asking it rather than killing it, and Backblaze's own window shows the
-backup as still running until that drain completes. That window is not lagging; it is
-waiting for the same thing. `paused` goes true when the pause is requested and `draining`
-stays true until the client has actually stopped, so a consumer wanting to show a settled
-state should wait for `draining` to clear rather than treat the request as the arrival.
+A pause is not immediate. The client first completes the transfers that it already started.
+This is the reason to ask the client to stop and not to stop it by force. Backblaze's own
+window shows the backup as still running until those transfers complete. That window is not
+late; it waits for the same event.
+
+`paused` becomes true when you request the pause. `draining` stays true until the client
+has actually stopped. A consumer that shows a settled state must wait for `draining` to
+become false. Do not treat the request itself as the completed pause.
 
 ### `POST /api/v1/report`
 
-Requires `report`. Starts a diagnostic bundle and returns `202` at once, because
-generating one is not instant and a request that blocks is a request that times out
-somewhere in between.
+Requires `report`. It starts a diagnostic bundle and returns `202` immediately. The bundle
+is not instant to generate, and a request that waits for it can time out at some point in
+between.
 
 ```json
 { "schema": 1, "job": "a0bee5df9a11", "state": "running", "joined_existing": false }
 ```
 
-One bundle is built at a time. A second request while one is in flight returns the same
-job with `joined_existing: true` rather than running it twice over the same config.
+The container builds one bundle at a time. If you send a second request while a bundle is
+running, the API returns the same job with `joined_existing: true`. It does not build the
+bundle twice over the same config.
 
 ### `GET /api/v1/report/<job>`
 
@@ -157,84 +166,84 @@ Requires `report`. Poll until `state` is `done` or `failed`.
 }
 ```
 
-`download` is relative to `/api/v1/`. A finished job is forgotten an hour after it started.
+`download` is relative to `/api/v1/`. The container discards a finished job one hour after
+the job started.
 
 ### `GET /api/v1/report/download/<token>`
 
-**No bearer token, and none should be sent.** The link is the credential, which is the
-reason it exists: this is the URL a browser follows, and a key in a URL ends up in browser
-history, in server logs and in a `Referer` header.
+**This endpoint takes no bearer token, and you must not send one.** The link is the
+credential, which is the reason it exists: this is the URL a browser follows, and a key in a
+URL ends up in browser history, in server logs and in a `Referer` header.
 
-The link is single use and lives about five minutes. Fetching it returns the zip and burns
-the token; a second fetch, or one made after it expires, returns `404`. Generate another
-bundle if you need it again.
+You can use the link one time only, and it is valid for approximately five minutes. A fetch
+returns the zip and cancels the token. A second fetch, or one made after the link expires,
+returns `404`. Generate another bundle if you need it again.
 
 The bundle contains no file names, no account details and no keys, but it does describe the
-host. Look through it before sending it anywhere.
+host. Examine it before you send it anywhere.
 
 ## Schema versioning
 
-Every response carries `"schema"`. A consumer is released independently of this container,
+Every response carries `"schema"`. You release a consumer independently of this container,
 so the payload is a contract from the moment it ships.
 
 Within a version, fields may be **added**. Nothing is removed, renamed, or has its units or
-meaning changed. If that becomes necessary the number goes up and `/api/v2/` appears
-alongside. Read `schema` and refuse to render what you do not recognise, rather than
-guessing.
+meaning changed. If that becomes necessary, the number goes up and `/api/v2/` appears
+alongside. Read `schema` and refuse to show what you do not recognise, rather than guessing.
 
-Any field can be `null` when the underlying figure is not available — a scan is not running,
-the platform offers no round-trip time, the client has not reported yet. Treat `null` as
-"unknown", never as zero.
+Any field can be `null` when the figure behind it is not available. Examples: a scan is not
+running, the platform offers no round-trip time, or the client has not reported yet. Treat
+`null` as "unknown", never as zero.
 
 ## Field reference: `GET /api/v1/status`
 
-Everything is in raw units. Bytes are bytes, seconds are seconds, times are Unix epoch
-seconds. Nothing is pre-formatted, because a consumer wants to graph a number or format it
-for its own locale.
+All values are in raw units. Bytes are bytes, seconds are seconds, times are Unix epoch
+seconds. The container formats nothing, because a consumer wants to graph a number or
+format it for its own locale.
 
 ### Top level
 
 | Field | Type | Meaning |
 |---|---|---|
 | `schema` | int | Contract version. Currently `1`. |
-| `ok` | bool | `false` means collection failed; an `error` string is present instead of the rest. |
-| `build` | string | Running build of this container. Quote it in a bug report. |
-| `time` | int | When this snapshot was taken, epoch seconds. |
-| `poll_interval_seconds` | number | How often the container refreshes. Polling faster gains nothing. |
-| `state` | string | What the client is doing, in its own words. Reads `Paused` when paused. |
-| `paused` | bool | Whether a backup is paused. The field to render a pause button from. |
+| `ok` | bool | `false` means that the collection failed. An `error` string replaces the other fields. |
+| `build` | string | The build of this container that is running. Give this value in a bug report. |
+| `time` | int | When the container took this snapshot, epoch seconds. |
+| `poll_interval_seconds` | number | How often the container refreshes. A faster poll gives nothing more. |
+| `state` | string | What the client is doing, in its own words. It reads `Paused` during a pause. |
+| `paused` | bool | Whether a backup is paused. Use this field to draw a pause button. |
 | `threads` | int | Upload threads currently running. |
 | `rate_bytes_per_sec` | int | Current upload rate. |
 | `session_bytes` | int | Uploaded since this container started. |
 | `chunks_last_minute` | int | Chunks completed in the last 60 seconds. |
 | `uptime_seconds` | int | How long the monitor has been running. |
-| `skipped_files` | int, null | Files the client has given up on. Neither queued nor retried, so a non-zero value means data is unprotected. |
-| `last_backup_days` | number, null | Days since a backup pass completed. |
+| `skipped_files` | int, null | Files that the client has stopped trying to back up. It does not queue them and does not retry them, so a value above zero means that data is unprotected. |
+| `last_backup_days` | number, null | Days since a backup completed. |
 | `upload_pod` | string, null | The storage host in use. |
 | `compress_saved_bytes` | int, null | Bytes saved by compression. |
 
 ### `activity`
 
-What the client has in hand right now. `null` when it is doing nothing.
+What the client is working on right now. `null` when it is doing nothing.
 
 | Field | Type | Meaning |
 |---|---|---|
 | `phase` | string | `Uploading`, `Preparing`, `Finishing`, `Producing file lists`, `Uploading backup records`. |
 | `file` | string, null | The file. Always `null` without `read:files`. |
 | `part` | int, null | Which part of a multi-part file. |
-| `internal` | bool | `true` when this is the client's own bookkeeping rather than one of your files. |
+| `internal` | bool | `true` when the client is working on its own records and not on one of your files. |
 
 ### `pause`
 
 | Field | Type | Meaning |
 |---|---|---|
-| `paused` | bool | Same as the top-level `paused`. True from the moment the pause is requested. |
-| `draining` | bool | True while the client is still finishing transfers that were already in flight. A pause is not instant, and until this goes false the backup is on its way to stopping rather than stopped. `state` reads `Pausing` meanwhile. |
-| `until` | int, null | Epoch seconds the pause runs to. `null` means it holds until a backup is started. |
-| `reason` | string, null | The client's own word for why, when it paused itself. |
+| `paused` | bool | The same as the top-level `paused`. True from the moment that you request the pause. |
+| `draining` | bool | True while the client is still completing the transfers that it already started. A pause is not immediate. Until this field goes false, the backup is stopping but has not stopped. `state` reads `Pausing` meanwhile. |
+| `until` | int, null | Epoch seconds the pause runs to. `null` means that it holds until you start a backup. |
+| `reason` | string, null | The client's own word for the cause, when it paused itself. |
 
-A pause the client set for its own reasons looks the same as one requested through the API.
-There is no separate resume: starting a backup is what lifts it.
+A pause that the client set for its own reasons looks the same as one that you request
+through the API. There is no separate resume: a backup that you start is what ends it.
 
 ### `backup`
 
@@ -246,8 +255,8 @@ Overall progress. `null` before the client has reported totals.
 | `pct` | number | Percentage complete. |
 | `done_files` / `total_files` / `remaining_files` | int, null | File counts. |
 | `eta_seconds` | int, null | Estimate, weighted by completed transfers. |
-| `eta_date` | string, null | The same estimate as a calendar date, e.g. `17 Feb 2027`. Day resolution on purpose: an estimate from a moving average should not pretend to know the hour. |
-| `eta_samples` | int | How many completions the estimate rests on. A low number means a rough estimate. |
+| `eta_date` | string, null | The same estimate as a calendar date, e.g. `17 Feb 2027`. The resolution is one day on purpose, because an estimate from a moving average is not accurate to the hour. |
+| `eta_samples` | int | How many completed transfers the estimate rests on. A low number means a rough estimate. |
 
 ### `scan`
 
@@ -261,7 +270,8 @@ Present only while a file-list scan is running, `null` otherwise.
 
 ### `memory`, `swap`
 
-Container memory and host swap. Either can be `null` where the platform does not expose it.
+Container memory and host swap. Each one can be `null` where the platform does not report
+it.
 
 | Field | Type |
 |---|---|
@@ -271,14 +281,14 @@ Container memory and host swap. Either can be `null` where the platform does not
 
 ### `latency`
 
-Round-trip time to the storage host, read from the kernel rather than measured, so it costs
-no traffic.
+The round-trip time to the storage host. The container reads it from the kernel and does
+not measure it, so it costs no traffic.
 
 | Field | Type | Meaning |
 |---|---|---|
 | `ms` | number, null | Smoothed round-trip time. |
 | `host` | string, null | Which host it describes. |
-| `note` | string, null | Why `ms` is null: nothing uploading, no kernel socket table, or a connection ending locally. |
+| `note` | string, null | Why `ms` is null: nothing is uploading, there is no kernel socket table, or a connection ends locally. |
 
 ### `health`
 
@@ -289,39 +299,39 @@ An array, empty when nothing is wrong. Each entry:
 | `kind` | string | Machine-readable category. |
 | `text` | string | Human-readable description. |
 
-A non-empty array is the field to alert on.
+Alert when this array is not empty.
 
 ### `first_backup`
 
-Present while a first pass is still working through the set, `null` afterwards. `days` is
-how long it has been running, `pct` how far it has got. The client exposes no
-"initial backup finished" flag, so this is inferred.
+Present while a first backup is still working through the set, `null` afterwards. `days` is
+how long it has been running, `pct` is how far it has got. The client exposes no
+"initial backup finished" flag, so the container infers this.
 
 ### `client_measured_kbit`
 
-The backup client's own throughput measurement, not this container's: `large_kbit` for files
-over a megabyte, `small_kbit` for smaller ones. Small files are much slower because each
+The client's own throughput measurement, not this container's: `large_kbit` for files over
+a megabyte, `small_kbit` for smaller ones. Small files are much slower, because each one
 costs a round trip.
 
 ### `uploads_today`
 
-Counts for the client's most recent recorded day, or `null` if not yet reported.
+Counts for the client's most recent recorded day, or `null` if it has not reported yet.
 
 | Field | Type | Meaning |
 |---|---|---|
 | `success` | int | Uploads completed. |
-| `failures` | int | Failed **attempts**, not failed files. Kept under this name for the schema promise; `retried_attempts` is the same number under an honest one. |
-| `retried_attempts` | int | Attempts a storage vault turned away. The client retries against another vault and the file still goes up, so these name no file and appear in no per-file log. |
+| `failures` | int | Failed **attempts**, not failed files. The name stays for the schema promise; `retried_attempts` is the same number under an honest one. |
+| `retried_attempts` | int | Attempts that a storage vault turned away. The client retries against another vault and the file still goes up, so these name no file and appear in no per-file log. |
 | `reasons` | object | The breakdown: `vault_busy`, `vault_full`, `unknown`. |
 
-Do not alert on `failures`. A handful per day is Backblaze's own load balancing working as
-designed. The field that means data is not backed up is `skipped_files`.
+Do not alert on `failures`. A small number each day is Backblaze's own load balancing
+working as designed. `skipped_files` is the field that means data is not backed up.
 
 ### `composition`
 
 What the backup is made of, from the client's completed file statistics, or `null` before a
-scan has finished. Categories carry only nonzero counts; `other` is the remainder, so the
-parts account for the whole.
+scan has finished. The categories carry only nonzero counts. `other` is the remainder, so
+the parts account for the whole.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -336,8 +346,8 @@ parts account for the whole.
 ### `eta_trend`
 
 Whether the estimate moved since yesterday, or `null` when there is no estimate or no
-history yet. One sample is kept per day, because an estimate compared with itself an hour
-ago only measures the jitter of the moving average it came from.
+history yet. The container keeps one sample per day. The reason: an estimate compared with
+itself an hour ago only measures the jitter of the moving average it came from.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -346,31 +356,32 @@ ago only measures the jitter of the moving average it came from.
 
 ### `upload_history`
 
-The client's own per-day upload record, oldest first, up to seven days, or `null` before
-anything has been recorded. Each entry:
+The client's own per-day upload record, oldest first, up to seven days, or `null` before it
+has recorded anything. Each entry:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `day` | string, null | `YYYYMMDD`. Can be `null` if the client's record carried no recognisable date; order still holds. |
+| `day` | string, null | `YYYYMMDD`. Can be `null` if the client's record carried no date that the container recognises. The order still holds. |
 | `success` | int | Uploads completed that day. |
 | `retried` | int | Attempts turned away and retried. See `uploads_today`. |
 
 ### `completion`
 
-Present for the seven days after a first backup finishes, then `null` forever. It fires
-once: the moment is latched on disk, so files added later cannot replay it.
+Present for the seven days after a first backup finishes, then `null` forever. It occurs
+one time only: the container records the moment on disk, so files that you add later cannot
+repeat it.
 
 | Field | Type | Meaning |
 |---|---|---|
 | `done_at` | int | When the backup first caught up, epoch seconds. |
-| `days` | int | How long the first pass took. |
+| `days` | int | How long the first backup took. |
 | `total_bytes` | int | The size of the set it worked through. |
 
 ### `files`
 
 `null` entirely for a key without `read:files`.
 
-`in_flight` — an array of what is uploading now:
+`in_flight` — an array of the files that are uploading now:
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -390,71 +401,74 @@ once: the moment is latched on disk, so files added later cannot replay it.
 | `parts` | object | For a multi-part file, `done` and `total`. |
 | `bytes` / `seconds` / `kbit_per_sec` | int | Transfer figures. |
 | `thread` | int | Which thread carried it. |
-| `measured` | bool | `false` for a file too small to catch in flight: the client named it and moved on, so there is no thread, size or rate, and completion is inferred rather than confirmed. |
+| `measured` | bool | `false` for a file too small to observe during the transfer: the client named it and continued, so there is no thread, size or rate, and the container infers the completion rather than confirms it. |
 
-`chunk_map` — where the parts of the large file currently being split have got to, or
-`null` if none is:
+`chunk_map` — how far the parts of the large file that is currently being split have got,
+or `null` if there is none:
 
 | Field | Type | Meaning |
 |---|---|---|
 | `file` | string | The file being split. |
 | `total` | int | Total chunks. |
 | `sent` | array of int | Chunk indices seen to complete. |
-| `in_flight` | array of int | Chunk indices a thread is carrying now. |
+| `in_flight` | array of int | Chunk indices that a thread is carrying now. |
 
-Chunks that finished before the container started are in neither array: they cannot be told
-apart from chunks not yet started.
+Chunks that finished before the container started are in neither array. The container
+cannot tell them apart from chunks that have not started.
 
 ## Cross-origin requests
 
-A consumer running in a browser cannot reach the API from another origin unless you say so.
-Set `API_CORS_ORIGINS` on the container to a comma-separated list:
+A consumer that runs in a browser cannot reach the API from another origin unless you
+permit it. Set `API_CORS_ORIGINS` on the container to a list separated by commas:
 
 ```
 API_CORS_ORIGINS=https://dash.example.com,https://other.example
 ```
 
-Unset, which is the default, no cross-origin request succeeds. There is deliberately no
-wildcard: a key is still required either way, but with `*` any page the browser happens to
-load could poll the container in the background, and the answer describes what is being
-backed up.
+If you leave it unset, which is the default, no cross-origin request succeeds. There is
+deliberately no wildcard. A key is still required either way, but with `*` any page the
+browser happens to load could poll the container in the background. The answer describes
+what is being backed up.
 
-Only `/api/v1/` is covered. The key management pages are authorised by the browser session,
-so allowing another origin to call them would hand key creation to any page you have open.
+`API_CORS_ORIGINS` covers only `/api/v1/`. The web login authorises the key management
+pages, so allowing another origin to call them would hand key creation to any page you have
+open.
 
 ## Key expiry
 
 A key never expires unless you give it a lifetime. That is the right default for something
 long-running, which should not stop working at a date nobody remembers setting.
 
-Put a date on a key you are handing to someone for a one-off. An expired key stops
-authenticating, stops appearing as active, and does not keep the API alive on its own: if it
-is the only key, the surface returns to answering `404`.
+Put a date on a key that you hand to someone for a single task. An expired key stops
+authenticating and stops appearing as active. It also does not keep the API alive on its
+own: if it is the only key, the API returns to answering `404`.
 
 ## What is recorded
 
-A successful control action is written to the container log with the public id of the key
-that asked for it, so there is a trace of anything that changed the system. Reads are not
-logged: a consumer polling every few seconds would bury everything else.
+The container writes each successful control action to its log, with the public id of the
+key that asked for it. There is therefore a trace of anything that changed the system. The
+container does not log the reads, because a consumer polling every few seconds would bury
+everything else.
 
-Secrets never appear in a log. A failed authentication records the key's public id where one
-could be parsed, and nothing otherwise.
+Secrets never appear in a log. For a failed authentication, the container records the key's
+public id where it can parse one, and nothing otherwise.
 
-`bb-apikey list` shows when each key was last used, to the nearest minute. It is deliberately
-coarse: recording every request would mean rewriting the key store on each poll.
+`bb-apikey list` shows when each key was last used, to the nearest minute. It is
+deliberately coarse, because recording every request would mean rewriting the key store on
+each poll.
 
 ## Notes for consumers
 
-The service speaks HTTP/1.1 and keeps connections alive, so a polling client should reuse
-its connection rather than opening one per request.
+The service uses HTTP/1.1 and keeps connections alive. A polling consumer should reuse its
+connection rather than open one per request.
 
-Poll no faster than `poll_interval_seconds`. The container refreshes on its own schedule and
-a faster poll returns the same snapshot.
+Poll no faster than `poll_interval_seconds`. The container refreshes on its own schedule,
+and a faster poll returns the same snapshot.
 
 Handle `null` everywhere. Every optional field above is genuinely absent in ordinary
-conditions, not only in error.
+conditions, not only after an error.
 
-Do not parse `state` or `activity.phase` for control flow beyond display. They are the
-client's own words and can gain new values without a schema change.
+Do not parse `state` or `activity.phase` for control flow. Use them for display only. They
+are the client's own words, and they can gain new values without a schema change.
 
-Use `build` when reporting a problem. It identifies exactly what produced a payload.
+Give `build` when you report a problem. It identifies exactly what produced a payload.

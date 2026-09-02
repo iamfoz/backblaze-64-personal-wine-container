@@ -6,345 +6,349 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [beta] - 2026-08-09
 
-Beta channel only (`:beta` tag), carrying everything in 10.2.1 plus the additions below. The
-`:beta` tag is mutable, so each published build stamps a number: `bb-version` reports it
-and the monitors show it as `beta+<n>`. Quote that number in a bug report.
+This release is for the beta channel only (the `:beta` tag). It has everything in 10.2.1, plus
+the additions below. The `:beta` tag is mutable, so each published build has its own number.
+`bb-version` reports that number, and the monitors show it as `beta+<n>`. Give that number in a
+bug report.
 
-Everything below is beta only. The stable images are unchanged from 10.2.1 and will stay
-that way until this has run without problems for a while, at which point it moves into a
-stable release.
+Everything below is in the beta images only. The stable images are unchanged from 10.2.1. They
+stay unchanged until this beta runs without problems for some time. The changes then move into
+a stable release.
 
 ### Added
-- A second Wine patch, `patches/wine-fdwrite-rearm.patch`, re-arming FD_WRITE after a
-  poll observes that a socket cannot accept a send. Once FD_WRITE has been reported,
-  Wine masks POLLOUT for that socket and suppresses further notification, so an
-  application waiting on the event sleeps until its own timeout even though the socket
-  drained milliseconds later. Measured against the existing writability patch alone on a
-  live backup: aggregate upload rose from 13.0-13.9 Mbit/s to 40.9, at an unchanged
-  per-connection ceiling, so the gain is recovered idle time rather than a faster pipe.
-  **This is a workaround, not a fix.** It diverges from Windows, which does not re-signal
-  FD_WRITE on a poll-observed not-writable, and it is deliberately not being submitted
-  upstream. The upstream work is a larger redesign being discussed with the Wine
-  maintainers; this patch will be dropped as soon as that lands. Only `Dockerfile.beta`
-  applies it, and CI fails a stable build if a patched `wineserver` ever appears in one.
-- `bb-monitor` gains what the web dashboard had first: overall backup progress with its ETA,
-  files remaining, round-trip time, uptime, and the assigned upload server.
-- A settings dialog in `bb-monitor` too: `s` opens it, `Tab` switches between Preferences
-  and About, `Enter` opens the theme chooser, the arrows move through it with a live
-  preview. The theme choice is remembered in `/config/bb-monitor.conf`. All thirteen themes
-  are offered on any terminal, each with its own low-colour rendering.
-- The upload sparkline in `bb-monitor`, over the same forty-sample window the web dashboard
-  uses.
-- `bb-monitor-web`, the upload dashboard served over HTTP instead of the terminal, so a
-  session survives the console window closing. Shows overall backup progress with an ETA
-  weighted by completed transfers, files remaining, a live rate sparkline and uptime.
-  Contributed by rogman.
-- The dashboard is served through the existing web interface at `/monitor/` rather than on
-  a second port, so it inherits whatever `WEB_AUTHENTICATION` and `SECURE_CONNECTION` are
-  configured for the GUI. The service itself binds loopback only.
-- The web interface opens on a tabbed shell offering the Wine desktop and the upload
-  monitor, so the WebUI button reaches both rather than only the desktop. Switching tabs
-  hides the desktop rather than unloading it, so the VNC session survives a look at the
-  monitor. The monitor frame loads on first use, so its polling never starts for someone
-  who does not open it. The desktop stays directly reachable at `/desktop/` if the shell
-  itself is ever a problem.
-- Round-trip time to the storage pod, in both monitors. The figure is read from the kernel
-  rather than measured: every established connection already carries a smoothed round-trip
-  time, and `NETLINK_SOCK_DIAG` exposes it. There is no traffic when idle, and the number
-  describes the upload connections themselves. Sockets are matched on the owning uid of the
-  `-threadpush` processes rather than by walking another process's file descriptors, which
-  would need `CAP_SYS_PTRACE`. It reads n/a rather than guessing, and says which reason
-  applies: nothing uploading, no kernel socket table, or a connection that terminates locally
-  instead of at the pod. That last case covers Docker Desktop on Mac and Windows, where
-  container traffic passes through a proxy on the host that can end the connection before it
-  leaves the machine. `bb-monitor-web --dump-rtt` prints what the kernel reports, for checking
-  it inside a container. Original concept contributed by rogman.
+- A second Wine patch, `patches/wine-fdwrite-rearm.patch`. It re-arms FD_WRITE after a poll
+  shows that a socket cannot accept a send. After Wine reports FD_WRITE one time, it masks
+  POLLOUT for that socket and gives no further notification. An application that waits on the
+  event thus sleeps until its own timeout, although the socket drained milliseconds later.
+  Measured against the existing writability patch alone, on a live backup: the aggregate upload
+  rate increased from 13.0-13.9 Mbit/s to 40.9. The per-connection ceiling did not change, so
+  the increase is recovered idle time and not a faster connection. **This is a workaround, not
+  a fix.** It differs from Windows, which does not signal FD_WRITE again when a poll shows that
+  a socket is not writable. It is deliberately not submitted upstream. The upstream work is a
+  larger redesign, which is in discussion with the Wine maintainers. This patch will be removed
+  as soon as that redesign is available. Only `Dockerfile.beta` applies the patch, and CI makes
+  a stable build fail if a patched `wineserver` ever occurs in one.
+- `bb-monitor` now shows what the web dashboard showed first. It gives the overall backup
+  progress with its ETA, the files remaining, the round-trip time, the uptime, and the assigned
+  upload server.
+- `bb-monitor` also has a settings dialog. `s` opens it. `Tab` moves between the Preferences
+  tab and the About tab. `Enter` opens the theme chooser, and the arrow keys move through it
+  with a live preview. `bb-monitor` keeps the theme choice in `/config/bb-monitor.conf`. All
+  thirteen themes are available on any terminal, each with its own low-colour version.
+- An upload sparkline in `bb-monitor`. It uses the same forty-sample window as the web
+  dashboard.
+- `bb-monitor-web`, the upload dashboard over HTTP instead of the terminal. The session thus
+  continues when you close the console window. It shows the overall backup progress with an
+  ETA, which is weighted by the completed transfers. It also shows the files remaining, a live
+  rate sparkline and the uptime. Contributed by rogman.
+- The container serves the dashboard through the existing web interface at `/monitor/`, and not
+  on a second port. The dashboard thus uses the `WEB_AUTHENTICATION` and `SECURE_CONNECTION`
+  settings you configured for the GUI. The service itself binds to loopback only.
+- The web interface opens a tabbed shell with the Wine desktop and the upload monitor. The
+  WebUI button thus gives you both, and not only the desktop. When you change tabs, the shell
+  hides the desktop but does not unload it, so the VNC session continues while you look at the
+  monitor. The shell loads the monitor frame when you first use it, so the monitor never polls
+  for a user who does not open it. The desktop stays directly available at `/desktop/`, if the
+  shell itself ever causes a problem.
+- The round-trip time to the storage pod, in both monitors. The monitor reads the figure from
+  the kernel and does not measure it. Every established connection already carries a smoothed
+  round-trip time, and `NETLINK_SOCK_DIAG` gives access to it. There is no traffic when the
+  container is idle, and the figure describes the upload connections themselves. The monitor
+  matches the sockets on the owning uid of the `-threadpush` processes. It does not walk the
+  file descriptors of another process, because that would need `CAP_SYS_PTRACE`. The monitor
+  reads n/a instead of a guess, and says which reason applies. There are three reasons: nothing
+  uploads, there is no kernel socket table, or the connection ends locally instead of at the
+  pod. That last case covers Docker Desktop on Mac and on Windows. There, the container traffic
+  goes through a proxy on the host. That proxy can end the connection before it leaves the
+  machine. `bb-monitor-web --dump-rtt` prints what the kernel reports, so you can check this
+  inside a container. Original concept contributed by rogman.
 
-  Round-trip time is useful to read with transfer rate because per-connection
-  throughput is bounded by send buffer divided by RTT, so the two together give the
+  Read the round-trip time together with the transfer rate. The per-connection throughput is
+  limited to the send buffer divided by the RTT, so the two figures together give the
   per-thread ceiling to expect.
-- A settings dialog in the web dashboard, holding the thirteen colour themes and an About
-  tab reporting the running build, licence and credits.
-- The state now comes from the client rather than being inferred, from
-  `overviewstatus.xml`. Its `cur_state` turns out to be coarse and reads `transmitting`
-  through work that is nothing of the sort, so the activity is taken from `current_file`,
-  which holds a phrase rather than a name when there is no file: a scan reports
-  "Producing file lists" instead of the part in flight.
-- An API tab in the web interface, and a key-authenticated read feed at `/api/v1/status`
-  for anything outside the browser: a dashboard, an automation system, a script.
-  It carries raw numbers rather than the formatted strings the dashboard draws, so a
-  consumer can graph or format for itself, and every response is stamped with a schema
-  version, since a consumer is released independently of this container.
+- A settings dialog in the web dashboard. It holds the thirteen colour themes and an About tab.
+  The About tab reports the running build, the licence and the credits.
+- The state now comes from the client, in `overviewstatus.xml`, instead of being inferred. The
+  `cur_state` field is coarse: it reads `transmitting` through work that is nothing of the
+  sort. The monitors thus take the activity from `current_file`. When there is no file,
+  `current_file` holds a phrase and not a name: a scan reports "Producing file lists" instead
+  of the part in flight.
+- An API tab in the web interface, and a key-authenticated read feed at `/api/v1/status`. The
+  feed is for anything outside the browser: a dashboard, an automation system, or a script. It
+  carries raw numbers, and not the formatted strings the dashboard draws, so a consumer can
+  graph or format the data for itself. Every response has a schema version, because a consumer
+  is released independently of this container.
 
-  It is the one path exempted from the web login, so it defends itself with a bearer key
-  instead, and answers 404 rather than 403 until a key exists. Key management stays behind
-  the login. Keys are 256-bit random, shown once, and stored only as a SHA-256. `bb-apikey`
-  does the same job from a terminal.
+  The feed is the one path that does not use the web login, so it defends itself with a bearer
+  key instead. It answers 404, and not 403, until a key exists. Key management stays behind the
+  web login. Keys are 256-bit random values. The API shows a key one time and stores only its
+  SHA-256. `bb-apikey` does the same job from a terminal.
 
-  The feed carries everything the monitors know: rate, backup progress and ETA, scan
-  progress, container memory and swap, round-trip time, health warnings, skipped files,
-  compression saved, uploads and failures for the day, Backblaze's own measured throughput,
-  and the in-flight and recently completed files with their chunk positions. A key granted
-  `read` alone gets none of the file names, which is all a status display needs;
-  `read:files` adds them.
+  The feed carries everything the monitors know. It gives the rate, the backup progress and
+  ETA, the scan progress, the container memory and swap, and the round-trip time. It also gives
+  the health warnings, the skipped files, the compression saved, the uploads and failures for
+  the day, and Backblaze's own measured throughput. Last, it gives the in-flight and recently
+  completed files with their chunk positions. A key granted `read` alone gets none of the file
+  names, which is all a status display needs. `read:files` adds them.
 
-  The dashboard's own service speaks HTTP/1.1, so a consumer polling every couple of seconds
-  reuses one connection rather than opening a fresh one each time. Every response carries a
-  length, including the ones with no body, without which a kept-alive connection stalls
-  waiting for a body that never arrives.
+  The dashboard's own service speaks HTTP/1.1. A consumer that polls every couple of seconds
+  thus reuses one connection, and does not open a fresh one each time. Every response carries a
+  length, including the responses with no body. Without that length, a kept-alive connection
+  stalls and waits for a body that never arrives.
 
-  The API tab listed an empty "read (0)" group. A colon in a permission name was being read
-  as a group prefix, so `read:files` invented a group that does not exist. Only `control` is
-  a group; the rest sit at the top level.
+  The API tab listed an empty "read (0)" group. The code read a colon in a permission name as a
+  group prefix, so `read:files` invented a group that does not exist. Only `control` is a
+  group. The other permissions sit at the top level.
 
-  The state read as the literal string "None" when the client had nothing to report. It
-  writes `cur_state="none"`, which was being capitalised rather than treated as no answer,
-  so a payload looked as though a null had leaked into it. It falls back to what the running
-  processes show, as it did before the client's own word was preferred.
+  The state read as the literal string "None" when the client had nothing to report. The client
+  writes `cur_state="none"`. The code capitalised that value instead of treating it as no
+  answer, so a payload looked as though a null had leaked into it. The API now falls back to
+  what the running processes show, as it did before the client's own word was preferred.
 
-  The key store takes its ownership from `/config`. `bb-apikey` is normally run through
-  `docker exec`, which is root, while the service runs as the container's own user, so a key
-  created on the command line landed in a root-owned directory the service could not open:
-  it never appeared in the settings tab and the API answered 404 as though no key existed.
+  The key store takes its ownership from `/config`. You normally run `bb-apikey` through
+  `docker exec`, which is root, while the service runs as the container's own user. A key
+  created on the command line thus landed in a root-owned directory that the service could not
+  open. The key never appeared in the settings tab, and the API answered 404 as though no key
+  existed.
 
-  Changes to the key store are serialised against a lock. Recording a key's last use is a
-  read-modify-write, and so is creating one, so without it a key created while anything was
-  polling could be written straight back out of existence. Forty of forty-one were lost in a
-  test of it. The lock covers this container's own threads and `bb-apikey` in its separate
-  process.
+  The container serialises changes to the key store against a lock. To record a key's last use
+  is a read-modify-write, and to create a key is one as well. Without the lock, a key created
+  while anything was polling could be written straight back out of existence. Forty of
+  forty-one were lost in a test of it. The lock covers this container's own threads and
+  `bb-apikey` in its separate process.
 
-  Both monitors and the feed now report whether a backup is paused, from
-  `bzdata/pauseinfo.xml`, which the client writes only while one is set. Without it a pause
-  read as "Uploading" with nothing moving, because bztransmit stays running and keeps naming
-  the last file it had. A pause the client set for its own reasons looks the same as one
-  asked for over the API.
+  Both monitors and the feed now report whether a backup is paused. They read this from
+  `bzdata/pauseinfo.xml`, which the client writes only while a pause is set. Without the pause
+  file, a pause read as "Uploading" with nothing moving, because the client stays running and
+  keeps naming the last file it had. A pause the client set for its own reasons looks the same
+  as one asked for over the API.
 
-  A `report` permission generates a diagnostic bundle and hands back a single-use link that
-  expires in minutes, so the key never appears in a URL where a browser would keep it in
-  history. One bundle is built at a time.
+  A `report` permission generates a diagnostic bundle and hands back a single-use link. The
+  link expires in minutes, so the key never appears in a URL, where a browser would keep it in
+  the history. The container builds one bundle at a time.
 
-  Keys can carry an expiry, or none, which is the default and the right answer for something
-  long-running. An expired key stops working and stops keeping the API alive.
+  A key can carry an expiry, or none. No expiry is the default, and it is the right answer for
+  something long-running. An expired key stops working and stops keeping the API alive.
 
-  A consumer running in a browser needs its origin listed in `API_CORS_ORIGINS`, which is
-  unset by default. There is no wildcard: a key is still required either way, but with one,
-  any page the browser loaded could poll the container in the background.
+  A consumer that runs in a browser needs its origin listed in `API_CORS_ORIGINS`, which is
+  unset by default. There is no wildcard. A key is still required either way, but with a
+  wildcard, any page the browser loaded could poll the container in the background.
 
-  Permissions are granted per operation rather than per group, so a key that starts backups
-  need not also be able to pause them. Ticking a group name takes all of its operations, and
-  it expands on the way in, so what is stored is always the explicit list. The API exposes
-  only what the key presenting it holds: a read-only key is not told which control
-  operations exist, and a key granted one of them does not learn about the other. A key can
-  ask what it holds, so a client offers the buttons it can use without discovering its own
-  limits from a run of refusals.
+  The API grants permissions per operation and not per group, so a key that starts backups need
+  not also be able to pause them. If you tick a group name, you take all of its operations. The
+  API expands the group when the key is created, so what is stored is always the explicit list.
+  The API exposes only what the key presenting it holds. It does not tell a read-only key which
+  control operations exist, and it does not tell a key granted one of them about the other. A
+  key can ask what it holds. A client thus offers the buttons it can use, and does not discover
+  its own limits from a run of refusals.
 
-  Starting a backup or pausing a running one goes through `bzcli`, which
-  Backblaze ship with the client for this purpose. Pause is cooperative: the client asks
-  bztransmit to stop rather than the process being killed, so it cannot leave the stale
-  four-hour lock that `bb-watchdog` exists to clear. Backblaze document `--backup-now` as
-  the way out of a pause. The same `bzcli` command group can also clear the private
-  encryption key, which is unrecoverable, so the two safe verbs are whitelisted by name and
-  nothing from a request reaches its arguments. A `report` permission is defined but refused
-  until the bundle flow exists.
-- The file in hand is named in both monitors, which is the only way most of them appear at
-  all: a small file is usually gone before the next poll and never gets a row of its own.
-  What the client says it is doing with that file is shown alongside it, from a vocabulary
-  of "Preparing", "Part N of", and "Finishing" for a multi-part file. Its own bookkeeping
-  going up (`caNNN/bz_done_*.bzff`) is labelled as such rather than passed off as one of
-  your files.
-- Progress for file-list scans, in both monitors: directories indexed out of the total from
-  `topdirs.xml.future`, alongside a running count of files and bytes found. The client
-  exposes no other real percentage.
-- Chunk positions for the large file being split. Each chunk's index, byte offset and SHA-1
-  come from `bzcurrentlargefile/onechunk_seq*.dat`, and that SHA-1 also appears in each
-  transfer's own record, so a thread can be matched to the exact chunk it is carrying.
-  Chunks are shown in their real positions, filling out of order as threads finish, with
-  those in flight marked differently. Chunks that completed before the monitor was opened
-  stay unmarked, since they cannot be told apart from pending ones.
+  The API starts a backup, or pauses a running one, through `bzcli`, which Backblaze ship with
+  the client for this purpose. The pause is cooperative: the client asks its transmit process
+  to stop, and no process is killed. A pause thus cannot leave the stale four-hour lock that
+  `bb-watchdog` exists to clear. Backblaze document `--backup-now` as the way out of a pause.
+  The same `bzcli` command group can also clear the private encryption key, which is
+  unrecoverable. The API thus whitelists the two safe verbs by name, and nothing from a request
+  reaches their arguments. A `report` permission is defined, but the API refuses it until the
+  bundle flow exists.
+- Both monitors name the file in hand. For most files this is the only way they appear at all.
+  A small file is usually gone before the next poll, and never gets a row of its own. The
+  monitors also show what the client says it is doing with that file. The words are
+  "Preparing", "Part N of", and "Finishing" for a multi-part file. When the client uploads its
+  own bookkeeping (`caNNN/bz_done_*.bzff`), the monitors label it as such, and do not pass it
+  off as one of your files.
+- Progress for file-list scans, in both monitors. The monitors show the directories indexed out
+  of the total, which they read from `topdirs.xml.future`. They also show a running count of
+  the files and bytes found. The client exposes no other real percentage.
+- Chunk positions for the large file being split. The index, byte offset and SHA-1 of each
+  chunk come from `bzcurrentlargefile/onechunk_seq*.dat`. That SHA-1 also appears in each
+  transfer's own record, so you can match a thread to the exact chunk it is carrying. The
+  monitors show the chunks in their real positions. The chunks fill out of order as the threads
+  finish, and the monitors mark the ones in flight differently. Chunks that completed before
+  you opened the monitor stay unmarked, because the monitor cannot tell them apart from pending
+  ones.
 - Warnings drawn from the client's own records: a safety freeze, a failed file check, or no
-  completed backup within the number of days set in the user's own settings. The staleness
-  warning applies only once the backup has caught up, because
-  `bzstat_lastbackupcompleted.xml` marks a pass finishing rather than the whole set: on the
-  machine this was developed against it read four days old while 87% of 85 TB was still
-  unsent, and warning about that would be warning about a first upload behaving normally.
-- A pause button in the web dashboard's top bar, becoming a resume button while paused. It
-  uses the browser session you are already logged in with, so no API key is involved, and it
-  goes through the same fixed whitelist of client actions as everything else. The page never
-  guesses: the button reflects what the next poll reports, not what the click hoped.
+  recent completed backup. The number of days comes from your own settings. The staleness
+  warning applies only once the backup has caught up, because `bzstat_lastbackupcompleted.xml`
+  marks a pass finishing rather than the whole set. On the machine this was developed against,
+  it read four days old while 87% of 85 TB was still unsent. A warning about that would be a
+  warning about a first upload behaving normally.
+- A pause button in the top bar of the web dashboard. While a pause is set, the same button
+  starts the backup again. It uses the browser session you are already logged in with, so no
+  API key is involved. It goes through the same fixed whitelist of client actions as everything
+  else. The page never guesses: the button reflects what the next poll reports, and not what
+  the click hoped for.
 - The status panel says what a backup is made of: "2.4M files: 1.0M photos, 401k docs, 75k
-  music, 53k video". The client has counted by category all along; nothing showed it. Exact
-  counts in the tooltip, and the whole is always accounted for, with a remainder bucket for
-  whatever the client counts that these categories do not.
+  music, 53k video". The client has counted by category all along, but nothing showed the
+  counts. The tooltip gives the exact counts. The categories always account for the whole, and
+  a remainder category holds whatever the client counts that these categories do not.
 - "Backing up since 1 Jun 2026", in the About tab of both monitors and in the feed.
-- The ETA says whether it moved: "(17 Feb 2027, 9d better)" against yesterday's estimate.
-  One sample is kept per day, because an estimate compared with itself an hour ago only
-  measures the jitter of the moving average it came from. Within two percent, or a day,
-  it stays quiet.
+- The ETA says whether it moved: "(17 Feb 2027, 9d better)", against yesterday's estimate. The
+  monitors keep one sample per day. An estimate compared with itself an hour ago only measures
+  the jitter of the moving average it came from. Within two percent, or a day, the ETA stays
+  quiet.
 - The API takes `?fields=rate_bytes_per_sec,paused` to trim the status payload to what a
-  consumer wants. Unknown names are ignored rather than refused, so something built against
+  consumer wants. It ignores unknown names instead of refusing them, so something built against
   a newer container keeps working on an older one.
-- The backup ETA is also given as a date. "171 days" is a number; "17 Feb 2027" is a thing
-  a person can picture. Day resolution on purpose, since an estimate from a moving average
-  should not pretend to know the hour. In both monitors and the feed.
-- A seven-day upload chart, in both monitors and the feed. The client has kept one row per
-  day all along and only the newest was being read; the chart answers the question anyone
-  running a long backup actually has, which is whether it did anything while they were not
-  looking.
-- The day a first backup catches up, both monitors say so, plainly, for a week: how much and
-  how many days it took. The moment is latched on disk so it fires once; files added later
-  cannot replay it. Months of watching a progress bar deserves better than the banner
-  quietly disappearing.
-- The upload counter no longer calls retried attempts "failed". The figure it shows is
-  attempts a storage vault turned away (too busy, or full), which the client retries against
-  another vault; the file still goes up. Painting that red as "5 failed" sent people hunting
-  through logs for five files that never existed. It now reads "retried", without the alarm
-  colour, the tooltip says what it is, and the API carries the per-reason breakdown. The
-  number that means data is not backed up is the skipped-file count, which is reported
-  separately and loudly.
+- The backup ETA is also given as a date. "171 days" is a number, but "17 Feb 2027" is a day
+  you can picture. The resolution is one day on purpose, because an estimate from a moving
+  average cannot know the hour. This is in both monitors and in the feed.
+- A seven-day upload chart, in both monitors and in the feed. The client has kept one row per
+  day all along, but the monitors read only the newest row. The chart answers the question
+  anyone running a long backup actually has: did the backup do anything while they were not
+  looking?
+- On the day a first backup catches up, both monitors say so, plainly, for a week. They give
+  how much was uploaded and how many days it took. The monitors latch the moment on disk, so it
+  fires once, and files added later cannot replay it. After months of watching a progress bar,
+  this is better than a banner that quietly disappears.
+- The upload counter no longer calls retried attempts "failed". The figure it shows is the
+  attempts a storage vault turned away, because the vault was too busy or full. The client
+  retries such an attempt against another vault, and the file still goes up. The red "5 failed"
+  sent people hunting through logs for five files that never existed. The counter now reads
+  "retried", without the alarm colour. The tooltip says what the figure is, and the API carries
+  the breakdown per reason. The number that means data is not backed up is the skipped-file
+  count, which the monitors report separately and loudly.
 - The skipped-file check misread every line of the client's list. Backblaze is a Windows
-  program and writes the file with CRLF, so shell `read` leaves a carriage return on each
-  line; a path built from that names a file that cannot exist, and a file sitting right there
-  was reported as "no longer exists, so nothing to fix" - the opposite of the truth, on the
-  one check whose job is finding what is wrong. The same loop also examined the report's
-  header and reported it as a line it could not understand. The monitor was never affected,
-  because Python strips the line ending and the shell does not.
+  program and writes the file with CRLF, so the shell `read` command leaves a carriage return
+  on each line. A path built from such a line names a file that cannot exist. The check thus
+  reported a file sitting right there as "no longer exists, so nothing to fix". That is the
+  opposite of the truth, on the one check whose job is finding what is wrong. The same loop
+  also examined the report's header and reported it as a line it could not understand. The
+  monitor was never affected, because Python strips the line ending and the shell does not.
 - A container 21.9% through its first backup announced that the backup was complete, and
-  latched that to disk for a week. The completion check reused the same helper as the
-  staleness warning, which answers "yes" when there are no totals to judge against, so that a
-  missing figure cannot raise a false warning. That default is exactly wrong for declaring
-  something finished, and during a file-list scan the totals are absent. It now requires
-  positive evidence and says nothing when it cannot tell.
+  latched that to disk for a week. The completion check reused the same helper as the staleness
+  warning. That helper answers "yes" when there are no totals to judge against, so that a
+  missing figure cannot raise a false warning. That default is right for a warning but exactly
+  wrong for declaring something finished, and during a file-list scan the totals are absent.
+  The check now requires positive evidence, and says nothing when it cannot tell.
 
-  The same check took its day count from a figure that is only available while a backup is
-  still in progress, so every completion would have read "in 0 days". It reads the client's
-  own record of when the first file went up instead.
-- A pause now reads as "Pausing" until it has actually taken. The client finishes the
-  transfers already in flight before it stops, so saying "Paused" the moment the request
-  lands was ahead of the truth: uploads were still completing. Backblaze's own window, which
-  appeared not to notice a pause, turns out to have been right all along and ours was early.
-  The feed carries a `draining` flag for the same distinction.
-- While paused, the monitors said "Preparing <file>" beside a state of Paused, which reads
-  as stalled and says the opposite of what is happening. The client parks on the file it was
-  about to take, so paused it is the next file rather than the current one, and both monitors
-  now say so.
-- A Skipped Files tab in the web interface, listing the files Backblaze has given up on with
-  their reasons, a filter, and a breakdown you can click to narrow by reason. Reasons read as
-  words with the client's own constant kept in the tooltip. Where the reason is a permissions
-  problem the page says what that means under this container and points at `bb-doctor`, which
-  diagnoses it and prints the command. It sits behind the web login like the rest of the
-  dashboard, because a list of paths is worth protecting, and on the API the same list is
-  withheld from any key without `read:files`.
-- Buttons and chips drawn on the border colour had near-black text hardcoded on them, which
-  in the dark theme was 1.5:1 against a dark grey and effectively invisible. They use the
-  palette's accent and background instead, which every theme guarantees contrast between.
+  The same check took its day count from a figure that is only available while a backup is in
+  progress. Every completion would thus have read "in 0 days". It now reads the client's own
+  record of when the first file went up.
+- A pause now reads as "Pausing" until it has actually taken. The client finishes the transfers
+  already in flight before it stops. To say "Paused" the moment the request landed was thus
+  ahead of the truth, because uploads were still completing. Backblaze's own window appeared
+  not to notice a pause, but it was right all along and ours was early. The feed carries a
+  `draining` flag for the same distinction.
+- While a pause was set, the monitors said "Preparing <file>" beside a state of Paused. That
+  reads as stalled, and says the opposite of what is happening. The client parks on the file it
+  was about to take. While a pause is set, this is thus the next file and not the current one.
+  Both monitors now say so.
+- A Skipped Files tab in the web interface. It lists the files Backblaze has given up on, with
+  the reason for each one. It has a filter, and a breakdown you can click to narrow the list by
+  reason. The reasons read as words, and the tooltip keeps the client's own constant. Where the
+  reason is a permissions problem, the page says what that means under this container. It
+  points at `bb-doctor`, which diagnoses the problem and prints the command. The tab sits
+  behind the web login, like the rest of the dashboard, because a list of paths is worth
+  protecting. On the API, the same list is withheld from any key without `read:files`.
+- Buttons and chips drawn on the border colour had near-black text hardcoded on them. In the
+  dark theme this text was 1.5:1 against a dark grey, and thus effectively invisible. They now
+  use the accent and background of the palette, and every theme guarantees contrast between
+  those two.
 - The ETA no longer reports absurd figures while a backup gets going. A backup starts on its
-  small files, and a handful of those gives a per-byte rate low enough to extrapolate into
-  the millennia: one run read "4259966d", about 11,600 years, and the trend feature then
-  dutifully compared today's nonsense against yesterday's. An estimate beyond a century is
-  withheld rather than shown, and the trend ignores estimates resting on fewer than three
-  completed transfers and does not record them, so a bad reading cannot poison the next day's
-  comparison either. A dismal estimate still shows: 100 TB on a 1 Mbit/s uplink is
-  about 25 years and that is a true answer.
-- With no usable estimate the ETA now reads "not yet" rather than "stalled". Stalled was true
-  when the only cause was a dead rate; it is wrong when the backup is uploading briskly and
+  small files. A handful of those gives a per-byte rate low enough to extrapolate into
+  thousands of years. One run read "4259966d", which is about 11,600 years. The trend feature
+  then dutifully compared today's nonsense against yesterday's. The monitors now withhold an
+  estimate beyond a century instead of showing it. The trend ignores estimates resting on fewer
+  than three completed transfers, and does not record them. A bad reading thus cannot spoil the
+  next day's comparison either. A dismal estimate still shows: 100 TB on a 1 Mbit/s uplink is
+  about 25 years, and that is a true answer.
+- With no usable estimate, the ETA now reads "not yet" rather than "stalled". Stalled was true
+  when the only cause was a dead rate. It is wrong when the backup is uploading briskly and
   only the projection is unusable.
-- `bb-monitor` run without a terminal says so and names the fix, instead of dying in a
-  two-deep curses traceback. The usual way to have no terminal is `docker exec` without
-  `-it`, which is exactly what the message suggests.
-- The skipped-file check counted the list's own header as a skipped file: a clean list
-  holding only "# SkippedFilesReportStarted" reported two files skipped. Only lines with a
-  tab-separated reason count now, the same rule the monitor's counter always applied. Found
-  on the first run against a real machine, which also confirmed a directory ownership fix
-  clears the list on the next scan.
-- `bb-doctor` works out why files were skipped. It groups them by the client's own reason,
-  then reads a sample to tell apart the ones that no longer exist, the ones that are readable
-  again and will clear on the next scan, and the ones this container still cannot read. For
-  those it names the directory, its ownership and mode, and the command to run on the host.
+- `bb-monitor` run without a terminal says so and names the fix, instead of dying in a two-deep
+  curses traceback. The usual way to have no terminal is `docker exec` without `-it`, which is
+  exactly what the message suggests.
+- The skipped-file check counted the list's own header as a skipped file: a clean list holding
+  only "# SkippedFilesReportStarted" reported two files skipped. The check now counts only
+  lines with a tab-separated reason, the same rule the monitor's counter always applied. This
+  was found on the first run against a real machine. That run also confirmed that a directory
+  ownership fix clears the list on the next scan.
+- `bb-doctor` works out why files were skipped. It groups them by the client's own reason. It
+  then reads a sample, to tell the files apart. Some files no longer exist. Some are readable
+  again and will clear on the next scan. Some this container still cannot read. For that last
+  group it names the directory, its ownership and mode, and the command to run on the host.
 
-  It repairs nothing, even with `--fix`. These are the user's own files on a mounted share,
-  often thousands of them, and other software on the host may depend on who owns them.
-  Changing that from inside a container is the case this tool's own rule was written for.
-- Files Backblaze has given up on are now reported. `bzlist_skipped_files.txt` records
-  them with a reason, and they are neither queued nor retried, so nothing else says they
-  are unprotected. Under this container the usual cause is a file the container user cannot
-  read, which points at ownership on the mounted source rather than at Backblaze.
-- A first upload still working through the set shows how long it has been running and how
-  far it has got, rather than looking like something is wrong. The client exposes no
-  "initial backup finished" flag, so this is inferred from how much of the set has never
-  been sent. They appear as
-  a banner in the web dashboard and in the terminal title bar.
-- Upload counts for the most recent day, with failures broken out by the client's own
-  categories, and the bytes compression has saved.
-- Backblaze's own measured throughput, from `bzperf_measured_upload.xml`. It reports
-  3578 kbit/s for files over a megabyte on the machine this was developed against, which
-  matches the ceiling calculated from the send buffer and round-trip time to within two
-  percent.
-- A compact view for multi-part uploads, in both monitors. One row per file with the bar
-  drawn as a block per part, filling as parts complete. Off by default, toggled beside the
-  theme picker.
+  `bb-doctor` repairs nothing, even with `--fix`. These are your own files on a mounted share,
+  often thousands of them, and other software on the host may depend on who owns them. To
+  change that from inside a container is the case this tool's own rule was written for.
+- Files Backblaze has given up on are now reported. `bzlist_skipped_files.txt` records them
+  with a reason. The client neither queues nor retries these files, so nothing else tells you
+  that they are unprotected. Under this container the usual cause is a file the container user
+  cannot read. That points at ownership on the mounted source, and not at Backblaze.
+- A first upload still working through the set now shows how long it has been running and how
+  far it has got. It thus does not look like something is wrong. The client exposes no "initial
+  backup finished" flag, so the monitors infer this from how much of the set has never been
+  sent. It appears as a banner in the web dashboard and in the terminal title bar.
+- Upload counts for the most recent day. The monitors break the failures out by the client's
+  own categories, and show the bytes compression has saved.
+- Backblaze's own measured throughput, from `bzperf_measured_upload.xml`. On the machine this
+  was developed against, it reports 3578 kbit/s for files over a megabyte. That matches, to
+  within two percent, the ceiling calculated from the send buffer and the round-trip time.
+- A compact view for multi-part uploads, in both monitors. It gives one row per file, with the
+  bar drawn as a block per part. The blocks fill as the parts complete. The view is off by
+  default, and you toggle it beside the theme picker.
 
 ### Changed
-- The dark theme is properly black rather than dark grey, using rogman's values.
-- The web dashboard is mobile-friendly.
-- `bb-monitor` and `bb-monitor-web` share one data layer, `/usr/local/lib/bb-monitor/bbdata.py`,
-  so a feature appears in both or neither.
+- The dark theme is properly black rather than dark grey. It uses rogman's values.
+- The web dashboard now works on a mobile browser.
+- `bb-monitor` and `bb-monitor-web` share one data layer,
+  `/usr/local/lib/bb-monitor/bbdata.py`, so a feature appears in both or in neither.
 
 ### Fixed
-- Small files never reached Recently Completed. The table is fed from files caught in
-  flight, and a small file is gone before a poll can catch a thread carrying one; Backblaze
-  also pushes them in bundles rather than singly, so the log holds no per-file record of
-  them either. They are now taken from the client naming each one in turn, and listed
-  without a thread, size or rate, none of which exist for them.
-- The compact multi-part view drew one row per thread, so nine threads on one film gave
-  nine identical "0/21" rows plus the chunk strip above them. The compact row counts the
-  file's parts rather than the thread's own progress, so there is now one row per file and
-  none at all for the file the strip is already showing in full.
-- The compact multi-part view showed a file that was not being uploaded, such as "0/21
-  chunks" against a film while the client was producing file lists. `bzcurrentlargefile/`
-  is not cleared when a file finishes, so it still described the last one split. The view
-  now appears only while that file is the one being worked on.
-- Multi-part totals were wrong again, in a different way: a 221 MB file with 10 MB parts
-  listed as "22/236". The part size is constant for a file, but a reading was only
-  remembered when it came from the fallback path, so a line that carried the size returned
-  it without recording it. A later line without the size then fell back to the live counter,
-  which describes the part a thread happens to be carrying, and one short reading fixed a
-  row's total for good. The largest credible reading for a file is now remembered whichever
-  path it came from and cannot be undone by a short one, and a total is no longer set at all
-  from a part size below a mebibyte, which cannot be the configured one.
+- Small files never reached Recently Completed. The table is fed from the files caught in
+  flight, and a small file is gone before a poll can catch a thread carrying one. Backblaze
+  also pushes small files in bundles rather than singly, so the log holds no per-file record of
+  them either. The monitors now take them from the client, which names each one in turn. They
+  are listed without a thread, size or rate, because none of those exist for them.
+- The compact multi-part view drew one row per thread. Nine threads on one film thus gave nine
+  identical "0/21" rows, plus the chunk strip above them. The compact row now counts the file's
+  parts rather than the thread's own progress. There is thus one row per file, and no row at
+  all for the file the strip is already showing in full.
+- The compact multi-part view showed a file that was not being uploaded. One example is "0/21
+  chunks" against a film while the client was producing file lists. The container does not
+  clear `bzcurrentlargefile/` when a file finishes, so it still described the last file split.
+  The view now appears only while that file is the one being worked on.
+- Multi-part totals were wrong again, in a different way: a 221 MB file with 10 MB parts listed
+  as "22/236". The part size is constant for a file, but the code remembered a reading only
+  when it came from the fallback path. A line that carried the size thus returned it without
+  recording it. A later line without the size then fell back to the live counter, which
+  describes the part a thread happens to be carrying. One short reading thus fixed a row's
+  total for good. The code now remembers the largest credible reading for a file, whichever
+  path it came from, and a short one cannot undo it. It also no longer sets a total at all from
+  a part size below a mebibyte, which cannot be the configured one.
 - Scan progress stuck at a figure like "50% 14/28 directories" and stayed there while files
-  uploaded. The `.future` files a scan writes are not removed when it ends, so their presence
-  proved nothing. Progress now shows only while `bzfilelist` is running and the files are
-  still being written to.
-- The scan bar took over the Uploading Now panel in the web dashboard, hiding transfers for
-  as long as it was up. A scan runs alongside uploads, so it now heads the panel instead of
-  replacing it.
-- File names carrying an apostrophe or an ampersand were shown as XML: "Mike Judge&apos;s"
-  and "Colbert &amp; Fallon". Names taken from the client's XML are decoded first.
-- The compact multi-part setting governed only the per-file view, while the chunk strip it
-  was meant to control was drawn regardless, in both monitors. The setting now covers it, and
-  the web dashboard redraws on the click rather than at the next poll.
+  uploaded. A scan writes `.future` files, but it does not remove them when it ends, so their
+  presence proved nothing. The monitors now show the progress only while `bzfilelist` is
+  running and the files are still being written to.
+- The scan bar took over the Uploading Now panel in the web dashboard, hiding the transfers for
+  as long as it was up. A scan runs alongside uploads, so the scan bar now heads the panel
+  instead of replacing it.
+- File names carrying an apostrophe or an ampersand were shown as XML: "Mike Judge&apos;s" and
+  "Colbert &amp; Fallon". The monitors now decode names taken from the client's XML.
+- The compact multi-part setting governed only the per-file view. Both monitors drew the chunk
+  strip regardless, although the setting was meant to control it. The setting now covers the
+  strip, and the web dashboard redraws on the click rather than at the next poll.
 - Completed multi-part files showed nonsense part counts such as "21/6594". The count was
-  derived from the thread instruction's `numBytes_to_send_in_shm`, which describes the part
-  a thread is carrying rather than the file's part size, and readings well below the part
-  size turned `filesize / part` into tens of thousands. The configured part size is now read
-  from the `bz_done` line, which is constant for a file. A total that large also meant the
-  record never reached completion, so every later upload of the same file kept accumulating
-  into it. Multi-part files also produce one push beyond their part count, which would
-  otherwise open a second row for the same file once the count was corrected; that trailing
-  push is now absorbed. Reported by gandalf15.
-- Sizes above a terabyte were rendered in gigabytes, so a 250 TB backup showed as
-  "257524.9 GB" and overflowed the gauge label. Sizes now run to petabytes. Reported by
-  gandalf15.
-- File names were written into the page without HTML escaping, so a backed-up file whose
-  name contained markup could inject it into the dashboard. Found by rogman.
-- The dashboard had no viewport meta, so a mobile browser laid it out at around 980px and
+  derived from `numBytes_to_send_in_shm` in the thread instruction. That value describes the
+  part a thread is carrying, and not the file's part size. Readings well below the part size
+  thus turned `filesize / part` into tens of thousands. The monitors now read the configured
+  part size from the `bz_done` line, which is constant for a file. A total that large also
+  meant the record never reached completion, so every later upload of the same file kept
+  accumulating into it. Multi-part files also produce one push beyond their part count. After
+  the correction, that push would otherwise open a second row for the same file. The monitors
+  now absorb that trailing push. Reported by gandalf15.
+- Sizes above a terabyte were rendered in gigabytes, so a 250 TB backup showed as "257524.9 GB"
+  and overflowed the gauge label. Sizes now run to petabytes. Reported by gandalf15.
+- File names were written into the page without HTML escaping, so a backed-up file whose name
+  contained markup could inject it into the dashboard. Found by rogman.
+- The dashboard had no viewport meta tag, so a mobile browser laid it out at around 980px and
   scaled it down to something unreadable. An iframe does not inherit its parent's.
-- Opening the monitor shortly after a container start gave a bare 502 that stayed until the
-  page was reloaded by hand, because the shell loads the frame once and nothing retried.
+- Opening the monitor shortly after a container start gave a bare 502. The error stayed until
+  you reloaded the page by hand, because the shell loads the frame once and nothing retried.
   nginx now serves a holding page for the few seconds before the service is listening.
-- A long file path made the whole page scroll sideways at any window width. Flex items
-  default to `min-width:auto` and so refuse to shrink below their content, which let one
-  path in the in-flight list widen everything around it.
+- A long file path made the whole page scroll sideways at any window width. Flex items default
+  to `min-width:auto` and so refuse to shrink below their content, which let one path in the
+  in-flight list widen everything around it.
 
 
 ## [10.2.1] - 2026-08-07
