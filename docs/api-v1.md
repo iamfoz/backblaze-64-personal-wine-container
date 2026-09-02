@@ -268,6 +268,16 @@ Present only while a file-list scan is running, `null` otherwise.
 | `pct` | number | Percentage of directories indexed. |
 | `files` / `bytes` | int, null | Found so far. |
 
+### `memory_by_process`
+
+The programs that use the most memory, largest first, or `null`. Each entry has a `name` and
+`rss_bytes`.
+
+The container memory figure alone does not say which program uses the memory. Users have
+reported high memory after an update when the cause was the client, which reads a large file
+list into memory during a scan. Use this field to name the program before you report a
+problem.
+
 ### `memory`, `swap`
 
 Container memory and host swap. Each one can be `null` where the platform does not report

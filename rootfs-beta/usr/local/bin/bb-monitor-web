@@ -109,6 +109,7 @@ def snapshot_to_json(d):
         "chunks": d["chunks"],
         "session_str": human(d["sess"]),
         "mem": {"used_str": human(mem[0]), "total_str": human(mem[1]), "pct": round(mem[2], 1)} if mem else None,
+        "memory_by_process": d.get("memory_by_process"),
         "swap": {"used_str": human(swap[0]), "total_str": human(swap[1]), "pct": round(swap[2], 1)} if swap else None,
         "backup": ({"used_str": human(d["backup"]["done"]), "total_str": human(d["backup"]["total"]),
                      "pct": round(d["backup"]["pct"], 1),
@@ -684,6 +685,7 @@ def api_v1_payload(d):
         "chunks_last_minute": d.get("chunks"),
         "uptime_seconds": int(time.time() - bbdata.START_TIME),
         "memory": gauge(mem),
+        "memory_by_process": d.get("memory_by_process"),
         "swap": gauge(swap),
         "backup": {"done_bytes": b.get("done"), "total_bytes": b.get("total"),
                    "pct": round(b["pct"], 2) if b.get("pct") is not None else None,
@@ -1495,7 +1497,9 @@ async function tick(){
       (d.perf ? '<span class="stat dim" title="Measured by the Backblaze client itself. ' +
                 'Small files are slower because each costs a round trip.">Client est: ' +
                 (d.perf.large_kbit/1000).toFixed(1)+' Mbit/s</span>' : '') +
-      gaugeHtml('Mem', d.mem, false) +
+      gaugeHtml('Mem', d.mem, false,
+                d.memory_by_process && d.memory_by_process.length
+                  ? 'Largest: ' + esc(d.memory_by_process[0].name) : '') +
       gaugeHtml('Swap', d.swap, false) +
       '<span class="stat">Files Remaining: '+(d.backup && d.backup.remaining_files!=null ? d.backup.remaining_files.toLocaleString() : 'n/a')+'</span>' +
       // What is left, then what the whole thing is made of, then how long it has

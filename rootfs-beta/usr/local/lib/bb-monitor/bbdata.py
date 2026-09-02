@@ -28,6 +28,7 @@ BZSTAT_TOTAL = BZ + "/bzreports/bzstat_totalbackup.xml"
 BZSTAT_REMAIN = BZ + "/bzreports/bzstat_remainingbackup.xml"
 TDIR = BZ + "/bzthread"
 PROC = "/proc"
+PAGE = os.sysconf("SC_PAGE_SIZE")
 NETDEV = "/proc/net/dev"
 MEMINFO = "/proc/meminfo"
 CG2 = "/sys/fs/cgroup"
@@ -1034,6 +1035,49 @@ def _tx():
     return t
 
 
+# The programs worth attributing memory to. The client comes first, because it
+# is almost always the answer: a first scan over a large set is the memory peak
+# of this container, and bzfilelist holds the file list while it builds it.
+_MEM_NAMES = ("bzfilelist", "bztransmit", "bzserv", "bzbuitray", "bzbui",
+              "wineserver", "bb-monitor-web", "bb-monitor", "nginx", "Xvfb")
+
+
+def memory_by_process(limit=5):
+    """[{name, rss_bytes}], largest first, or None.
+
+    The monitor gives the memory that the container uses. It could not give the
+    program that uses it. A user then reported high memory after an update, when
+    the cause was the client that read a large file list. That is normal. This
+    function answers the question that the memory number asks.
+    """
+    try:
+        pids = [x for x in os.listdir(PROC) if x.isdigit()]
+    except OSError:
+        return None
+    by_name = {}
+    for pid in pids:
+        try:
+            with open(os.path.join(PROC, pid, "cmdline"), "rb") as fh:
+                cmd = fh.read().decode("utf-8", "replace").replace(chr(0), " ")
+            if not cmd.strip():
+                continue
+            name = next((n for n in _MEM_NAMES if n in cmd), None)
+            if not name:
+                continue
+            with open(os.path.join(PROC, pid, "statm")) as fh:
+                # Field 2 of statm is the resident set, in pages. statm has one
+                # short line. status has 50 lines that this must search.
+                rss = int(fh.read().split()[1]) * PAGE
+        except (OSError, ValueError, IndexError):
+            continue
+        by_name[name] = by_name.get(name, 0) + rss
+    if not by_name:
+        return None
+    rows = sorted(({"name": k, "rss_bytes": v} for k, v in by_name.items()),
+                  key=lambda r: r["rss_bytes"], reverse=True)
+    return rows[:limit]
+
+
 def mem_info(host_total):
     for cur, mx, stat, key in (
         (CG2 + "/memory.current", CG2 + "/memory.max", CG2 + "/memory.stat", "inactive_file"),
@@ -1104,6 +1148,7 @@ def gather(prev):
         used = tot - int(mf.group(1)) * 1024
         o["swap"] = (used, tot, used * 100.0 / tot)
     o["mem"] = mem_info(host_total)
+    o["memory_by_process"] = memory_by_process()
     o["backup"] = backup_totals()
 
     threads, xmls, has_fl, has_bt = scan_procs()

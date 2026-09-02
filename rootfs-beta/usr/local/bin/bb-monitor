@@ -243,7 +243,13 @@ def draw(scr,d,st):
         txt([("Chunks/60s: ",NORM),("%d"%d["chunks"],NORM)]),
         txt([("Session: ",NORM),(human(d["sess"]),NORM)]),
         txt([("State: ",NORM),(stt,scol)]),
-        gauge("Mem:",human(d["mem"][0]),human(d["mem"][1]),d["mem"][2]) if d["mem"] else txt([("Mem: n/a",NORM)]),
+        # The note names the largest user of memory. "The container uses 8 GB"
+        # starts a support thread. "bzfilelist uses 8 GB" answers it, because a
+        # first scan over a large set is when the client needs the most memory.
+        gauge("Mem:",human(d["mem"][0]),human(d["mem"][1]),d["mem"][2],
+              note=("(%s)"%(d.get("memory_by_process") or [{"name":""}])[0]["name"]
+                    if d.get("memory_by_process") else "")) if d["mem"]
+            else txt([("Mem: n/a",NORM)]),
         gauge("Swap:",human(d["swap"][0]),human(d["swap"][1]),d["swap"][2]) if d["swap"] else txt([("Swap: off",NORM)]),
     ]
     # Everything below reached the web dashboard first. Both read the same

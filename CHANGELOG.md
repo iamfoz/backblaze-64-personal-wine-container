@@ -207,6 +207,11 @@ a stable release.
   "retried", without the alarm colour. The tooltip says what the figure is, and the API carries
   the breakdown per reason. The number that means data is not backed up is the skipped-file
   count, which the monitors report separately and loudly.
+- Both monitors and the API now name the program that uses the most memory. The memory figure
+  alone does not say which program uses it. A user reported high memory after an update, and
+  the cause was the client, which reads a large file list into memory during a scan. The
+  figure now reads "Mem 8.1/16 GB (bzfilelist)", which answers the question that the number
+  asks.
 - The skipped-file check misread every line of the client's list. Backblaze is a Windows
   program and writes the file with CRLF, so the shell `read` command leaves a carriage return
   on each line. A path built from such a line names a file that cannot exist. The check thus
