@@ -201,6 +201,13 @@ stable release.
   colour, the tooltip says what it is, and the API carries the per-reason breakdown. The
   number that means data is not backed up is the skipped-file count, which is reported
   separately and loudly.
+- The skipped-file check misread every line of the client's list. Backblaze is a Windows
+  program and writes the file with CRLF, so shell `read` leaves a carriage return on each
+  line; a path built from that names a file that cannot exist, and a file sitting right there
+  was reported as "no longer exists, so nothing to fix" - the opposite of the truth, on the
+  one check whose job is finding what is wrong. The same loop also examined the report's
+  header and reported it as a line it could not understand. The monitor was never affected,
+  because Python strips the line ending and the shell does not.
 - A container 21.9% through its first backup announced that the backup was complete, and
   latched that to disk for a week. The completion check reused the same helper as the
   staleness warning, which answers "yes" when there are no totals to judge against, so that a

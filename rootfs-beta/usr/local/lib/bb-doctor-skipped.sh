@@ -70,13 +70,28 @@ else
         echo
         NOTE "checking the first few:"
         unreadable=""; missing=0; readable=0; checked=0; nopath=0
+        # The client is a Windows program and writes this file with CRLF, so
+        # every line arrives with a carriage return still on it. Python's
+        # splitlines() drops that, which is why the monitor never noticed, but
+        # shell read does not: the last field on a line keeps the CR, a path
+        # built from it names a file that cannot exist, and a file sitting right
+        # there reports as "no longer exists, nothing to fix" -- the opposite of
+        # the truth, on the one check whose whole job is finding what is wrong.
+        # Stripped with parameter expansion rather than a pipe, because piping
+        # this loop would put the counters in a subshell and lose them all.
+        CR="$(printf '\r')"
         # The path is found rather than taken from a fixed column. Only the reason
         # column is established (the monitor has counted by it in production); the
         # rest of the layout is not, and assuming it would report every file as
         # missing if it were wrong. A field starting with a drive letter is the
         # path, whichever column it lands in.
         while IFS= read -r line; do
+            line="${line%$CR}"
             [ -n "$line" ] || continue
+            # The counting above skips comments; this loop did not, so the report
+            # header was checked for a path, found none, and was reported as a
+            # line that could not be understood.
+            case "$line" in \#*) continue ;; esac
             path="$(printf '%s' "$line" | tr '\t' '\n' \
                     | grep -m1 -E '^[A-Za-z]:\\' || true)"
             if [ -z "$path" ]; then
