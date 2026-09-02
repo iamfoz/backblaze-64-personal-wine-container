@@ -201,6 +201,16 @@ stable release.
   colour, the tooltip says what it is, and the API carries the per-reason breakdown. The
   number that means data is not backed up is the skipped-file count, which is reported
   separately and loudly.
+- A container 21.9% through its first backup announced that the backup was complete, and
+  latched that to disk for a week. The completion check reused the same helper as the
+  staleness warning, which answers "yes" when there are no totals to judge against, so that a
+  missing figure cannot raise a false warning. That default is exactly wrong for declaring
+  something finished, and during a file-list scan the totals are absent. It now requires
+  positive evidence and says nothing when it cannot tell.
+
+  The same check took its day count from a figure that is only available while a backup is
+  still in progress, so every completion would have read "in 0 days". It reads the client's
+  own record of when the first file went up instead.
 - A pause now reads as "Pausing" until it has actually taken. The client finishes the
   transfers already in flight before it stops, so saying "Paused" the moment the request
   lands was ahead of the truth: uploads were still completing. Backblaze's own window, which

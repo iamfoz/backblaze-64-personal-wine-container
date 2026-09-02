@@ -596,12 +596,26 @@ def completion():
             return None
         return {"done_at": done_at, "days": int(m.group(2)),
                 "total_bytes": int(m.group(3))}
-    # Not yet marked. The moment is: totals exist, caught up, and a first pass
-    # was previously in progress (fb goes None once caught up, so the days
-    # figure has to be taken while it is still there or not at all).
-    if not b or not _caught_up():
+    # Not yet marked, so decide whether this is the moment. Deliberately NOT via
+    # _caught_up(), which answers True when there are no totals to judge against:
+    # that default exists so a missing figure cannot raise a false staleness
+    # warning, and it is exactly wrong here, where the same answer declares a
+    # backup finished. During a file-list scan the totals are absent or zero, and
+    # a container 21.9% through its first backup announced it had completed, then
+    # latched that to disk for a week. This asks for positive evidence instead.
+    if not b or not b.get("total") or not b.get("done"):
         return None
-    days = int(fb["days"]) if fb else 0
+    if max(0, b["total"] - b["done"]) > b["total"] * CAUGHT_UP_FRACTION:
+        return None
+    # The day count comes from the client's own record of when the first file
+    # went up, not from first_backup(), which returns None the moment a backup
+    # is caught up and so was always None by the time this ran: every completion
+    # would have read "in 0 days". No record means no first backup to have
+    # finished, so there is nothing to announce.
+    t = read(RPTS + "/bzstat_firstbackupfirstfileuploadedmillis.txt").strip()
+    if not t.isdigit():
+        return None
+    days = int((time.time() - int(t) / 1000.0) / 86400.0)
     try:
         with open(DONE_MARK, "w", encoding="utf-8") as fh:
             fh.write("done_at=%d days=%d bytes=%d\n"
