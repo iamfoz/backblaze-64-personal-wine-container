@@ -9,7 +9,7 @@ need to publish another port.
 `/api/v1/` is the one path that this login does not protect, because a consumer that is not
 a browser cannot complete a login. A key protects the API instead.
 
-## Turning it on
+## Turning it on and off
 
 There is no separate switch. The API is active exactly when one key exists and you have not
 revoked it. Until then it answers `404` on every path. A container that nobody has
@@ -50,6 +50,12 @@ anywhere.
 `401` covers a wrong key and a correct key without the necessary permission. This is
 deliberate: a key learns nothing about the permissions that it does not hold.
 
+### The switch
+
+When a live key exists, the API tab shows a switch. Off, every path answers 404 and the
+keys are kept. On, they work again at once. Use it to stop the API for a while without
+making every consumer a new key afterwards.
+
 ## Permissions
 
 You grant each permission for one operation. There are no tiers, because no permission
@@ -62,6 +68,8 @@ includes another one.
 | `control:backup-now` | Start a backup if one is not already running. |
 | `control:pause` | Pause a running backup. |
 | `report` | Generate and download a diagnostic bundle. |
+| `diagnose` | Run `bb-doctor`, `bb-health` and `bb-version` and read their output. |
+| `diagnose:repair` | Also switch on `bb-doctor --fix`, which changes files in the prefix. Grant `diagnose` with it. |
 
 `control` is a shorthand for both control operations. The container expands the shorthand
 when it creates the key, so it always stores the explicit list.
@@ -188,6 +196,56 @@ returns `404`. Generate another bundle if you need it again.
 The bundle contains no file names, no account details and no keys, but it does describe the
 host. Examine it before you send it anywhere.
 
+### `GET /api/v1/summary`
+
+Requires `read`. The status as a few lines of plain text: build and uptime, state and rate,
+progress and ETA, health, today's uploads. It is what a maintainer asks for first in a
+support thread. Nothing in it names a file.
+
+### `GET /api/v1/metrics`
+
+Requires `read`. The numbers in the status payload in Prometheus text format, as gauges
+with a `bb64_` prefix: rate, threads, pause, progress, ETA, scan, memory, swap, RTT,
+skipped files, each health warning as `bb64_health_warning{kind="..."}`, today's uploads
+and retries, compression saved, days since a completed pass.
+
+### `GET /api/v1/events`
+
+Requires `read`. A server-sent event stream. One `state` event when the state, the pause,
+the health warnings, the skipped count, completion or milestones change, with a JSON
+object holding those fields and a time. A comment line every fifteen seconds keeps the
+connection known alive. The stream closes when you disconnect.
+
+```
+event: state
+data: {"time": 1788563939, "state": "Paused", "paused": true, "pause_label": {...}, ...}
+```
+
+### `GET /api/v1/openapi.json`
+
+Any valid key. The OpenAPI 3.1 document for this API. The same file is in the repository
+at `docs/openapi.json`.
+
+### `GET /api/v1/tools`
+
+Requires `diagnose` or `diagnose:repair`. The tools this image ships, their options, and
+whether each is present. `can_repair` says whether the presented key holds
+`diagnose:repair`.
+
+### `POST /api/v1/tools/<name>`
+
+Requires `diagnose`. `<name>` is `doctor`, `health` or `version`. The body may carry
+`{"options": ["fix"]}`; an option that changes files also requires `diagnose:repair`, and
+the API answers 403 without it. One run per tool at a time; a second request joins the run
+with `joined_existing: true`. Returns the job.
+
+### `GET /api/v1/tools/job/<id>`
+
+Requires `diagnose` or `diagnose:repair`. The job, with the tool's output so far in
+`lines`. `state` is `running`, `done` or `failed`. `exit_code` is the tool's own; for
+`bb-doctor`, 1 means it found problems, and `result` says so in words. The container
+discards a finished job after an hour.
+
 ## Schema versioning
 
 Every response carries `"schema"`. You release a consumer independently of this container,
@@ -238,6 +296,24 @@ What the client is working on right now. `null` when it is doing nothing.
 | `file` | string, null | The file. Always `null` without `read:files`. |
 | `part` | int, null | Which part of a multi-part file. |
 | `internal` | bool | `true` when the client is working on its own records and not on one of your files. |
+
+### `pause_label`
+
+The pause in words, or `null` when not paused: `who` (`here`, `client` or `unknown`),
+`title`, `detail`, the client's `code`, `until` as epoch seconds and `until_str` as local
+`HH:MM`. `here` means the pause was set from the Monitor, this API or bzcli; `client` means
+the client paused itself, for example `ca_down_but_network_alive` when Backblaze's cluster
+authority is not answering.
+
+### `milestones`
+
+`null`, or a list of `{key, label, at}` for milestones passed within the last week: `pct25`,
+`pct50`, `pct75` and `tb1`, the first terabyte. Each appears once, for a week.
+
+### `progress_history`
+
+`null`, or a list of `{day, pct}` with one sample a day of percent complete, oldest first,
+kept for about a year.
 
 ### `pause`
 

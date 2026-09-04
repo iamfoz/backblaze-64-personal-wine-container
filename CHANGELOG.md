@@ -331,6 +331,86 @@ a stable release.
   `bb-doctor` can diagnose links to the Tools tab. When there is nothing to report, the
   page says so. The red band in the Monitor tab links to the Status tab.
 
+- The pause says why, and until when. The client writes a reason code and a deadline with
+  every pause, and the data layer read both, but the pages showed a flag. Now the Monitor's
+  state line, the Status tab, the terminal monitor and the API carry the reason in words,
+  with the client's code in a tooltip: "Paused from here" for a pause set from the Monitor,
+  the API or bzcli; "Paused by the client" with the cause when the client chose it, for
+  example when Backblaze's cluster authority is not answering, which is usually their
+  maintenance and resumes on its own. A pause set from here is a button; a pause the client
+  chose is a wait, and the page says which.
+- Notifications. The API tab has a Notifications section. Add an ntfy topic or a webhook
+  that receives JSON, with an optional bearer token or basic auth, and choose the events:
+  safety freeze, files skipped from a threshold, no completed backup within the client's
+  own limit, a stall that `bb-health` reports, a pause the client chose, first backup
+  complete, a milestone, and a container build change. Each event is sent once when it
+  starts and once when it clears, never on every poll, and the conditions are remembered on
+  disk so a restart does not send them again. Delivery makes three attempts and then logs
+  the failure; there is no queue. Nothing that names a file is ever sent. A Test button
+  sends a message to one endpoint. Tokens are stored in `/config/bb-api`, readable by the
+  container user only, because they have to be sent and so cannot be hashed.
+- Quiet hours. The API tab has a schedule of pause windows: days of the week, a start and
+  an end, in the container's time zone. At the start of a window the container asks the
+  client to pause; at the end it starts the backup again. The client's own pause lasts
+  about two hours, so inside a window the container renews it and says so in the log. A
+  backup started by hand inside a window stays running until the window ends. The Status
+  tab reads "Paused for quiet hours" with the time it resumes.
+- Copy status summary. A button in the Monitor's settings and on the Status tab copies
+  five lines of plain text: build and uptime, state and rate, progress and ETA, health,
+  today's uploads. It is what a maintainer asks for first, and nothing in it names a file.
+  The same text is at `GET /api/v1/summary`.
+- `bb-doctor` checks the source drives. For each mapped drive it reads the root and a
+  sample of the first-level entries as the container user and names anything it cannot
+  read, with the owner and the `chown` line. This finds a wrong owner before the client has
+  to give up on files. It also compares the volume id the client wrote under `.bzvol` with
+  the volumes the client lists in `bzvolumes.xml`. A drive the client no longer recognises
+  is the "No files are selected" state after an inherit onto a fresh install, and until now
+  nothing named it. No repair for either: these are the user's files and the backup's
+  identity. Beta only, through the same build-time patch as the other additions.
+- `bb-health` reports FROZEN, exit 1, when Backblaze has safety-frozen the backup, so a
+  frozen backup shows unhealthy in the Docker tab instead of healthy. `bb-watchdog` acts
+  only on HANG and WEDGE, so this cannot start a recovery. The Tools tab shows it as a red
+  cross. Beta only, as an anchored patch on the stable `bb-health`.
+- The API has a switch. When a live key exists, the API tab shows a toggle that turns the
+  API off and on without revoking anything. Off, every path answers 404 and the keys are
+  kept; on, they work again at once. A revoked or expired key has a Delete button in the
+  table, which removes the row. An active key cannot be deleted, only revoked.
+- More on the API. `GET /api/v1/metrics` gives the numbers in Prometheus text format with
+  a `bb64_` prefix. `GET /api/v1/events` is a server-sent event stream with one message
+  per change to the state, the pause, the health warnings, the skipped count, completion or
+  milestones, and a keep-alive every fifteen seconds. `GET /api/v1/openapi.json` is the
+  OpenAPI 3.1 document, also in the repository at `docs/openapi.json`. The command-line
+  tools are reachable at `/api/v1/tools` behind two new permissions: `diagnose` runs the
+  checks and reads their output; `diagnose:repair` is needed as well to switch on
+  `bb-doctor --fix`. The status payload gains `pause_label`, `milestones` and
+  `progress_history`.
+- The Status tab shows more. Milestones, each once for a week: a quarter, half, three
+  quarters of the way, and the first terabyte. The last 24 hours of state changes as a
+  list with the time. The safety-freeze notice links to the Backblaze page on resolving one
+  and says what the uninstall step means in this container: delete the client's program
+  directory and restart, and never recreate the Wine prefix, which would destroy the backup
+  state.
+- The Monitor shows more. "Today:" under the seven-day chart, with the client's counts for
+  today: uploads, retried attempts, files skipped. A progress-over-time line in the About
+  tab, one sample a day of percent complete, kept for a year. The exact bytes per second in
+  the rate's tooltip.
+- Keys. `1` to `5` switch tabs from any page, `s` opens the Monitor's settings, `p` pauses
+  or starts the backup. The list is in the settings dialog.
+- The browser tab's title carries the state: a dot while uploading, a pause mark while
+  paused, an exclamation mark while a warning is raised.
+- The desktop pane looks after itself. When noVNC reports the connection is gone, a notice
+  with a Reconnect button appears above the pane and reloads the frame.
+- Every page honours every theme. The thirteen palettes were defined in the Monitor's page
+  only; the Status, Tools and API pages knew one of them. The palettes now live in one
+  block spliced into every page, so a theme chosen in the Monitor applies everywhere.
+- Text uses the width of the window. The Status, Tools and API pages capped prose at 70
+  characters and the permission list at 52, which is about 375 pixels; the pages now use
+  the same 1100-pixel measure as the Monitor, with prose at 100 characters inside it.
+- Accessibility. The health band, the completion banner and the Status notices are
+  announced to a screen reader when they change. Animations stop when the browser asks for
+  reduced motion.
+- `bb-health`'s description on the Tools tab reads "with diagnostic information".
+
 ### Changed
 - The tabs in the web interface are Desktop, Monitor, Status, Tools and API. "Upload
   Monitor" is now "Monitor" and "Skipped Files" is now "Status". A saved tab or an old link
