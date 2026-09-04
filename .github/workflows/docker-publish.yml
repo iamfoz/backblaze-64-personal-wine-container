@@ -232,6 +232,12 @@ jobs:
           # The FD_WRITE re-arm adds no new symbol, so it has no binary fingerprint.
           # Its guard is the `git apply --check` at build time, which fails the build
           # if the context no longer matches.
+          # bb-doctor re-runs itself as the container user with setpriv when it is
+          # started as root. The build checks the binary is present; this checks it
+          # is still present in the image that ships, and that the patched script
+          # parses.
+          docker run --rm --entrypoint sh bb-beta-test:local -c \
+            'command -v setpriv >/dev/null && sh -n /usr/local/bin/bb-doctor && grep -q bb-doctor-asuser.sh /usr/local/bin/bb-doctor'
 
       - name: Push the beta image
         uses: docker/build-push-action@v7
