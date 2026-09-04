@@ -736,6 +736,20 @@ TOOLS_HTML = """<!doctype html>
   .ok{color:var(--good);} .warn{color:var(--warn);} .fail{color:var(--bad);font-weight:600;}
   .fixed{color:var(--good);font-weight:600;} .heading{color:var(--title);font-weight:600;}
   .note{color:var(--dim);} .rule{color:var(--dim);}
+  /* bb-health's answer is a verdict, so it is shown in the card with a mark
+     rather than in an output box: a tick, a warning sign or a cross, with the
+     tool's own lines under it as the evidence. */
+  .verdict{display:flex;gap:12px;align-items:flex-start;margin-top:10px;padding:10px 12px;
+    background:var(--bg);border:1px solid var(--border);border-radius:4px;}
+  /* display:flex would otherwise beat the hidden attribute and leave an empty
+     bordered strip in the card, the same trap pre[hidden] guards against. */
+  .verdict[hidden]{display:none;}
+  .mark{font-size:22px;line-height:1;flex:0 0 auto;}
+  .mark.ok{color:var(--good);} .mark.fail{color:var(--bad);} .mark.warn{color:var(--warn);}
+  .mark.run{color:var(--dim);}
+  .verdict strong{display:block;}
+  .verdict .detail{white-space:pre-wrap;word-break:break-word;margin-top:4px;color:var(--dim);
+    font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
   table{width:100%;border-collapse:collapse;margin-top:10px;}
   th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);
     font-size:13px;vertical-align:top;}
@@ -820,35 +834,98 @@ function renderTool(t){
            esc(o.flag) + '</code> ' + esc(o.label) + '<br><span class="dim">' + esc(o.does) +
            '</span></span></label>';
   }).join('');
-  return '<div class="panel" id="t-' + esc(t.name) + '">' +
+  var n = esc(t.name);
+  // Two shapes. A tool whose whole output is a verdict (bb-health) shows it in
+  // the card with a mark. The others get an output box that can be hidden, and
+  // Copy and Download for taking the text elsewhere. Both can be cleared.
+  var buttons = t.inline
+    ? '<button class="ghost" data-clear="' + n + '" hidden>Clear result</button>'
+    : '<button class="ghost" data-copy="' + n + '" hidden>Copy</button>' +
+      '<button class="ghost" data-dl="' + n + '" hidden>Download</button>' +
+      '<button class="ghost" data-toggle="' + n + '" hidden>Hide output</button>' +
+      '<button class="ghost" data-clear="' + n + '" hidden>Clear result</button>';
+  var body = t.inline ? '<div class="verdict" id="v-' + n + '" hidden></div>'
+                      : '<pre id="out-' + n + '" hidden></pre>';
+  return '<div class="panel" id="t-' + n + '">' +
     '<h2>' + esc(t.label) + '</h2><p class="dim">' + esc(t.does) + '</p>' + opts +
     '<div class="row">' +
-      '<button data-run="' + esc(t.name) + '"' + (t.available ? '' : ' disabled') + '>Run</button>' +
-      '<button class="ghost" data-copy="' + esc(t.name) + '" hidden>Copy</button>' +
-      '<button class="ghost" data-dl="' + esc(t.name) + '" hidden>Download</button>' +
-      '<span class="status" id="st-' + esc(t.name) + '">' +
-        (t.available ? '' : 'not in this image') + '</span>' +
-    '</div>' +
-    '<pre id="out-' + esc(t.name) + '" hidden></pre></div>';
+      '<button data-run="' + n + '"' + (t.available ? '' : ' disabled') + '>Run</button>' + buttons +
+      '<span class="status" id="st-' + n + '">' + (t.available ? '' : 'not in this image') + '</span>' +
+    '</div>' + body + '</div>';
+}
+
+var COLLAPSED = {};   // tool -> the user hid its output box
+
+// The mark for a finished verdict: a tick when the tool exited clean, a cross
+// when it reported a fault, a warning sign when it could not run at all.
+function mark(j){
+  if(j.state === 'running') return ['run', '&#8230;', 'running'];
+  if(j.state === 'failed') return ['warn', '&#9888;', j.result || 'could not run'];
+  if(j.exit_code === 0) return ['ok', '&#10003;', j.result];
+  return ['fail', '&#10007;', j.result];
+}
+
+function renderInline(name, j){
+  var v = document.getElementById('v-' + name);
+  var m = mark(j), lines = j.lines || [];
+  var head = lines.length ? lines[0] : (j.state === 'running' ? 'Checking' : m[2]);
+  var rest = lines.slice(1).join('\\n').replace(/^\\s+|\\s+$/g, '');
+  v.innerHTML = '<span class="mark ' + m[0] + '" aria-label="' + esc(m[2]) + '">' + m[1] + '</span>' +
+    '<div><strong class="' + (m[0] === 'run' ? '' : m[0]) + '">' + esc(head) + '</strong>' +
+    (rest ? '<div class="detail">' + esc(rest) + '</div>' : '') + '</div>';
+  v.hidden = false;
 }
 
 function renderOut(name){
   var j = JOBS[name]; if(!j) return;
-  var pre = document.getElementById('out-' + name);
-  var follow = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4;
-  pre.innerHTML = (j.lines || []).map(function(l){
-    var c = cls(l); return c ? '<span class="' + c + '">' + esc(l) + '</span>' : esc(l);
-  }).join('\\n') + (j.truncated ? '\\n<span class="warn">[output truncated]</span>' : '');
-  pre.hidden = false;
-  if(follow || j.state === 'running') pre.scrollTop = pre.scrollHeight;
-  var st = document.getElementById('st-' + name);
-  st.textContent = (j.state === 'running' ? 'running, ' + j.elapsed + 's'
-                    : j.result + ', ' + j.elapsed + 's') + (j.command ? '  (' + j.command + ')' : '');
+  var t = TOOLS[name] || {};
   var running = j.state === 'running';
   var box = document.getElementById('t-' + name);
+  var has = !!(j.lines && j.lines.length);
+  if(t.inline){
+    renderInline(name, j);
+  } else {
+    var pre = document.getElementById('out-' + name);
+    var follow = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4;
+    pre.innerHTML = (j.lines || []).map(function(l){
+      var c = cls(l); return c ? '<span class="' + c + '">' + esc(l) + '</span>' : esc(l);
+    }).join('\\n') + (j.truncated ? '\\n<span class="warn">[output truncated]</span>' : '');
+    // A fresh run reopens a box the user had hidden; there is new output to see.
+    if(running) COLLAPSED[name] = false;
+    pre.hidden = !!COLLAPSED[name];
+    if(!pre.hidden && (follow || running)) pre.scrollTop = pre.scrollHeight;
+    var tg = box.querySelector('[data-toggle]');
+    tg.hidden = !has;
+    tg.textContent = COLLAPSED[name] ? 'Show output' : 'Hide output';
+    box.querySelector('[data-copy]').hidden = running || !has;
+    box.querySelector('[data-dl]').hidden = running || !has;
+  }
+  var st = document.getElementById('st-' + name);
+  st.textContent = (running ? 'running, ' + j.elapsed + 's' : j.result + ', ' + j.elapsed + 's') +
+                   (j.command && !t.inline ? '  (' + j.command + ')' : '');
   box.querySelector('[data-run]').disabled = running;
-  box.querySelector('[data-copy]').hidden = running || !(j.lines && j.lines.length);
-  box.querySelector('[data-dl]').hidden = running || !(j.lines && j.lines.length);
+  box.querySelector('[data-clear]').hidden = running;
+}
+
+function toggleOut(name){
+  COLLAPSED[name] = !COLLAPSED[name];
+  renderOut(name);
+}
+
+// Drops the result from the page and from the service, so a reload does not
+// bring it back. A run in progress is left to finish.
+function clearOut(name){
+  clearErr();
+  post('manage/tools/clear/' + name, {}).then(function(){
+    delete JOBS[name];
+    var box = document.getElementById('t-' + name);
+    var pre = document.getElementById('out-' + name), v = document.getElementById('v-' + name);
+    if(pre){ pre.hidden = true; pre.innerHTML = ''; }
+    if(v){ v.hidden = true; v.innerHTML = ''; }
+    ['copy', 'dl', 'toggle', 'clear'].forEach(function(k){
+      var b = box.querySelector('[data-' + k + ']'); if(b) b.hidden = true; });
+    document.getElementById('st-' + name).textContent = '';
+  }).catch(showErr);
 }
 
 function poll(name, jid){
@@ -948,6 +1025,8 @@ document.addEventListener('click', function(e){
   if(t.getAttribute('data-run')) return run(t.getAttribute('data-run'));
   if(t.getAttribute('data-copy')) return copyOut(t.getAttribute('data-copy'));
   if(t.getAttribute('data-dl')) return dlOut(t.getAttribute('data-dl'));
+  if(t.getAttribute('data-toggle')) return toggleOut(t.getAttribute('data-toggle'));
+  if(t.getAttribute('data-clear')) return clearOut(t.getAttribute('data-clear'));
   if(t.getAttribute('data-del')) return delBundle(t.getAttribute('data-del'));
 });
 document.getElementById('rep-run').addEventListener('click', buildReport);
@@ -2333,6 +2412,15 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "bad request body"})
             return
 
+        if path.startswith("/manage/tools/clear/"):
+            # Before the run route, which would otherwise read "clear/<name>" as
+            # a tool name and answer 404.
+            name = path[len("/manage/tools/clear/"):]
+            if name not in bbtools.TOOLS:
+                self._json(404, {"error": "no such tool"})
+                return
+            self._json(200, {"schema": bbapi.SCHEMA, "cleared": bbtools.clear(name)})
+            return
         if path.startswith("/manage/tools/"):
             # The page's Run button. A tool is named by path and its options by
             # key; both are looked up in bbtools.TOOLS, and nothing else from the

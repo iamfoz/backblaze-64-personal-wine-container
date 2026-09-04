@@ -61,6 +61,9 @@ TOOLS = {
         "timeout": 30,
         "options": {},
         "exit": {0: "healthy", 1: "fault reported"},
+        # The output is a verdict and a few lines of evidence, so the page shows
+        # it in the card itself, with a mark, rather than in an output box.
+        "inline": True,
     },
     "version": {
         "argv": [BIN + "/bb-version"],
@@ -103,7 +106,7 @@ def describe():
                     best, last = j["started"], j["id"]
             out.append({
                 "name": name, "label": t["label"], "does": t["does"],
-                "available": available(name),
+                "available": available(name), "inline": bool(t.get("inline")),
                 "options": [{"key": k, "flag": o["flag"], "label": o["label"],
                              "does": o["does"], "confirm": o.get("confirm")}
                             for k, o in t["options"].items()],
@@ -222,6 +225,19 @@ def _finish(jid, exit_code=None, error=None):
             j["state"] = "failed" if error else "done"
             if _running.get(j["tool"]) == jid:
                 _running.pop(j["tool"], None)
+
+
+def clear(name):
+    """Forget the finished jobs of one tool, so the page can drop a result the
+    user no longer wants shown. A running job is left alone; it finishes and
+    can be cleared afterwards. Returns how many were dropped."""
+    n = 0
+    with _lock:
+        for jid, j in list(_jobs.items()):
+            if j["tool"] == name and j["state"] != "running":
+                _jobs.pop(jid, None)
+                n += 1
+    return n
 
 
 def status(jid):
