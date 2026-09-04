@@ -414,6 +414,23 @@ whenever the diagnosis is ambiguous — a tool that "fixes" a misdiagnosis is wo
 one that just reports. Anything it will not fix on its own (too little RAM, no swap,
 a full disk, a wedged transfer) is reported with what to do about it.
 
+On the beta image the Tools tab of the web interface runs `bb-doctor`, `bb-health` and
+`bb-version` from the browser and shows the output on the page, with `--fix` as a
+checkbox that asks for confirmation. It runs the same programs as the console. There is
+no second copy to drift.
+
+One thing to know about the console. `docker exec` enters the container as root, and root
+passes every permission test, so a `bb-doctor` run from the console could not tell you
+that the container user cannot read your files. The beta `bb-doctor` restarts itself as
+the container user when it is started as root, so its answer is the right one. On the
+stable image, or to be sure, run it as that user:
+
+```
+docker exec -u <USER_ID>:<GROUP_ID> <container> bb-doctor
+```
+
+with the same values as the container's `USER_ID` and `GROUP_ID` settings.
+
 ## Reporting a Problem
 
 ```
@@ -423,6 +440,10 @@ docker exec <container> bb-report
 Builds a sanitised diagnostic bundle as a `.zip` in your config/appdata folder, ready
 to attach to a forum post or GitHub issue. Run `bb-report --list` first if you want to
 see exactly what it would collect.
+
+On the beta image the Tools tab builds the bundle from the browser. Bundles made there are
+kept in `/config/bb-diag` as `backblaze64-diag-YYYYMMDDHHMM.zip`, and the tab lists them
+with a download and a delete button for each.
 
 **What is never collected.** Backblaze's working files contain material that must not be
 posted publicly: the per-thread XMLs carry a live authentication token, the AES key and
@@ -480,7 +501,7 @@ speed without building anything yourself. Point your container's Repository fiel
 the tag above to switch, and back to `latest` to switch away. Your `/config` volume
 carries over either way.
 
-It differs from the stable images in three ways worth knowing:
+It differs from the stable images in four ways worth knowing:
 
 - The Wine in it is **built from source with a patch that WineHQ has not yet
   reviewed**. The fix is filed as [WineHQ bug 59893](https://bugs.winehq.org/show_bug.cgi?id=59893)
@@ -488,6 +509,9 @@ It differs from the stable images in three ways worth knowing:
   vetted.
 - It tracks **Ubuntu 26.04**, the newer LTS, rather than the stable default.
 - It is rebuilt on a schedule rather than pinned to a release, so it moves.
+- The web interface has Monitor, Status, Tools and API tabs beside the desktop, and the
+  key-authenticated HTTP API. These are described in the changelog and in
+  [`docs/api-v1.md`](docs/api-v1.md).
 
 Use the stable tags unless upload speed is the reason you are here. When the fix
 reaches a Wine release the stable images pick it up on their own and the beta stops

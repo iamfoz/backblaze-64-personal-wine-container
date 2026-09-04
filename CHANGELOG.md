@@ -293,13 +293,55 @@ a stable release.
   bar drawn as a block per part. The blocks fill as the parts complete. The view is off by
   default, and you toggle it beside the theme picker.
 
+- A Tools tab in the web interface. It runs `bb-doctor`, `bb-health` and `bb-version`
+  from the page and shows their output there. The page does not have its own copy of the
+  tools. It runs the same programs that the console runs, and shows what they print, so a
+  change to a tool is a change to both views. A paste of the output into a forum post is
+  the same text whichever way it was made. The page colours the lines by the prefixes that
+  `bb-doctor` prints. A line with an unknown prefix is shown as plain text, so a change of
+  wording in a tool cannot hide output. Each tool has a Run button, a Copy button and a
+  Download button. `bb-doctor` has a checkbox for `--fix`. The page shows what `--fix` can
+  change and asks for confirmation before it runs. One run per tool at a time: a second
+  click while a run is in progress joins the run. Every run is written to the container
+  log with its command. The page runs as the container user, which is the user whose
+  permissions the checks are about. The tab sits behind the web login, like the rest of
+  the dashboard.
+- The Tools tab builds diagnostic bundles and keeps them. A bundle made from the page is
+  stored in `/config/bb-diag` as `backblaze64-diag-YYYYMMDDHHMM.zip`. The page lists the
+  bundles with their size and date, and each has a Download button and a Delete button.
+  A bundle from the API gets the same name and the same place. A bundle made with
+  `bb-report` on the console stays in `/config` with its old name, because `bb-report` is
+  a stable file.
+- The Status tab. The Skipped Files tab now leads with everything the client says needs
+  attention: the health warnings, a pause and whether it has taken yet, a first backup in
+  progress or just finished, and then the skipped files under them. A warning that
+  `bb-doctor` can diagnose links to the Tools tab. When there is nothing to report, the
+  page says so. The red band in the Monitor tab links to the Status tab.
+
 ### Changed
+- The tabs in the web interface are Desktop, Monitor, Status, Tools and API. "Upload
+  Monitor" is now "Monitor" and "Skipped Files" is now "Status". A saved tab or an old link
+  that names `skipped` opens the Status tab.
+- `bb-doctor` runs as the container user when you start it as root. `docker exec` enters
+  the container as root, and root passes every permission test. `bb-doctor` uses
+  permission tests to decide whether `/config` is writable and whether the client can read
+  a skipped file, so from the console both always said yes. Now, when it starts as root, it
+  restarts itself as `USER_ID:GROUP_ID`, or as the owner of `/config` when those are not
+  set, with the same arguments. The output is then the answer for the user the client
+  runs as. When the image has no way to drop privileges, the tool says so at the top of
+  its output and gives the `docker exec -u` command to run instead. Beta only, through the
+  same build-time patch as the skipped-file check.
 - The dark theme is properly black rather than dark grey. It uses rogman's values.
 - The web dashboard now works on a mobile browser.
 - `bb-monitor` and `bb-monitor-web` share one data layer,
   `/usr/local/lib/bb-monitor/bbdata.py`, so a feature appears in both or in neither.
 
 ### Fixed
+- `bb-doctor` reported a share with the wrong owner as readable, when it was run from the
+  console. The readability test is `[ -r ]`, and the console is root, so the test could not
+  fail. A user with the most common fault this container has ran the tool as the README
+  said to and was told the files could be read. The tool now runs as the container user,
+  see Changed above, and the same test gives the true answer.
 - Small files never reached Recently Completed. The table is fed from the files caught in
   flight, and a small file is gone before a poll can catch a thread carrying one. Backblaze
   also pushes small files in bundles rather than singly, so the log holds no per-file record of

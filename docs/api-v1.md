@@ -161,6 +161,7 @@ Requires `report`. Poll until `state` is `done` or `failed`.
 ```json
 {
   "schema": 1, "job": "a0bee5df9a11", "state": "done", "size_bytes": 148213,
+  "name": "backblaze64-diag-202609041420.zip",
   "download": "report/download/xh-qAnV10It3gPqS4YCfcwGGNjClD4",
   "download_expires_in": 298
 }
@@ -168,6 +169,11 @@ Requires `report`. Poll until `state` is `done` or `failed`.
 
 `download` is relative to `/api/v1/`. The container discards a finished job one hour after
 the job started.
+
+`name` is the file name of the bundle. The container stores the bundle in `/config/bb-diag`
+as `backblaze64-diag-YYYYMMDDHHMM.zip`. The name has a `-2`, `-3` suffix when two bundles
+are made in the same minute. The bundle stays there after the download link expires. You
+can download it again, or delete it, from the Tools tab of the web interface.
 
 ### `GET /api/v1/report/download/<token>`
 
