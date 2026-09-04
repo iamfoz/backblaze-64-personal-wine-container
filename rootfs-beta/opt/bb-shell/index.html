@@ -26,6 +26,14 @@
   .pane{flex:1 1 auto;border:0;width:100%;display:block;background:#0a1830;}
   .pane[hidden]{display:none;}
   #fallback{padding:14px;color:#ff5a5a;}
+  /* Shown over the desktop pane when noVNC reports it has lost the connection,
+     which after a container restart is otherwise a blank pane with nothing to
+     click. One line and one button. */
+  #desk-notice{display:flex;gap:12px;align-items:center;padding:8px 12px;
+    background:#3a1a1a;color:#ffd7d7;border-bottom:1px solid #6b2b2b;font-size:13px;}
+  #desk-notice[hidden]{display:none;}
+  #desk-notice button{appearance:none;border:1px solid #ffb3b3;background:transparent;color:#ffd7d7;
+    padding:4px 10px;border-radius:4px;font:inherit;cursor:pointer;}
   /* On a phone the tabs should own the width and be comfortably tappable.
      44px is the usual floor for a finger target; the default padding gives
      about 30. */
@@ -53,6 +61,8 @@
      The iframe is created once and only ever hidden, never removed and never
      re-pointed. Tearing it down would drop the VNC session and the Wine desktop
      would reconnect from scratch every time someone glanced at the monitor. -->
+<div id="desk-notice" hidden role="status">Desktop disconnected.
+  <button id="desk-reconnect" type="button">Reconnect</button></div>
 <iframe id="pane-desktop" class="pane" role="tabpanel" src="/desktop/"
         allow="fullscreen; clipboard-read; clipboard-write"
         title="Wine desktop"></iframe>
@@ -86,6 +96,7 @@
   var STATUS = '/monitor/status';
   var TOOLS = '/monitor/tools';
   var API = '/monitor/apikeys';
+  var ORDER = ['desktop', 'monitor', 'status', 'tools', 'api'];   // the digit keys, in tab order
   var tabs = Array.prototype.slice.call(document.querySelectorAll('#tabs button'));
   var panes = { desktop: document.getElementById('pane-desktop'),
                 monitor: document.getElementById('pane-monitor'),
@@ -117,10 +128,59 @@
     t.addEventListener('click', function(){ show(t.getAttribute('data-pane')); });
   });
 
-  var q = new URLSearchParams(location.search).get('tab');
+  var params = new URLSearchParams(location.search);
+  var q = params.get('tab');
+  // A link from the Status tab can ask the Tools tab to do something on
+  // arrival, for example start a diagnostic bundle. Passed through once.
+  var run = params.get('run');
+  if(q === 'tools' && run && /^[a-z]+$/.test(run)) SRC.tools = TOOLS + '?run=' + run;
   var saved = null;
   try { saved = localStorage.getItem('bbShellTab'); } catch(e){}
   show(q || saved || 'desktop');
+
+  // Digits switch tabs, here and from inside any frame that forwards them.
+  document.addEventListener('keydown', function(e){
+    var tg = e.target && e.target.tagName;
+    if(tg === 'INPUT' || tg === 'SELECT' || tg === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
+    if(e.key >= '1' && e.key <= '5') show(ORDER[Number(e.key) - 1]);
+  });
+  window.addEventListener('message', function(e){
+    if(e.origin !== location.origin) return;
+    var m = e.data;
+    if(m && m.bb64 === 'tab' && m.n >= 1 && m.n <= 5) show(ORDER[m.n - 1]);
+  });
+
+  // The tab title carries the state, because the browser tab is the one part of
+  // the page visible while the user is doing something else. Polled lightly from
+  // the small status feed rather than the Monitor's full one.
+  function title(){
+    fetch('/monitor/manage/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
+      var mark = '';
+      if(j.health && j.health.length) mark = '! ';
+      else if(j.paused) mark = '\u275A\u275A ';
+      else if(j.state === 'Transmitting' || j.state === 'Uploading') mark = '\u25CF ';
+      document.title = mark + 'Backblaze 64';
+    }).catch(function(){});
+  }
+  title(); setInterval(title, 20000);
+
+  // The desktop pane looks after itself. noVNC's own status text is read from
+  // the frame (same origin) and, when it says the connection is gone, a notice
+  // with a Reconnect button appears. Anything unexpected in that document means
+  // nothing happens, which is the right failure.
+  var notice = document.getElementById('desk-notice');
+  function checkDesktop(){
+    try {
+      var doc = panes.desktop.contentDocument;
+      var txt = doc && doc.body ? (doc.body.innerText || '') : '';
+      notice.hidden = !/disconnected|failed to connect|connection closed|connection error/i.test(txt);
+    } catch(e){ notice.hidden = true; }
+  }
+  document.getElementById('desk-reconnect').addEventListener('click', function(){
+    notice.hidden = true;
+    panes.desktop.src = '/desktop/';    // the one time re-pointing it is right: the session is already gone
+  });
+  setInterval(checkDesktop, 20000);
 })();
 </script>
 </body></html>

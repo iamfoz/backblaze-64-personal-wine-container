@@ -30,6 +30,8 @@ import bbctl
 import bbdata
 import bbreport
 import bbtools
+import bbnotify
+import bbquiet
 from bbdata import (BUILD_INFO, BUILD_LABEL, INT, eta_str, gather, human,
                      rec_cols, uptime_str, _diag_dump, _threadpush_uid,
                      _upload_host, _upload_rtt)
@@ -163,6 +165,12 @@ def snapshot_to_json(d):
         # needs to choose its label. The full pause record, with the deadline and
         # the reason, stays in the API payload where a consumer can act on it.
         "paused": (d.get("pause") or {}).get("paused", False),
+        # The pause in words: who set it, why, and until when. A bare "Paused"
+        # raised the question this answers.
+        "pause": d.get("pause"),
+        "pause_label": d.get("pause_label"),
+        "milestones": d.get("milestones"),
+        "progress_history": d.get("progress_history"),
         "compress_saved": human(d["compress_saved"]) if d.get("compress_saved") else None,
         "skipped": d.get("skipped"),
         # The skipped files themselves, not just the counts. The Skipped Files
@@ -185,6 +193,106 @@ def snapshot_to_json(d):
 
 
 
+# The palettes, once, spliced into every page at import time so a theme chosen
+# in the Monitor applies to the Status, Tools and API pages as well, and any
+# page added later inherits them by construction. The Monitor also uses
+# --hi-bg, --hi-fg and the track colours; the other pages use --dim, which is
+# derived from each palette below rather than kept as a fourteenth value.
+THEME_CSS = """  :root{
+    /* Blue -- matches the original curses console */
+    --bg:#0a1830; --panel:#0e2148; --border:#39c5ff; --title:#39c5ff;
+    --text:#d7e6ff; --hi-bg:#d7e6ff; --hi-fg:#0a1830;
+    --good:#3ddc6b; --warn:#ffd23d; --bad:#ff5a5a;
+    --track-bg:#04101f; --track-border:#1c3a63; --scanline:0;
+  }
+  /* Dark is properly black rather than dark grey. rogman's values: the point of
+     the theme is black, and #161616 was not it. */
+  html[data-theme="dark"]{
+    --bg:#000000; --panel:#1e1e1e; --border:#6a9fd8; --title:#7fb2e5;
+    --text:#d7e6ff; --hi-bg:#d4d4d4; --hi-fg:#161616;
+    --good:#3ddc6b; --warn:#ffd23d; --bad:#ff5a5a;
+    --track-bg:#0c0c0c; --track-border:#3a3a3a; --scanline:0;
+  }
+  html[data-theme="matrix"]{
+    --bg:#000000; --panel:#020a02; --border:#00ff41; --title:#00ff41;
+    --text:#33ff66; --hi-bg:#00ff41; --hi-fg:#000000;
+    --good:#00ff41; --warn:#c6ff00; --bad:#ff3333;
+    --track-bg:#001400; --track-border:#0a4d1a; --scanline:1;
+  }
+  html[data-theme="amber"]{
+    --bg:#170f00; --panel:#1f1500; --border:#ffb000; --title:#ffb000;
+    --text:#ffbf33; --hi-bg:#ffb000; --hi-fg:#170f00;
+    --good:#ffb000; --warn:#ffcf5c; --bad:#ff5a3c;
+    --track-bg:#140d00; --track-border:#4d3600; --scanline:1;
+  }
+  html[data-theme="nord"]{
+    --bg:#2e3440; --panel:#333a48; --border:#88c0d0; --title:#8fbcbb;
+    --text:#e5e9f0; --hi-bg:#88c0d0; --hi-fg:#2e3440;
+    --good:#a3be8c; --warn:#ebcb8b; --bad:#bf616a;
+    --track-bg:#242933; --track-border:#4c566a; --scanline:0;
+  }
+  html[data-theme="dracula"]{
+    --bg:#282a36; --panel:#2f3140; --border:#bd93f9; --title:#ff79c6;
+    --text:#f8f8f2; --hi-bg:#bd93f9; --hi-fg:#282a36;
+    --good:#50fa7b; --warn:#f1fa8c; --bad:#ff5555;
+    --track-bg:#1e1f29; --track-border:#44475a; --scanline:0;
+  }
+  html[data-theme="solarized"]{
+    --bg:#002b36; --panel:#04333f; --border:#268bd2; --title:#2aa198;
+    --text:#93a1a1; --hi-bg:#268bd2; --hi-fg:#002b36;
+    --good:#859900; --warn:#b58900; --bad:#dc322f;
+    --track-bg:#00212a; --track-border:#0a4a5c; --scanline:0;
+  }
+  html[data-theme="gruvbox"]{
+    --bg:#282828; --panel:#32302f; --border:#fabd2f; --title:#fe8019;
+    --text:#ebdbb2; --hi-bg:#ebdbb2; --hi-fg:#282828;
+    --good:#b8bb26; --warn:#fabd2f; --bad:#fb4934;
+    --track-bg:#1d2021; --track-border:#504945; --scanline:0;
+  }
+  html[data-theme="onedark"]{
+    --bg:#282c34; --panel:#2c313c; --border:#61afef; --title:#c678dd;
+    --text:#abb2bf; --hi-bg:#abb2bf; --hi-fg:#282c34;
+    --good:#98c379; --warn:#e5c07b; --bad:#e06c75;
+    --track-bg:#21252b; --track-border:#3e4451; --scanline:0;
+  }
+  html[data-theme="tokyonight"]{
+    --bg:#1a1b26; --panel:#1f2335; --border:#7aa2f7; --title:#bb9af7;
+    --text:#c0caf5; --hi-bg:#c0caf5; --hi-fg:#1a1b26;
+    --good:#9ece6a; --warn:#e0af68; --bad:#f7768e;
+    --track-bg:#16161e; --track-border:#414868; --scanline:0;
+  }
+  html[data-theme="catppuccin"]{
+    --bg:#1e1e2e; --panel:#232634; --border:#89b4fa; --title:#cba6f7;
+    --text:#cdd6f4; --hi-bg:#cdd6f4; --hi-fg:#1e1e2e;
+    --good:#a6e3a1; --warn:#f9e2af; --bad:#f38ba8;
+    --track-bg:#181825; --track-border:#45475a; --scanline:0;
+  }
+  html[data-theme="monokai"]{
+    --bg:#272822; --panel:#2e2f26; --border:#66d9ef; --title:#a6e22e;
+    --text:#f8f8f2; --hi-bg:#f8f8f2; --hi-fg:#272822;
+    --good:#a6e22e; --warn:#e6db74; --bad:#f92672;
+    --track-bg:#1e1f1a; --track-border:#49483e; --scanline:0;
+  }
+  html[data-theme="cyberpunk"]{
+    --bg:#0d0221; --panel:#150a30; --border:#ff2ec4; --title:#05d9e8;
+    --text:#d1f7ff; --hi-bg:#05d9e8; --hi-fg:#0d0221;
+    --good:#39ff14; --warn:#ffe700; --bad:#ff2ec4;
+    --track-bg:#08011a; --track-border:#3d1b5c; --scanline:1;
+  }
+"""
+
+# What the three plain pages add to the palettes: a dim text colour mixed from
+# the theme, the page background carried onto html so a centred body sits on
+# its own colour, and the same 1100px measure the Monitor uses. Prose caps are
+# lifted to 100ch inside that, so text uses the width of a desktop window
+# and still wraps at a readable line on a very wide one.
+PAGE_CSS = """  :root{ --dim:#7f9fc8; }
+  @supports (color: color-mix(in srgb, red, blue)){
+    :root{ --dim:color-mix(in srgb, var(--text) 62%, var(--bg)); }
+  }
+  html{background:var(--bg);}
+"""
+
 # The key management page, framed by the API tab in the shell. Served from
 # /apikeys, which is reached as /monitor/apikeys and so sits behind the same
 # auth_request as the dashboard. Creating a key must never be reachable from the
@@ -194,33 +302,49 @@ KEYS_HTML = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Backblaze 64 API</title>
 <style>
-  :root{
-    --bg:#0a1830; --panel:#0e2148; --border:#39c5ff; --title:#39c5ff;
-    --text:#d7e6ff; --good:#3ddc6b; --warn:#ffd23d; --bad:#ff5a5a;
-    --dim:#7f9fc8;
-  }
-  html[data-theme="dark"]{ --bg:#000; --panel:#0d0d0d; --border:#333; --title:#ddd;
-    --text:#ddd; --dim:#888; }
-  *{box-sizing:border-box;}
-  body{margin:0;padding:16px;background:var(--bg);color:var(--text);
+""" + THEME_CSS + PAGE_CSS + """  *{box-sizing:border-box;}
+  body{margin:0 auto;max-width:1132px;padding:16px;background:var(--bg);color:var(--text);
     font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
     font-size:14px;line-height:1.5;}
   h1{font-size:18px;margin:0 0 4px;color:var(--title);}
   h2{font-size:14px;margin:20px 0 8px;color:var(--title);font-weight:600;}
-  p{margin:0 0 12px;max-width:70ch;}
+  p{margin:0 0 12px;max-width:100ch;}
   .dim{color:var(--dim);}
   .panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;
     padding:14px;margin-bottom:16px;}
   .state{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;}
   .on{background:var(--good);color:#04101f;}
   .off{background:var(--dim);color:#04101f;}
+  .row{display:flex;gap:14px;align-items:center;flex-wrap:wrap;}
+  /* A switch rather than a button pair: it shows the current state and the
+     other state in one control, and it reads the same on a phone. */
+  .switch{display:inline-flex;gap:8px;align-items:center;font-size:13px;cursor:pointer;margin:0;}
+  .switch input{appearance:none;-webkit-appearance:none;width:38px;height:20px;margin:0;border-radius:10px;
+    background:var(--dim);position:relative;cursor:pointer;border:0;flex:0 0 auto;}
+  .switch input:checked{background:var(--good);}
+  .switch input::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+    background:var(--bg);transition:left .15s;}
+  .switch input:checked::after{left:20px;}
+  .switch input:disabled{opacity:.4;cursor:default;}
+  h3{font-size:13px;margin:16px 0 6px;color:var(--title);}
+  .ep,.win{display:grid;grid-template-columns:1fr;gap:6px 10px;padding:10px 0;border-bottom:1px solid var(--border);}
+  .ep:last-child,.win:last-child{border-bottom:0;}
+  .ep .f{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--dim);}
+  .ep .f input,.ep .f select{max-width:none;width:100%;}
+  .ep .acts,.win .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .days{display:flex;gap:6px;flex-wrap:wrap;}
+  .days label{display:inline-flex;gap:4px;align-items:center;font-size:12px;margin:0;}
+  input[type=time],input[type=number]{padding:6px 8px;border-radius:4px;border:1px solid var(--border);
+    background:var(--bg);color:var(--text);font:inherit;}
+  .ev label{display:flex;gap:8px;align-items:flex-start;margin:0 0 8px;font-size:13px;}
+  @media (min-width:720px){ .ep{grid-template-columns:1.2fr .8fr 2fr .8fr 1fr 1.2fr auto;align-items:end;} }
   label{display:block;margin:10px 0 4px;font-size:13px;}
   input[type=text]{width:100%;max-width:340px;padding:6px 8px;border-radius:4px;
     border:1px solid var(--border);background:var(--bg);color:var(--text);font:inherit;}
   select{padding:6px 8px;border-radius:4px;border:1px solid var(--border);
     background:var(--bg);color:var(--text);font:inherit;}
   .scopes{margin:8px 0 4px;}
-  .scopes label{display:flex;gap:8px;align-items:flex-start;margin:0 0 8px;max-width:52ch;}
+  .scopes label{display:flex;gap:8px;align-items:flex-start;margin:0 0 8px;}
   .scopes code{font-size:12px;}
   .everyone{padding-bottom:8px;border-bottom:1px solid var(--border);}
   .group{margin:10px 0;}
@@ -251,8 +375,11 @@ KEYS_HTML = """<!doctype html>
 port at <code>/api/v1/status</code> and takes a key instead of the web login.</p>
 
 <div class="panel">
-  <strong>Status:</strong> <span id="state" class="state off">off</span>
-  <p class="dim" style="margin:8px 0 0">No keys, no API. Every path answers 404 until you
+  <div class="row">
+    <span><strong>Status:</strong> <span id="state" class="state off">off</span></span>
+    <label class="switch" title="Turn the API off without revoking anything. Every path answers 404 until it is on again, and the keys keep working the moment it is."><input type="checkbox" id="switch" disabled> <span>API enabled</span></label>
+  </div>
+  <p class="dim" id="state-note" style="margin:8px 0 0">No keys, no API. Every path answers 404 until you
   make one. Revoke the last key and it switches off again.</p>
 </div>
 
@@ -288,6 +415,40 @@ port at <code>/api/v1/status</code> and takes a key instead of the web login.</p
     <th>Expires</th><th></th>
   </tr></thead><tbody id="rows"></tbody></table>
   <p id="none" class="dim" hidden>No keys yet.</p>
+</div>
+
+<h2>Notifications</h2>
+<div class="panel" id="notify">
+  <p class="dim">The container tells you when the backup needs you. Send to an ntfy topic, or JSON to
+  a webhook that Home Assistant, Gotify, Discord, Slack or a script can take. Each event is sent once
+  when it starts and once when it clears, never on every poll. Nothing that names a file is ever
+  sent: the skipped-files event carries a count and a reason.</p>
+  <div id="endpoints"></div>
+  <button class="ghost" id="ep-add">Add endpoint</button>
+  <h3>Events</h3>
+  <div class="ev" id="events"></div>
+  <label for="skipped-threshold">Files skipped: send from</label>
+  <div class="row"><input type="number" id="skipped-threshold" min="1" style="width:6em"> <span class="dim">files</span></div>
+  <div class="row" style="margin-top:12px"><button id="notify-save">Save notifications</button><span class="dim" id="notify-msg"></span></div>
+  <div id="notify-err" class="err" hidden></div>
+  <p class="dim" style="margin:12px 0 0">Tokens are kept in <code>/config/bb-api</code>, readable by the
+  container user only. They have to be sent, so they cannot be hashed the way API keys are.</p>
+</div>
+
+<h2>Quiet hours</h2>
+<div class="panel" id="quiet">
+  <p class="dim">Pause the backup on a schedule. At the start of a window the container asks the client
+  to pause; at the end it starts the backup again. The client's own pause lasts about two hours, so
+  inside a window the container renews it. If you start the backup yourself during a window, it stays
+  running until that window ends. Times are in the container's time zone.</p>
+  <div class="row">
+    <label class="switch"><input type="checkbox" id="quiet-enabled"> <span>Quiet hours enabled</span></label>
+    <span class="dim" id="quiet-state"></span>
+  </div>
+  <div id="windows"></div>
+  <button class="ghost" id="win-add">Add window</button>
+  <div class="row" style="margin-top:12px"><button id="quiet-save">Save quiet hours</button><span class="dim" id="quiet-msg"></span></div>
+  <div id="quiet-err" class="err" hidden></div>
 </div>
 
 <script>
@@ -328,6 +489,13 @@ function render(d){
   var st = document.getElementById('state');
   st.textContent = on ? 'on' : 'off';
   st.className = 'state ' + (on ? 'on' : 'off');
+  var sw = document.getElementById('switch');
+  sw.checked = !!d.switch;
+  sw.disabled = !d.has_keys;
+  document.getElementById('state-note').textContent = !d.has_keys
+    ? 'No keys, no API. Every path answers 404 until you make one. Revoke the last key and it switches off again.'
+    : (d.switch ? 'On. Switch it off here to stop every path answering, without revoking a key.'
+                : 'Switched off. The keys are kept; every path answers 404 until you switch it on again.');
 
   var box = document.getElementById('scopes');
   if(!box.dataset.built){
@@ -375,7 +543,7 @@ function render(d){
       '<td>'+(k.expires ? when(k.expires) : '<span class="dim">never</span>')+'</td>' +
       '<td>'+(k.state === 'active'
         ? '<button class="ghost" data-revoke="'+esc(k.id)+'">Revoke</button>'
-        : '<span class="dim">'+esc(k.state)+'</span>')+'</td></tr>';
+        : '<span class="dim">'+esc(k.state)+'</span> <button class="ghost" data-delete="'+esc(k.id)+'" data-state="'+esc(k.state)+'">Delete</button>')+'</td></tr>';
   }).join('');
   document.getElementById('none').hidden = d.keys.length > 0;
 }
@@ -407,16 +575,160 @@ document.getElementById('copy').addEventListener('click', function(){
   this.textContent = 'Copied';
 });
 document.getElementById('rows').addEventListener('click', function(e){
-  var id = e.target.getAttribute && e.target.getAttribute('data-revoke');
-  if(!id) return;
-  if(!confirm('Revoke key ' + id + '? Anything using it stops working immediately.')) return;
-  post('manage/keys/revoke', {id: id}).then(load);
+  var t = e.target; if(!t.getAttribute) return;
+  var id = t.getAttribute('data-revoke');
+  if(id){
+    if(!confirm('Revoke key ' + id + '? Anything using it stops working immediately.')) return;
+    post('manage/keys/revoke', {id: id}).then(load);
+    return;
+  }
+  id = t.getAttribute('data-delete');
+  if(id){
+    if(!confirm('Delete key ' + id + ' for good? It is already ' + t.getAttribute('data-state') + ', so nothing changes for anything using it; this only removes the row.')) return;
+    post('manage/keys/delete', {id: id}).then(load);
+  }
+});
+document.getElementById('switch').addEventListener('change', function(){
+  var sw = this;
+  post('manage/keys/enabled', {enabled: sw.checked}).then(function(res){
+    if(!res.ok){ sw.checked = !sw.checked; }
+    return load();
+  });
+});
+
+// ---- notifications ----
+var NOTIFY = null;
+var KINDS = [['ntfy', 'ntfy topic'], ['webhook', 'Webhook (JSON)']];
+var AUTHS = [['none', 'No auth'], ['bearer', 'Bearer token'], ['basic', 'Basic auth']];
+function opts(list, cur){ return list.map(function(o){ return '<option value="'+esc(o[0])+'"'+(o[0]===cur?' selected':'')+'>'+esc(o[1])+'</option>'; }).join(''); }
+function epRow(e, i){
+  return '<div class="ep" data-i="'+i+'">' +
+    '<label class="f">Label<input type="text" class="ep-label" value="'+esc(e.label||'')+'" placeholder="Phone"></label>' +
+    '<label class="f">Kind<select class="ep-kind">'+opts(KINDS, e.kind||'ntfy')+'</select></label>' +
+    '<label class="f">URL<input type="text" class="ep-url" value="'+esc(e.url||'')+'" placeholder="https://ntfy.sh/your-topic"></label>' +
+    '<label class="f">Auth<select class="ep-auth">'+opts(AUTHS, e.auth||'none')+'</select></label>' +
+    '<label class="f">User (basic)<input type="text" class="ep-user" value="'+esc(e.user||'')+'"></label>' +
+    '<label class="f">Token or password<input type="password" class="ep-token" value="" placeholder="'+(e.has_token ? 'set, leave blank to keep' : '')+'" autocomplete="new-password"></label>' +
+    '<div class="acts"><button class="ghost ep-test" '+(e.id ? '' : 'disabled title="Save first"')+'>Test</button>' +
+    '<button class="ghost ep-remove">Remove</button><input type="hidden" class="ep-id" value="'+esc(e.id||'')+'"></div></div>';
+}
+function renderNotify(d){
+  NOTIFY = d;
+  document.getElementById('endpoints').innerHTML = (d.endpoints||[]).map(epRow).join('') ||
+    '<p class="dim">No endpoints yet.</p>';
+  document.getElementById('events').innerHTML = (d.event_list||[]).map(function(ev){
+    return '<label><input type="checkbox" class="ev-key" value="'+esc(ev.key)+'"'+(d.events[ev.key] ? ' checked' : '')+
+           '><span><strong>'+esc(ev.label)+'</strong>'+(ev.clears ? ' <span class="dim">(and when it clears)</span>' : '')+
+           '<br><span class="dim">'+esc(ev.does)+'</span></span></label>';
+  }).join('');
+  document.getElementById('skipped-threshold').value = d.skipped_threshold || 1;
+}
+function collectNotify(){
+  var eps = [].slice.call(document.querySelectorAll('#endpoints .ep')).map(function(r){
+    var g = function(c){ var el = r.querySelector(c); return el ? el.value : ''; };
+    return {id: g('.ep-id'), label: g('.ep-label'), kind: g('.ep-kind'), url: g('.ep-url'),
+            auth: g('.ep-auth'), user: g('.ep-user'), token: g('.ep-token')};
+  });
+  var events = {};
+  [].slice.call(document.querySelectorAll('.ev-key')).forEach(function(c){ events[c.value] = c.checked; });
+  return {endpoints: eps, events: events, skipped_threshold: Number(document.getElementById('skipped-threshold').value || 1)};
+}
+function loadNotify(){
+  return fetch('manage/notify', {cache:'no-store'}).then(function(r){ return r.json(); }).then(renderNotify);
+}
+document.getElementById('ep-add').addEventListener('click', function(){
+  var box = document.getElementById('endpoints');
+  if(box.querySelector('p')) box.innerHTML = '';
+  box.insertAdjacentHTML('beforeend', epRow({kind:'ntfy', auth:'none'}, box.children.length));
+});
+document.getElementById('endpoints').addEventListener('click', function(e){
+  var t = e.target; if(!t.classList) return;
+  var row = t.closest('.ep');
+  if(t.classList.contains('ep-remove')){ row.remove(); if(!document.querySelector('#endpoints .ep')) document.getElementById('endpoints').innerHTML = '<p class="dim">No endpoints yet.</p>'; }
+  if(t.classList.contains('ep-test')){
+    var id = row.querySelector('.ep-id').value; var msg = document.getElementById('notify-msg');
+    msg.textContent = 'sending a test\u2026';
+    post('manage/notify/test', {id: id}).then(function(res){
+      msg.textContent = res.ok ? 'Test delivered (' + res.body.detail + ').' : 'Test failed: ' + (res.body.detail || res.body.error || 'unknown');
+    });
+  }
+});
+document.getElementById('notify-save').addEventListener('click', function(){
+  var err = document.getElementById('notify-err'), msg = document.getElementById('notify-msg');
+  err.hidden = true; msg.textContent = '';
+  post('manage/notify', collectNotify()).then(function(res){
+    if(!res.ok){ err.textContent = res.body.error || 'Could not save.'; err.hidden = false; return; }
+    renderNotify(res.body); msg.textContent = 'Saved.'; setTimeout(function(){ msg.textContent = ''; }, 1500);
+  });
+});
+
+// ---- quiet hours ----
+var DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+function winRow(w){
+  var days = DAYS.map(function(d, i){ return '<label><input type="checkbox" class="win-day" value="'+i+'"'+((w.days||[]).indexOf(i) >= 0 ? ' checked' : '')+'> '+d+'</label>'; }).join('');
+  return '<div class="win"><div class="days">'+days+'</div>' +
+    '<div class="acts"><label>from <input type="time" class="win-start" value="'+esc(w.start||'22:00')+'"></label>' +
+    '<label>to <input type="time" class="win-end" value="'+esc(w.end||'07:00')+'"></label>' +
+    '<button class="ghost win-remove">Remove</button></div></div>';
+}
+function quietStateText(st){
+  if(!st) return '';
+  if(st.in_window){
+    var until = st.window_end ? new Date(st.window_end*1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
+    if(st.override_until) return 'In a window until ' + until + '; started by hand, so left running until then.';
+    return 'In a window until ' + until + (st.active ? '; paused by quiet hours.' : '.');
+  }
+  if(st.next_start) return 'Next window: ' + new Date(st.next_start*1000).toLocaleString([], {weekday:'short', hour:'2-digit', minute:'2-digit'}) + '.';
+  return st.enabled ? 'No windows yet.' : '';
+}
+function renderQuiet(d){
+  document.getElementById('quiet-enabled').checked = !!d.config.enabled;
+  document.getElementById('windows').innerHTML = (d.config.windows||[]).map(winRow).join('') || '<p class="dim">No windows yet.</p>';
+  document.getElementById('quiet-state').textContent = quietStateText(d.state);
+}
+function collectQuiet(){
+  return {enabled: document.getElementById('quiet-enabled').checked,
+          windows: [].slice.call(document.querySelectorAll('#windows .win')).map(function(r){
+            return {days: [].slice.call(r.querySelectorAll('.win-day:checked')).map(function(c){ return Number(c.value); }),
+                    start: r.querySelector('.win-start').value, end: r.querySelector('.win-end').value};
+          })};
+}
+function loadQuiet(){
+  return fetch('manage/quiet', {cache:'no-store'}).then(function(r){ return r.json(); }).then(renderQuiet);
+}
+document.getElementById('win-add').addEventListener('click', function(){
+  var box = document.getElementById('windows');
+  if(box.querySelector('p')) box.innerHTML = '';
+  box.insertAdjacentHTML('beforeend', winRow({days:[0,1,2,3,4]}));
+});
+document.getElementById('windows').addEventListener('click', function(e){
+  if(e.target.classList && e.target.classList.contains('win-remove')){
+    e.target.closest('.win').remove();
+    if(!document.querySelector('#windows .win')) document.getElementById('windows').innerHTML = '<p class="dim">No windows yet.</p>';
+  }
+});
+document.getElementById('quiet-save').addEventListener('click', function(){
+  var err = document.getElementById('quiet-err'), msg = document.getElementById('quiet-msg');
+  err.hidden = true; msg.textContent = '';
+  post('manage/quiet', collectQuiet()).then(function(res){
+    if(!res.ok){ err.textContent = res.body.error || 'Could not save.'; err.hidden = false; return; }
+    renderQuiet(res.body); msg.textContent = 'Saved.'; setTimeout(function(){ msg.textContent = ''; }, 1500);
+  });
+});
+// Digits switch the shell's tabs from inside this frame; the shell owns them.
+document.addEventListener('keydown', function(e){
+  var tg = e.target && e.target.tagName;
+  if(tg === 'INPUT' || tg === 'SELECT' || tg === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
+  if(e.key >= '1' && e.key <= '5' && window.parent !== window) window.parent.postMessage({bb64: 'tab', n: Number(e.key)}, location.origin);
 });
 try {
   var t = localStorage.getItem('bbMonitorTheme');
   if(t) document.documentElement.setAttribute('data-theme', t);
 } catch(e){}
 load();
+loadNotify();
+loadQuiet();
+setInterval(loadQuiet, 30000);
 </script>
 </body></html>
 """
@@ -436,19 +748,12 @@ STATUS_HTML = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Backblaze 64 Status</title>
 <style>
-  :root{
-    --bg:#0a1830; --panel:#0e2148; --border:#39c5ff; --title:#39c5ff;
-    --text:#d7e6ff; --good:#3ddc6b; --warn:#ffd23d; --bad:#ff5a5a;
-    --dim:#7f9fc8;
-  }
-  html[data-theme="dark"]{ --bg:#000; --panel:#0d0d0d; --border:#333; --title:#ddd;
-    --text:#ddd; --dim:#888; }
-  *{box-sizing:border-box;}
-  body{margin:0;padding:16px;background:var(--bg);color:var(--text);
+""" + THEME_CSS + PAGE_CSS + """  *{box-sizing:border-box;}
+  body{margin:0 auto;max-width:1132px;padding:16px;background:var(--bg);color:var(--text);
     font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
     font-size:14px;line-height:1.5;}
   h1{font-size:18px;margin:0 0 4px;color:var(--title);}
-  p{margin:0 0 12px;max-width:70ch;}
+  p{margin:0 0 12px;max-width:100ch;}
   .dim{color:var(--dim);}
   .good{color:var(--good);}
   .panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;
@@ -478,11 +783,18 @@ STATUS_HTML = """<!doctype html>
   /* One notice per thing that needs attention, with a coloured edge that says
      how urgently. Text, not icons, so a screen reader gets the same message. */
   .notice{border-left:4px solid var(--dim);background:var(--panel);border-radius:4px;
-    padding:10px 12px;margin-bottom:8px;max-width:80ch;}
+    padding:10px 12px;margin-bottom:8px;max-width:100ch;}
   .notice.n-bad{border-left-color:var(--bad);}
   .notice.n-warn{border-left-color:var(--warn);}
   .notice.n-good{border-left-color:var(--good);}
   .notice.n-info{border-left-color:var(--title);}
+  .notice a{color:var(--title);}
+  /* State transitions, newest last, as a plain list with the time in a fixed
+     column so the eye can run down it. */
+  .tl{list-style:none;margin:0 0 6px;padding:0;font-size:13px;}
+  .tl li{display:flex;gap:12px;padding:2px 0;}
+  .tl time{color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    flex:0 0 5.5em;}
   .err{color:var(--bad);margin-top:8px;}
   @media (max-width:560px){ table,thead,tbody,tr,th,td{display:block;}
     thead{display:none;} tr{border-bottom:1px solid var(--border);padding:6px 0;}
@@ -492,7 +804,11 @@ STATUS_HTML = """<!doctype html>
 <h1>Status</h1>
 <p class="dim">What needs your attention, from the client's own records.</p>
 
-<div id="notices"></div>
+<div id="notices" aria-live="polite"></div>
+
+<h2>Last 24 hours</h2>
+<p class="dim" id="tl-none">Nothing recorded yet.</p>
+<ul id="timeline" class="tl" hidden></ul>
 
 <h2>Skipped files</h2>
 <p class="dim">Files Backblaze has given up on. They are not queued and they are not
@@ -502,6 +818,7 @@ them.</p>
 <div class="controls">
   <input type="text" id="filter" placeholder="Filter by name or path" autocomplete="off" hidden>
   <button class="ghost" id="refresh">Refresh</button>
+  <button class="ghost" id="summary" title="Five lines of plain text for a forum post or an issue. Nothing in it names a file.">Copy status summary</button>
 </div>
 
 <div class="panel" id="none" hidden>
@@ -626,18 +943,33 @@ function renderNotices(j){
     if(h.kind === 'skipped') extra = ' They are listed below.';
     else if(h.kind === 'frozen') extra = ' Backblaze has stopped the client because something ' +
       'looked wrong with the drive it was backing up. Nothing is deleted. Run bb-doctor from the ' +
-      tools + ', and read the Backblaze page on resolving a safety freeze before you change anything.';
+      tools + ', and read <a href="https://www.backblaze.com/computer-backup/docs/resolve-a-safety-freeze" ' +
+      'target="_blank" rel="noopener noreferrer">the Backblaze page on resolving a safety freeze</a> ' +
+      'before you change anything. Its uninstall and reinstall step means, in this container, deleting ' +
+      '<code>/config/wine/drive_c/Program Files/Backblaze/</code> and restarting: the client is put back ' +
+      'on the next start. It does not mean recreating the Wine prefix, which would destroy the backup ' +
+      'state you are trying to save. If you get that far, ask before you do it.';
     else if(h.kind === 'filecheck') extra = ' Run bb-doctor from the ' + tools + '.';
     else if(h.kind === 'stale') extra = ' The client has not finished a pass within the limit set in its own settings.';
     out.push('<div class="notice n-bad"><strong>' + esc(h.text) + '.</strong>' + extra + '</div>');
   });
   if(j.paused){
-    var pausing = j.state === 'Pausing';
-    out.push('<div class="notice n-warn"><strong>' + (pausing ? 'Backup pausing.' : 'Backup paused.') +
-             '</strong> ' + (pausing ? 'The client is finishing the transfers already in flight.'
-                                     : 'Nothing uploads until the backup is started again, from the Monitor tab or the desktop.') +
-             '</div>');
+    var pausing = j.state === 'Pausing', pl = j.pause_label || {}, q = j.quiet || {};
+    var title = pausing ? 'Backup pausing.' : (q.active ? 'Paused for quiet hours.' : (pl.title || 'Backup paused') + '.');
+    var detail = pausing ? 'The client is finishing the transfers already in flight.'
+               : q.active ? 'The backup starts again when the window ends' +
+                            (q.window_end ? ', at ' + esc(fmtTime(q.window_end)) : '') + '.'
+               : (pl.detail || 'Nothing uploads until the backup is started again, from the Monitor tab or the desktop.') +
+                 (pl.until_str ? ' Until ' + esc(pl.until_str) + '.' : '');
+    var who = pl.who === 'client' ? ' The client chose this; it is not something to fix here.'
+            : pl.who === 'here' && !q.active ? ' Start it again from the Monitor tab when you are ready.' : '';
+    out.push('<div class="notice n-warn"' + (pl.code ? ' title="' + esc(pl.code) + '"' : '') + '><strong>' +
+             esc(title) + '</strong> ' + detail + who + '</div>');
   }
+  (j.milestones || []).forEach(function(m){
+    out.push('<div class="notice n-good"><strong>' + esc(m.label) + ',</strong> on ' +
+             esc(fmtDate(m.at)) + '.</div>');
+  });
   if(j.completion){
     var d = j.completion.days;
     out.push('<div class="notice n-good"><strong>First backup complete.</strong> ' +
@@ -656,6 +988,25 @@ function renderNotices(j){
   document.getElementById('notices').innerHTML = out.join('');
 }
 
+function fmtTime(epoch){ try { var d = new Date(epoch*1000); return (d.getHours()<10?'0':'')+d.getHours()+':'+(d.getMinutes()<10?'0':'')+d.getMinutes(); } catch(e){ return ''; } }
+function fmtDate(epoch){ try { return new Date(epoch*1000).toLocaleDateString(undefined, {day:'numeric', month:'long'}); } catch(e){ return ''; } }
+function renderTimeline(list){
+  var ul = document.getElementById('timeline'), none = document.getElementById('tl-none');
+  list = list || [];
+  ul.hidden = !list.length; none.hidden = !!list.length;
+  ul.innerHTML = list.map(function(t){
+    return '<li><time>' + esc(fmtTime(t.at)) + '</time><span>' + esc(t.state || '?') + '</span></li>';
+  }).join('');
+}
+function copySummary(){
+  var btn = document.getElementById('summary');
+  fetch('manage/summary', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(txt){
+    function done(){ var keep = 'Copy status summary'; btn.textContent = 'Copied'; setTimeout(function(){ btn.textContent = keep; }, 1200); }
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done, function(){ prompt('Copy this:', txt); }); }
+    else { prompt('Copy this:', txt); }
+  }).catch(function(){ btn.textContent = 'Could not fetch'; });
+}
+
 function load(){
   var err = document.getElementById('err');
   // Every fifteen seconds. The skipped list changes only when the client
@@ -663,18 +1014,25 @@ function load(){
   // a freeze should not wait for a page reload to appear.
   return fetch('manage/status', {cache:'no-store'})
     .then(function(r){ return r.json(); })
-    .then(function(j){ DATA = j; err.hidden = true; renderNotices(j); render(); })
+    .then(function(j){ DATA = j; err.hidden = true; renderNotices(j); renderTimeline(j.timeline); render(); })
     .catch(function(){ err.textContent = 'Could not read the status.';
                        err.hidden = false; });
 }
 
 document.getElementById('refresh').addEventListener('click', load);
+document.getElementById('summary').addEventListener('click', copySummary);
 document.getElementById('filter').addEventListener('input', render);
 document.getElementById('chips').addEventListener('click', function(e){
   var r = e.target.getAttribute && e.target.getAttribute('data-reason');
   if(r === null || r === undefined) return;
   REASON = r;
   render();
+});
+// Digits switch the shell's tabs from inside this frame; the shell owns them.
+document.addEventListener('keydown', function(e){
+  var tg = e.target && e.target.tagName;
+  if(tg === 'INPUT' || tg === 'SELECT' || tg === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
+  if(e.key >= '1' && e.key <= '5' && window.parent !== window) window.parent.postMessage({bb64: 'tab', n: Number(e.key)}, location.origin);
 });
 try {
   var t = localStorage.getItem('bbMonitorTheme');
@@ -699,21 +1057,14 @@ TOOLS_HTML = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Backblaze 64 Tools</title>
 <style>
-  :root{
-    --bg:#0a1830; --panel:#0e2148; --border:#39c5ff; --title:#39c5ff;
-    --text:#d7e6ff; --good:#3ddc6b; --warn:#ffd23d; --bad:#ff5a5a;
-    --dim:#7f9fc8;
-  }
-  html[data-theme="dark"]{ --bg:#000; --panel:#0d0d0d; --border:#333; --title:#ddd;
-    --text:#ddd; --dim:#888; }
-  *{box-sizing:border-box;}
-  body{margin:0;padding:16px;background:var(--bg);color:var(--text);
+""" + THEME_CSS + PAGE_CSS + """  *{box-sizing:border-box;}
+  body{margin:0 auto;max-width:1132px;padding:16px;background:var(--bg);color:var(--text);
     font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
     font-size:14px;line-height:1.5;}
   h1{font-size:18px;margin:0 0 4px;color:var(--title);}
   h2{font-size:15px;margin:0 0 4px;color:var(--title);
     font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
-  p{margin:0 0 10px;max-width:70ch;}
+  p{margin:0 0 10px;max-width:100ch;}
   .dim{color:var(--dim);}
   .panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;
     padding:14px;margin-bottom:16px;}
@@ -726,7 +1077,7 @@ TOOLS_HTML = """<!doctype html>
   .status{font-size:13px;color:var(--dim);margin-left:auto;}
   /* An option is a checkbox with the flag it stands for and what it does, so
      the page says exactly what will run before it runs. */
-  label.opt{display:flex;gap:8px;align-items:flex-start;max-width:70ch;font-size:13px;
+  label.opt{display:flex;gap:8px;align-items:flex-start;font-size:13px;
     margin:8px 0 0;cursor:pointer;}
   label.opt input{margin:3px 0 0;}
   label.opt code{color:var(--title);}
@@ -814,7 +1165,7 @@ function cls(line){
   if(line.indexOf('         ') === 0) return 'note';
   if(line.indexOf('-----') === 0) return 'rule';
   if(line === 'OK') return 'ok';
-  if(line.indexOf('HANG') === 0 || line.indexOf('WEDGE') === 0) return 'fail';
+  if(line.indexOf('HANG') === 0 || line.indexOf('WEDGE') === 0 || line.indexOf('FROZEN') === 0) return 'fail';
   if(line.length && line.charAt(0) !== ' ') return 'heading';
   return '';
 }
@@ -1032,6 +1383,12 @@ document.addEventListener('click', function(e){
 document.getElementById('rep-run').addEventListener('click', buildReport);
 document.getElementById('rep-refresh').addEventListener('click', loadReport);
 
+// Digits switch the shell's tabs from inside this frame; the shell owns them.
+document.addEventListener('keydown', function(e){
+  var tg = e.target && e.target.tagName;
+  if(tg === 'INPUT' || tg === 'SELECT' || tg === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
+  if(e.key >= '1' && e.key <= '5' && window.parent !== window) window.parent.postMessage({bb64: 'tab', n: Number(e.key)}, location.origin);
+});
 try {
   var th = localStorage.getItem('bbMonitorTheme');
   if(th) document.documentElement.setAttribute('data-theme', th);
@@ -1046,6 +1403,8 @@ get('manage/tools').then(function(j){
   j.tools.forEach(function(t){ if(t.running || t.last_job) poll(t.name, t.running || t.last_job); });
 }).catch(showErr);
 loadReport();
+// A link from the Status tab can ask for a bundle straight away.
+try { if(new URLSearchParams(location.search).get('run') === 'report') buildReport(); } catch(e){}
 </script>
 </body></html>
 """
@@ -1110,6 +1469,9 @@ def api_v1_payload(d):
         "state": d.get("state"),
         "paused": (d.get("pause") or {}).get("paused", False),
         "pause": d.get("pause"),
+        # The same pause as words, so a consumer can show a reason without
+        # keeping its own table of the client's codes.
+        "pause_label": d.get("pause_label"),
         "activity": {"phase": act.get("phase"), "file": act.get("file"),
                      "part": act.get("part"), "internal": act.get("internal")} if act else None,
         "threads": d.get("threads"),
@@ -1161,6 +1523,11 @@ def api_v1_payload(d):
         # Present only while the first completion is recent, null the rest of the
         # time, so a consumer can treat its arrival as the event itself.
         "completion": d.get("completion"),
+        # Quarter, half, three quarters and the first terabyte, each present for a
+        # week after it is passed, so its arrival can be treated as the event.
+        "milestones": d.get("milestones"),
+        # One sample a day of percent complete, oldest first, for plotting.
+        "progress_history": d.get("progress_history"),
         # What the set is made of, from the client's own category totals. Counts
         # only: the client does not break its byte total down the same way, so a
         # per-category size would have to be invented rather than reported.
@@ -1223,7 +1590,140 @@ def _loop():
             global _latest, _latest_api
             _latest = js
             _latest_api = api
+        _after_snapshot(api)
         time.sleep(INT)
+
+
+# ---- observers fed by the poll loop -----------------------------------------
+# State transitions for the Status tab's timeline, the notifier, the quiet-hours
+# scheduler, and the wake-up for anyone holding an events stream. All of them
+# see the API payload, which is the contract, so what they react to is what a
+# consumer would see.
+_timeline = []                     # [(epoch, state)], newest last, 24 hours
+_timeline_lock = threading.Lock()
+_events_cv = threading.Condition()
+_events_seq = 0
+_quiet = bbquiet.Scheduler(bbctl.run)
+_WATCHED = ("state", "paused")
+
+
+def _after_snapshot(api):
+    global _events_seq
+    if not api or not api.get("ok"):
+        return
+    now = time.time()
+    changed = False
+    with _timeline_lock:
+        if not _timeline or _timeline[-1][1] != api.get("state"):
+            _timeline.append((int(now), api.get("state")))
+            changed = True
+        while _timeline and now - _timeline[0][0] > 86400:
+            _timeline.pop(0)
+    try:
+        if bbnotify.observe(api):
+            changed = True
+    except Exception as exc:                   # a notifier fault must not stop the poll
+        sys.stderr.write("bb-monitor-web: notify: %s\n" % exc)
+    try:
+        _quiet.observe(api)
+    except Exception as exc:
+        sys.stderr.write("bb-monitor-web: quiet hours: %s\n" % exc)
+    # Wake the events streams on any state change, or every poll when something
+    # they watch moved; they compare and decide for themselves.
+    with _events_cv:
+        _events_seq += 1
+        _events_cv.notify_all()
+
+
+def timeline():
+    with _timeline_lock:
+        return [{"at": t, "state": st} for t, st in _timeline]
+
+
+def summary_text(api):
+    """The status as five lines of plain text, for pasting into a support thread.
+    Nothing in it names a file."""
+    if not api or not api.get("ok"):
+        return "Backblaze 64 %s: monitor not ready (%s)\n" % (api.get("build") if api else "?",
+                                                              (api or {}).get("error"))
+    b = api.get("backup") or {}
+    lat = api.get("latency") or {}
+    rate = api.get("rate_bytes_per_sec") or 0
+    parts = ["Backblaze 64 %s, up %s" % (api.get("build"), uptime_str())]
+    st = api.get("state") or "?"
+    pl = api.get("pause_label")
+    if pl:
+        st += " (%s%s)" % (pl["title"].lower(), (", until " + pl["until_str"]) if pl.get("until_str") else "")
+    line = "State: %s, %.1f Mbit/s, %s threads" % (st, rate * 8 / 1e6, api.get("threads"))
+    if lat.get("ms") is not None:
+        line += ", RTT %.0f ms" % lat["ms"]
+    parts.append(line)
+    if b.get("total_bytes"):
+        line = "Backup: %s%% of %s" % (b.get("pct"), human(b["total_bytes"]))
+        if b.get("total_files"):
+            line += ", %s files" % ("%.1fM" % (b["total_files"] / 1e6) if b["total_files"] >= 1e6
+                                     else "{:,}".format(b["total_files"]))
+        if b.get("eta_date"):
+            line += ", ETA %s" % b["eta_date"]
+            tr = api.get("eta_trend")
+            if tr and tr.get("direction") in ("better", "worse"):
+                line += " (%dd %s than yesterday)" % (abs(tr.get("delta_seconds", 0)) // 86400, tr["direction"])
+        parts.append(line)
+    sc = api.get("scan")
+    if sc and sc.get("pct") is not None:
+        parts.append("Scan: %s%% of directories, %s files found" % (sc["pct"], sc.get("files")))
+    health = [h["text"] for h in (api.get("health") or [])]
+    parts.append("Health: " + ("; ".join(health) if health else "no warnings"))
+    up = api.get("uploads_today")
+    if up:
+        parts.append("Today: %s uploads, %s retried" % (up.get("success"), up.get("retried_attempts")))
+    return "\n".join(parts) + "\n"
+
+
+def metrics_text(api):
+    """Prometheus text exposition of the numbers in the status payload."""
+    out = []
+    def g(name, value, help_, labels=""):
+        if value is None:
+            return
+        out.append("# HELP bb64_%s %s" % (name, help_))
+        out.append("# TYPE bb64_%s gauge" % name)
+        out.append("bb64_%s%s %s" % (name, labels, value))
+    if not api or not api.get("ok"):
+        g("up", 0, "1 when the monitor has a snapshot")
+        return "\n".join(out) + "\n"
+    g("up", 1, "1 when the monitor has a snapshot")
+    g("rate_bytes_per_second", api.get("rate_bytes_per_sec"), "Upload rate over the last minute")
+    g("threads", api.get("threads"), "Push threads in flight")
+    g("paused", 1 if api.get("paused") else 0, "1 while the backup is paused")
+    g("chunks_last_minute", api.get("chunks_last_minute"), "Chunks completed in the last minute")
+    g("uptime_seconds", api.get("uptime_seconds"), "Seconds since the monitor started")
+    b = api.get("backup") or {}
+    g("backup_done_bytes", b.get("done_bytes"), "Bytes the client reports as backed up")
+    g("backup_total_bytes", b.get("total_bytes"), "Bytes selected for backup")
+    g("backup_pct", b.get("pct"), "Percent of the selection backed up")
+    g("backup_remaining_files", b.get("remaining_files"), "Files still to send")
+    g("backup_eta_seconds", b.get("eta_seconds"), "Estimated seconds to catch up")
+    sc = api.get("scan") or {}
+    g("scan_pct", sc.get("pct"), "Percent of directories indexed in the current scan")
+    m = api.get("memory") or {}
+    g("memory_used_bytes", m.get("used_bytes"), "Container memory in use")
+    g("memory_total_bytes", m.get("total_bytes"), "Container memory limit or host total")
+    sw = api.get("swap") or {}
+    g("swap_used_bytes", sw.get("used_bytes"), "Swap in use")
+    lat = api.get("latency") or {}
+    g("upload_rtt_milliseconds", lat.get("ms"), "Smoothed round-trip time to the upload pod")
+    sk = api.get("skipped_files") or {}
+    g("skipped_files", sk.get("total", 0) if sk else 0, "Files the client has given up on")
+    kinds = {h["kind"] for h in (api.get("health") or [])}
+    for k in ("frozen", "filecheck", "stale", "skipped"):
+        g("health_warning", 1 if k in kinds else 0, "1 while this warning is raised", '{kind="%s"}' % k)
+    up = api.get("uploads_today") or {}
+    g("uploads_today", up.get("success"), "Successful uploads recorded today")
+    g("upload_retries_today", up.get("retried_attempts"), "Attempts a vault turned away today")
+    g("compress_saved_bytes", api.get("compress_saved_bytes"), "Bytes saved by compression")
+    g("last_backup_days", api.get("last_backup_days"), "Days since a backup pass completed")
+    return "\n".join(out) + "\n"
 
 
 # ---- HTTP server -----------------------------------------------------------
@@ -1233,88 +1733,7 @@ INDEX_HTML = """<!doctype html>
 <title>Backblaze 64 &bull; Upload Monitor</title>
 <link id="favicon" rel="icon" type="image/svg+xml" href="">
 <style>
-  :root{
-    /* Blue -- matches the original curses console */
-    --bg:#0a1830; --panel:#0e2148; --border:#39c5ff; --title:#39c5ff;
-    --text:#d7e6ff; --hi-bg:#d7e6ff; --hi-fg:#0a1830;
-    --good:#3ddc6b; --warn:#ffd23d; --bad:#ff5a5a;
-    --track-bg:#04101f; --track-border:#1c3a63; --scanline:0;
-  }
-  /* Dark is properly black rather than dark grey. rogman's values: the point of
-     the theme is black, and #161616 was not it. */
-  html[data-theme="dark"]{
-    --bg:#000000; --panel:#1e1e1e; --border:#6a9fd8; --title:#7fb2e5;
-    --text:#d7e6ff; --hi-bg:#d4d4d4; --hi-fg:#161616;
-    --good:#3ddc6b; --warn:#ffd23d; --bad:#ff5a5a;
-    --track-bg:#0c0c0c; --track-border:#3a3a3a; --scanline:0;
-  }
-  html[data-theme="matrix"]{
-    --bg:#000000; --panel:#020a02; --border:#00ff41; --title:#00ff41;
-    --text:#33ff66; --hi-bg:#00ff41; --hi-fg:#000000;
-    --good:#00ff41; --warn:#c6ff00; --bad:#ff3333;
-    --track-bg:#001400; --track-border:#0a4d1a; --scanline:1;
-  }
-  html[data-theme="amber"]{
-    --bg:#170f00; --panel:#1f1500; --border:#ffb000; --title:#ffb000;
-    --text:#ffbf33; --hi-bg:#ffb000; --hi-fg:#170f00;
-    --good:#ffb000; --warn:#ffcf5c; --bad:#ff5a3c;
-    --track-bg:#140d00; --track-border:#4d3600; --scanline:1;
-  }
-  html[data-theme="nord"]{
-    --bg:#2e3440; --panel:#333a48; --border:#88c0d0; --title:#8fbcbb;
-    --text:#e5e9f0; --hi-bg:#88c0d0; --hi-fg:#2e3440;
-    --good:#a3be8c; --warn:#ebcb8b; --bad:#bf616a;
-    --track-bg:#242933; --track-border:#4c566a; --scanline:0;
-  }
-  html[data-theme="dracula"]{
-    --bg:#282a36; --panel:#2f3140; --border:#bd93f9; --title:#ff79c6;
-    --text:#f8f8f2; --hi-bg:#bd93f9; --hi-fg:#282a36;
-    --good:#50fa7b; --warn:#f1fa8c; --bad:#ff5555;
-    --track-bg:#1e1f29; --track-border:#44475a; --scanline:0;
-  }
-  html[data-theme="solarized"]{
-    --bg:#002b36; --panel:#04333f; --border:#268bd2; --title:#2aa198;
-    --text:#93a1a1; --hi-bg:#268bd2; --hi-fg:#002b36;
-    --good:#859900; --warn:#b58900; --bad:#dc322f;
-    --track-bg:#00212a; --track-border:#0a4a5c; --scanline:0;
-  }
-  html[data-theme="gruvbox"]{
-    --bg:#282828; --panel:#32302f; --border:#fabd2f; --title:#fe8019;
-    --text:#ebdbb2; --hi-bg:#ebdbb2; --hi-fg:#282828;
-    --good:#b8bb26; --warn:#fabd2f; --bad:#fb4934;
-    --track-bg:#1d2021; --track-border:#504945; --scanline:0;
-  }
-  html[data-theme="onedark"]{
-    --bg:#282c34; --panel:#2c313c; --border:#61afef; --title:#c678dd;
-    --text:#abb2bf; --hi-bg:#abb2bf; --hi-fg:#282c34;
-    --good:#98c379; --warn:#e5c07b; --bad:#e06c75;
-    --track-bg:#21252b; --track-border:#3e4451; --scanline:0;
-  }
-  html[data-theme="tokyonight"]{
-    --bg:#1a1b26; --panel:#1f2335; --border:#7aa2f7; --title:#bb9af7;
-    --text:#c0caf5; --hi-bg:#c0caf5; --hi-fg:#1a1b26;
-    --good:#9ece6a; --warn:#e0af68; --bad:#f7768e;
-    --track-bg:#16161e; --track-border:#414868; --scanline:0;
-  }
-  html[data-theme="catppuccin"]{
-    --bg:#1e1e2e; --panel:#232634; --border:#89b4fa; --title:#cba6f7;
-    --text:#cdd6f4; --hi-bg:#cdd6f4; --hi-fg:#1e1e2e;
-    --good:#a6e3a1; --warn:#f9e2af; --bad:#f38ba8;
-    --track-bg:#181825; --track-border:#45475a; --scanline:0;
-  }
-  html[data-theme="monokai"]{
-    --bg:#272822; --panel:#2e2f26; --border:#66d9ef; --title:#a6e22e;
-    --text:#f8f8f2; --hi-bg:#f8f8f2; --hi-fg:#272822;
-    --good:#a6e22e; --warn:#e6db74; --bad:#f92672;
-    --track-bg:#1e1f1a; --track-border:#49483e; --scanline:0;
-  }
-  html[data-theme="cyberpunk"]{
-    --bg:#0d0221; --panel:#150a30; --border:#ff2ec4; --title:#05d9e8;
-    --text:#d1f7ff; --hi-bg:#05d9e8; --hi-fg:#0d0221;
-    --good:#39ff14; --warn:#ffe700; --bad:#ff2ec4;
-    --track-bg:#08011a; --track-border:#3d1b5c; --scanline:1;
-  }
-  *{box-sizing:border-box;}
+""" + THEME_CSS + """  *{box-sizing:border-box;}
   html,body{height:100%;}
   /* Column layout so the footer sits at the bottom of the frame rather than
      directly under short content. Matters most inside the shell's tab, where
@@ -1361,8 +1780,12 @@ INDEX_HTML = """<!doctype html>
   .gauge .track{width:120px;height:12px;background:var(--track-bg);border:1px solid var(--track-border);position:relative;overflow:hidden;}
   .spark{width:70px;height:16px;vertical-align:middle;margin-left:6px;}
   .spark polyline{fill:none;stroke:var(--good);stroke-width:1.5;}
+  .progress polyline{fill:none;stroke:var(--good);stroke-width:1.5;}
+  .progress .axis{stroke:var(--track-border);stroke-width:1;}
+  .progress text{fill:var(--dim);font-size:9px;}
   .dim{opacity:.65;font-weight:normal;}
   .gauge .fill{display:block;height:100%;background:var(--good);transition:width .4s ease,background .25s;}
+  @media (prefers-reduced-motion: reduce){ *{transition:none !important;} }
   .gauge.warn .fill{background:var(--warn);}
   .gauge.bad .fill{background:var(--bad);}
   table{border-collapse:collapse;width:100%;table-layout:auto;}
@@ -1561,14 +1984,21 @@ INDEX_HTML = """<!doctype html>
       <p class="fhint">Saved in this browser only. Each device keeps its own choice.
          Add <code>?theme=matrix</code> or <code>?compact=1</code> to the URL to override,
          which is how to embed a compact panel in a dashboard.</p>
+      <div class="frow" style="margin-top:12px">
+        <button id="copy-summary" type="button">Copy status summary</button>
+      </div>
+      <p class="fhint">Five lines of plain text for a forum post or an issue: build, state,
+         progress, health. Nothing in it names a file.</p>
+      <p class="fhint">Keys: <code>1</code> to <code>5</code> switch tabs, <code>s</code> opens
+         this dialog, <code>p</code> pauses or starts the backup, <code>Esc</code> closes.</p>
     </div>
     <div class="mpane" id="pane-about" role="tabpanel" hidden></div>
   </div>
 </div>
 <main>
   <div id="err" style="display:none"></div>
-  <div id="health" style="display:none"></div>
-  <div class="panel" id="completion" style="display:none"></div>
+  <div id="health" style="display:none" aria-live="polite"></div>
+  <div class="panel" id="completion" style="display:none" aria-live="polite"></div>
   <div class="panel" id="panel-status">
     <span class="ptitle">Status</span>
     <div id="status-grid"></div>
@@ -1773,14 +2203,59 @@ var aboutDone = false, aboutSince = null;
 // The start date travels at the top level of the payload rather than inside
 // about, because it describes this backup and not this build, so it is passed
 // in as a second argument instead of being dug out of a.
-function renderAbout(a, since){
+// The state, and when paused, who paused it and until when. A bare "Paused" is
+// the question; the label is the answer, and the client's own code sits in the
+// tooltip for anyone searching Backblaze's help for it.
+function stateHtml(d){
+  var stateCls = d.state==='Transmitting' ? 'good' : (['Scanning','Preparing'].includes(d.state) ? 'warn' : '');
+  var pl = d.pause_label;
+  var tip = pl ? (pl.detail || '') + (pl.code ? ' [' + pl.code + ']' : '') : '';
+  return '<span class="stat"' + (tip ? ' title="' + esc(tip) + '"' : '') + '>State: <span class="' + stateCls + '">' +
+         esc(d.state) + '</span>' +
+         (pl ? ' <span class="dim">(' + esc(pl.title.toLowerCase()) +
+               (pl.until_str ? ', until ' + esc(pl.until_str) : '') + ')</span>' : '') + '</span>';
+}
+// The chart gives the shape of the week; this gives today's number.
+function todayHtml(d){
+  if(!d.upload_success) return '';
+  var sk = d.skipped && d.skipped.total ? d.skipped.total : 0;
+  return '<span class="stat dim" title="The client counts today: uploads that completed, attempts a busy vault turned away and the client retried, and files it has given up on.">Today: ' +
+         d.upload_success[0].toLocaleString() + ' upload' + (d.upload_success[0] === 1 ? '' : 's') +
+         (d.upload_success[1] ? ', ' + d.upload_success[1] + ' retried' : '') +
+         ', ' + sk + ' skipped</span>';
+}
+// Percent complete by day, one sample a day, as a small line. After months of
+// watching a bar, the line that shows it moving is the thing worth looking at.
+function progressSvg(hist){
+  if(!hist || hist.length < 2) return '';
+  var w = 320, h = 90, padL = 30, padB = 16, padT = 6;
+  var n = hist.length, iw = w - padL - 6, ih = h - padB - padT;
+  var pts = hist.map(function(s, i){
+    var x = padL + (i / (n - 1)) * iw, y = padT + (1 - Math.max(0, Math.min(100, s.pct)) / 100) * ih;
+    return x.toFixed(1) + ',' + y.toFixed(1);
+  }).join(' ');
+  function day(s){ return s.slice(6, 8) + '/' + s.slice(4, 6); }
+  return '<svg class="progress" viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="' + h + '" role="img" aria-label="Progress over time">' +
+    '<line x1="' + padL + '" y1="' + padT + '" x2="' + padL + '" y2="' + (h - padB) + '" class="axis"/>' +
+    '<line x1="' + padL + '" y1="' + (h - padB) + '" x2="' + (w - 6) + '" y2="' + (h - padB) + '" class="axis"/>' +
+    '<text x="' + (padL - 4) + '" y="' + (padT + 4) + '" text-anchor="end">100%</text>' +
+    '<text x="' + (padL - 4) + '" y="' + (h - padB) + '" text-anchor="end">0%</text>' +
+    '<polyline points="' + pts + '"/>' +
+    '<text x="' + padL + '" y="' + (h - 3) + '">' + esc(day(hist[0].day)) + '</text>' +
+    '<text x="' + (w - 6) + '" y="' + (h - 3) + '" text-anchor="end">' + esc(day(hist[n - 1].day)) + ' • ' + esc(hist[n - 1].pct) + '%</text>' +
+    '</svg>';
+}
+var aboutHist = 0;
+function renderAbout(a, since, hist){
   // Build metadata never changes while we run, so this normally draws once. The
   // exception is the date: the payload sent when collection fails still carries
   // about but has no backing_up_since, and latching on that first draw would
   // lose the row for the life of the page. So a date arriving later reopens it.
-  if(aboutDone && (since == null || since === aboutSince)) return;
+  var hl = hist ? hist.length : 0;
+  if(aboutDone && (since == null || since === aboutSince) && hl === aboutHist) return;
   aboutDone = true;
   aboutSince = (since == null ? null : since);
+  aboutHist = hl;
   var b = a.build || {}, rows = '';
   function row(k, v){ if(v) rows += '<dt>'+esc(k)+'</dt><dd>'+esc(v)+'</dd>'; }
   row('Version', b.version); row('Build', b.build);
@@ -1797,6 +2272,9 @@ function renderAbout(a, since){
       '<div class="credit"><span class="what">'+esc(a.license)+'</span></div>' +
       '<div class="credit"><a href="'+esc(a.url)+'" target="_blank" rel="noopener noreferrer">'+esc(a.url)+'</a></div>' +
     '</div>';
+  var ps = progressSvg(hist);
+  if(ps) html += '<div class="asec"><h3>Progress</h3>' + ps +
+                 '<p class="fhint">Percent complete, one sample a day, since the monitor started keeping them.</p></div>';
   if(a.credits && a.credits.length){
     html += '<div class="asec"><h3>With thanks to</h3>' +
       a.credits.map(function(c){
@@ -1846,7 +2324,7 @@ async function tick(){
     // Relative, so it resolves under /monitor/ when proxied and at / when standalone.
     const res = await fetch('api/status', {cache:'no-store'});
     const d = await res.json();
-    if(d.about) renderAbout(d.about, d.backing_up_since);   // before the ok check: About must work when collection is broken
+    if(d.about) renderAbout(d.about, d.backing_up_since, d.progress_history);   // before the ok check: About must work when collection is broken
     if(!d.ok){
       // No state read means no state to act on, so the control goes away rather
       // than sitting there offering to pause something we cannot see.
@@ -1910,10 +2388,10 @@ async function tick(){
     var grid = document.getElementById('status-grid');
     grid.innerHTML =
       '<span class="stat">Threads: '+d.threads+'</span>' +
-      '<span class="stat">Up: <span class="'+rateCls+'">'+d.rate_str+'</span> ('+d.rate_mbit_str+')'+sparklineSvg(rateHistory,70,16)+'</span>' +
+      '<span class="stat" title="'+Math.round(d.rate_mb*1048576).toLocaleString()+' bytes per second">Up: <span class="'+rateCls+'">'+d.rate_str+'</span> ('+d.rate_mbit_str+')'+sparklineSvg(rateHistory,70,16)+'</span>' +
       '<span class="stat">Chunks/60s: '+d.chunks+'</span>' +
       '<span class="stat">Session: '+d.session_str+'</span>' +
-      '<span class="stat">State: <span class="'+stateCls+'">'+d.state+'</span></span>' +
+      stateHtml(d) +
       pingHtml(d) +
       (d.scan ? '<span class="stat">Scanning: '+d.scan.dirs+' dirs \u2022 ' +
                 esc((d.scan.files||0).toLocaleString())+' files' +
@@ -1929,6 +2407,7 @@ async function tick(){
                 (d.upload_success[1] ? ' <span class="dim">('+d.upload_success[1]+' retried)</span>' : '') +
                 '</span>' : '') +
       uploadStripHtml(d.upload_history) +
+      todayHtml(d) +
       (d.compress_saved ? '<span class="stat dim">Compression saved: '+esc(d.compress_saved)+'</span>' : '') +
       (d.perf ? '<span class="stat dim" title="Measured by the Backblaze client itself. ' +
                 'Small files are slower because each costs a round trip.">Client est: ' +
@@ -2072,8 +2551,24 @@ async function tick(){
   openBtn.addEventListener('click', openModal);
   document.getElementById('modal-close').addEventListener('click', closeModal);
   backdrop.addEventListener('click', function(e){ if(e.target === backdrop) closeModal(); });
+  function typing(e){ var t = e.target && e.target.tagName; return t === 'INPUT' || t === 'SELECT' || t === 'TEXTAREA' || (e.target && e.target.isContentEditable); }
   document.addEventListener('keydown', function(e){
-    if(e.key === 'Escape' && !backdrop.hidden) closeModal();
+    if(e.key === 'Escape' && !backdrop.hidden){ closeModal(); return; }
+    if(typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
+    if(e.key === 's'){ document.getElementById('settings-btn').click(); }
+    else if(e.key === 'p'){ var pb = document.getElementById('pause-btn'); if(pb && pb.style.display !== 'none') pb.click(); }
+    else if(e.key >= '1' && e.key <= '5' && window.parent !== window){
+      // The shell owns the tabs; tell it. Same origin, so the target is exact.
+      window.parent.postMessage({bb64: 'tab', n: Number(e.key)}, location.origin);
+    }
+  });
+  document.getElementById('copy-summary').addEventListener('click', function(){
+    var btn = this;
+    fetch('manage/summary', {cache:'no-store'}).then(function(r){ return r.text(); }).then(function(txt){
+      function done(){ btn.textContent = 'Copied'; setTimeout(function(){ btn.textContent = 'Copy status summary'; }, 1200); }
+      if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(done, function(){ prompt('Copy this:', txt); }); }
+      else { prompt('Copy this:', txt); }
+    });
   });
   tabs.forEach(function(t){
     t.addEventListener('click', function(){ setTab(t.getAttribute('data-tab')); });
@@ -2167,7 +2662,146 @@ class Handler(BaseHTTPRequestHandler):
             # spelling it in a URL.
             if name in bbctl.ACTIONS:
                 return "control:" + name, lambda: self._api_control_run(name)
+        if method == "GET" and path == "/api/v1/summary":
+            return "read", self._api_summary
+        if method == "GET" and path == "/api/v1/metrics":
+            return "read", self._api_metrics
+        if method == "GET" and path == "/api/v1/events":
+            return "read", self._api_events
+        if method == "GET" and path == "/api/v1/openapi.json":
+            # Any valid key: the document describes the surface, and a key
+            # already proves the caller may know it exists.
+            return None, self._api_openapi
+        diag = bbapi.DIAGNOSE
+        if method == "GET" and path == "/api/v1/tools":
+            return diag, self._api_tools_list
+        if method == "GET" and path.startswith("/api/v1/tools/job/"):
+            return diag, lambda: self._api_tools_job(path[len("/api/v1/tools/job/"):])
+        if method == "POST" and path.startswith("/api/v1/tools/"):
+            name = path[len("/api/v1/tools/"):]
+            if name in bbtools.TOOLS:
+                return diag, lambda: self._api_tools_run(name)
         return None, None
+
+    def _text(self, code, text, ctype="text/plain; charset=utf-8"):
+        payload = text.encode("utf-8")
+        self.send_response(code)
+        self._cors(urlsplit(self.path).path)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _api_summary(self):
+        with _lock:
+            api = _latest_api
+        self._text(200, summary_text(api))
+
+    def _api_metrics(self):
+        with _lock:
+            api = _latest_api
+        self._text(200, metrics_text(api), "text/plain; version=0.0.4; charset=utf-8")
+
+    OPENAPI = "/usr/local/share/bb-monitor/openapi.json"
+
+    def _api_openapi(self):
+        try:
+            with open(self.OPENAPI, encoding="utf-8") as fh:
+                doc = fh.read()
+        except OSError:
+            self._json(404, {"schema": bbapi.SCHEMA, "error": "no OpenAPI document in this image"})
+            return
+        self._text(200, doc, "application/json")
+
+    def _api_events(self):
+        """Server-sent events: one message per change to what a consumer watches,
+        and a comment every fifteen seconds so the connection is known alive.
+        Nothing here names a file, so it is a plain read."""
+        self.send_response(200)
+        self._cors(urlsplit(self.path).path)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        last_seq, last_sig, last_beat = -1, None, time.time()
+        try:
+            self.wfile.write(b": bb64 events\n\n")
+            self.wfile.flush()
+            while True:
+                with _events_cv:
+                    _events_cv.wait_for(lambda: _events_seq != last_seq, timeout=15)
+                    last_seq = _events_seq
+                with _lock:
+                    api = _latest_api
+                if not api.get("ok"):
+                    sig = ("not-ok",)
+                else:
+                    sig = (api.get("state"), api.get("paused"),
+                           tuple(sorted(h["kind"] for h in api.get("health") or [])),
+                           (api.get("skipped_files") or {}).get("total"),
+                           bool(api.get("completion")),
+                           tuple(m["key"] for m in api.get("milestones") or []))
+                now = time.time()
+                if sig != last_sig:
+                    last_sig = sig
+                    data = {"time": int(now), "state": api.get("state"),
+                            "paused": api.get("paused"), "pause_label": api.get("pause_label"),
+                            "health": api.get("health"), "skipped_files": api.get("skipped_files"),
+                            "completion": api.get("completion"), "milestones": api.get("milestones")}
+                    self.wfile.write(("event: state\ndata: %s\n\n" % json.dumps(data)).encode("utf-8"))
+                    last_beat = now
+                elif now - last_beat >= 15:
+                    self.wfile.write(b": keep-alive\n\n")
+                    last_beat = now
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
+    def _api_tools_list(self):
+        self._json(200, {"schema": bbapi.SCHEMA, "build": BUILD_LABEL,
+                         "can_repair": "diagnose:repair" in bbapi.perms(self._kid),
+                         "tools": bbtools.describe()})
+
+    def _api_tools_job(self, jid):
+        st = bbtools.status(jid)
+        if st is None:
+            self._json(404, {"schema": bbapi.SCHEMA, "error": "no such job"})
+            return
+        st["schema"] = bbapi.SCHEMA
+        self._json(200, st)
+
+    def _api_tools_run(self, name):
+        if not bbtools.available(name):
+            self._json(503, {"schema": bbapi.SCHEMA, "error": "%s is not present in this image" % name})
+            return
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n) or "{}") if n else {}
+        except (ValueError, OSError):
+            self._json(400, {"schema": bbapi.SCHEMA, "error": "bad request body"})
+            return
+        opts = body.get("options") or []
+        if not isinstance(opts, list) or not all(isinstance(o, str) for o in opts):
+            self._json(400, {"schema": bbapi.SCHEMA, "error": "options must be a list of option names"})
+            return
+        # Checks need diagnose; anything that changes files needs the repair
+        # permission as well, so a key issued to look cannot be used to change.
+        if bbtools.mutating(name, opts) and "diagnose:repair" not in bbapi.perms(self._kid):
+            self._json(403, {"schema": bbapi.SCHEMA, "error": "diagnose:repair is required for that option"})
+            return
+        try:
+            jid, joined = bbtools.start(name, opts)
+        except ValueError as exc:
+            self._json(400, {"schema": bbapi.SCHEMA, "error": str(exc)})
+            return
+        st = bbtools.status(jid) or {"id": jid, "state": "running"}
+        sys.stderr.write("bb-monitor-web: key %s %s job %s: %s\n"
+                         % (self._kid, "joined" if joined else "started", jid, st.get("command", name)))
+        st["schema"] = bbapi.SCHEMA
+        st["joined_existing"] = joined
+        self._json(202, st)
 
     def _api_status(self):
         with _lock:
@@ -2276,7 +2910,7 @@ class Handler(BaseHTTPRequestHandler):
         # No key means the surface does not exist, so say so rather than 403.
         # A 403 would confirm the endpoint is here; with no key there is nothing
         # to confirm, and every fresh container would be advertising it.
-        if not bbapi.active():
+        if not bbapi.live():
             self.send_response(404)
             self.send_header("Content-Length", "0")
             self.end_headers()
@@ -2324,7 +2958,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/manage/keys":
             self._json(200, {
                 "schema": bbapi.SCHEMA, "keys": bbapi.listing(),
-                "enabled": bool(bbapi.active()),
+                "enabled": bbapi.live(), "switch": bbapi.enabled(),
+                "has_keys": bool(bbapi.active()),
                 "permissions": [{"name": n, "does": bbapi.PERMISSIONS[n],
                                  # A colon does not make a group. read:files is
                                  # its own permission and belongs at the top
@@ -2338,6 +2973,28 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/manage/tools":
             self._json(200, {"schema": bbapi.SCHEMA, "build": BUILD_LABEL,
                              "tools": bbtools.describe()})
+            return True
+        if path == "/manage/notify":
+            self._json(200, dict(bbnotify.public(bbnotify.load()), schema=bbapi.SCHEMA))
+            return True
+        if path == "/manage/quiet":
+            conf = bbquiet.load()
+            self._json(200, {"schema": bbapi.SCHEMA, "config": conf,
+                             "state": _quiet.state(conf), "days": list(bbquiet.DAYS)})
+            return True
+        if path == "/manage/timeline":
+            self._json(200, {"schema": bbapi.SCHEMA, "timeline": timeline()})
+            return True
+        if path == "/manage/summary":
+            with _lock:
+                api = _latest_api
+            payload = summary_text(api).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(payload)
             return True
         if path.startswith("/manage/tools/job/"):
             st = bbtools.status(path[len("/manage/tools/job/"):])
@@ -2388,7 +3045,11 @@ class Handler(BaseHTTPRequestHandler):
                              "first_backup": snap.get("first_backup"),
                              "last_backup_days": snap.get("last_backup_days"),
                              "skipped": snap.get("skipped"),
-                             "list": snap.get("skipped_list")})
+                             "list": snap.get("skipped_list"),
+                             "pause_label": snap.get("pause_label"),
+                             "milestones": snap.get("milestones"),
+                             "quiet": _quiet.state(),
+                             "timeline": timeline()})
             return True
         return False
 
@@ -2490,6 +3151,39 @@ class Handler(BaseHTTPRequestHandler):
                              % (name, "ok" if ok else "failed, " + msg))
             self._json(200 if ok else 502, {"action": name, "ok": ok, "detail": msg})
             return
+        if path == "/manage/keys/enabled":
+            on = bbapi.set_enabled(bool(body.get("enabled")))
+            sys.stderr.write("bb-monitor-web: web session switched the API %s\n" % ("on" if on else "off"))
+            self._json(200, {"schema": bbapi.SCHEMA, "switch": on, "enabled": bbapi.live(),
+                             "has_keys": bool(bbapi.active())})
+            return
+        if path == "/manage/keys/delete":
+            kid = (body.get("id") or "").strip()
+            if bbapi.delete(kid):
+                self._json(200, {"schema": bbapi.SCHEMA, "deleted": kid})
+            else:
+                self._json(409, {"error": "only a revoked or expired key can be deleted"})
+            return
+        if path == "/manage/notify":
+            try:
+                conf = bbnotify.save(body)
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(200, dict(bbnotify.public(conf), schema=bbapi.SCHEMA))
+            return
+        if path == "/manage/notify/test":
+            ok, detail = bbnotify.test((body.get("id") or "").strip())
+            self._json(200 if ok else 502, {"schema": bbapi.SCHEMA, "ok": ok, "detail": detail})
+            return
+        if path == "/manage/quiet":
+            try:
+                conf = bbquiet.save(body)
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(200, {"schema": bbapi.SCHEMA, "config": conf, "state": _quiet.state(conf)})
+            return
         if path == "/manage/keys":
             label = (body.get("label") or "").strip()
             scopes = body.get("scopes") or []
@@ -2509,7 +3203,8 @@ class Handler(BaseHTTPRequestHandler):
             kid = (body.get("id") or "").strip()
             if bbapi.revoke(kid):
                 self._json(200, {"schema": bbapi.SCHEMA, "revoked": kid,
-                                 "enabled": bool(bbapi.active())})
+                                 "enabled": bbapi.live(), "switch": bbapi.enabled(),
+                "has_keys": bool(bbapi.active())})
             else:
                 self._json(404, {"error": "no active key with that id"})
         else:
