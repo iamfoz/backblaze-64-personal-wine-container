@@ -7,6 +7,3 @@ __pycache__/
 scratch/
 
 .DS_Store
-
-# State of the goals tracker used while working; per-machine, never part of the project.
-.fablize/
