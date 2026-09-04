@@ -1340,6 +1340,9 @@ def gather(prev):
     o["first_backup"] = first_backup()
     o["skipped"] = skipped_files()
     o["skipped_list"] = skipped_list()
+    o["pause_label"] = pause_label(o["pause"])
+    o["milestones"] = milestones()
+    o["progress_history"] = progress_history()
     o["files"] = files
 
     for xb, (nm, fs, part, thr, seen) in _inflight.items():
@@ -1409,3 +1412,118 @@ def gather(prev):
     return o
 
 
+
+
+# ---- why paused ------------------------------------------------------------------
+# The client writes a reason code with every pause. Shown raw it is an identifier;
+# read as words it answers the question a bare "Paused" raises, and it says who
+# to look at: a pause set from here is a button, a pause the client chose is a
+# wait. The code stays alongside for anyone searching Backblaze's own help.
+PAUSE_REASONS = {
+    "action_pause_backup": ("here", "Paused from here",
+                            "Set from the Monitor, the API or bzcli."),
+    "ca_down_but_network_alive": ("client", "Paused by the client",
+                                  "Backblaze's cluster authority is not answering. "
+                                  "Usually their maintenance; it resumes on its own."),
+    "on_blocked_network": ("client", "Paused by the client",
+                           "This network is one the client is set not to use."),
+    "isOffline": ("client", "Paused by the client", "No network."),
+}
+
+
+def pause_label(p):
+    """Words for a pause record, or None when not paused.
+
+    {who: "here"|"client"|"unknown", title, detail, code, until, until_str}.
+    `until_str` is local wall-clock, because "until 21:40" is what a person can
+    act on and an epoch is not.
+    """
+    if not p or not p.get("paused"):
+        return None
+    code = p.get("reason")
+    who, title, detail = PAUSE_REASONS.get(
+        code, ("unknown", "Paused by the client", "Reason %s." % code if code else ""))
+    until = p.get("until")
+    return {"who": who, "title": title, "detail": detail, "code": code,
+            "until": until,
+            "until_str": time.strftime("%H:%M", time.localtime(until)) if until else None}
+
+
+# ---- milestones -----------------------------------------------------------------
+# The first backup passing a quarter, a half, three quarters, and its first
+# terabyte. Latched to disk the way completion() is, so each fires once and a set
+# that grows later cannot replay it. Shown for a week, then quiet. Plain words.
+MILESTONES_MARK = "/config/.bb-milestones"
+MILESTONE_FRESH = 7 * 86400
+_MILESTONES = (("pct25", "A quarter of the way"),
+               ("pct50", "Halfway"),
+               ("pct75", "Three quarters of the way"),
+               ("tb1", "The first terabyte is up"))
+
+
+def milestones():
+    """[{key, label, at}] for milestones reached within the last week, or None."""
+    b = backup_totals()
+    # Positive evidence only, as completion() demands: no totals, no judgement.
+    if not b or not b.get("total") or not b.get("done"):
+        return None
+    try:
+        marks = json.loads(read(MILESTONES_MARK) or "{}")
+        if not isinstance(marks, dict):
+            marks = {}
+    except ValueError:
+        marks = {}
+    pct = b.get("pct") or 0.0
+    reached = {"pct25": pct >= 25, "pct50": pct >= 50, "pct75": pct >= 75,
+               "tb1": b["done"] >= 10 ** 12}
+    now = int(time.time())
+    changed = False
+    for key, _ in _MILESTONES:
+        if reached[key] and key not in marks:
+            marks[key] = now
+            changed = True
+    if changed:
+        try:
+            with open(MILESTONES_MARK, "w", encoding="utf-8") as fh:
+                json.dump(marks, fh)
+        except OSError:
+            pass
+    fresh = [{"key": k, "label": lbl, "at": marks[k]}
+             for k, lbl in _MILESTONES
+             if k in marks and now - marks[k] <= MILESTONE_FRESH]
+    return fresh or None
+
+
+# ---- progress over time ---------------------------------------------------------
+# One sample a day of how far the backup has got, kept for a little over a year.
+# The ETA trend already keeps a fortnight of estimates; this keeps the fact the
+# estimates are about. After months of watching a bar, the line that shows it
+# moving is the thing worth looking at.
+PROGRESS_HIST = "/config/.bb-progress-history"
+PROGRESS_KEEP = 400
+
+
+def progress_history(record=True):
+    """[{day: YYYYMMDD, pct}] oldest first, or None. Records today's sample once."""
+    try:
+        hist = json.loads(read(PROGRESS_HIST) or "{}")
+        if not isinstance(hist, dict):
+            hist = {}
+    except ValueError:
+        hist = {}
+    if record:
+        b = backup_totals()
+        if b and b.get("total") and b.get("pct") is not None:
+            today = time.strftime("%Y%m%d")
+            if hist.get(today) is None:
+                hist[today] = round(b["pct"], 2)
+                for day in sorted(hist)[:-PROGRESS_KEEP]:
+                    del hist[day]
+                try:
+                    with open(PROGRESS_HIST, "w", encoding="utf-8") as fh:
+                        json.dump(hist, fh)
+                except OSError:
+                    pass
+    if not hist:
+        return None
+    return [{"day": d, "pct": hist[d]} for d in sorted(hist)]

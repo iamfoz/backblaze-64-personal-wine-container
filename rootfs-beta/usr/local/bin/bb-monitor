@@ -215,6 +215,10 @@ def draw(scr,d,st):
     # ---- Status: whole chunks wrap to width, never split ----
     r=d["rate"]; rcol=GOOD if r>=1 else (WARN if r>0.05 else BAD)
     stt=d["state"]; scol=GOOD if stt=="Transmitting" else (WARN if stt in("Scanning","Preparing") else NORM)
+    # The pause in words beside the state: who set it and until when. A bare
+    # "Paused" is the question this answers, the same as on the web pages.
+    pl=d.get("pause_label")
+    pl_txt=(" (%s%s)" % (pl["title"].lower(), (", until "+pl["until_str"]) if pl.get("until_str") else "")) if pl else ""
     def txt(parts):
         wd=sum(len(p[0]) for p in parts)
         def dr(y,x):
@@ -242,7 +246,7 @@ def draw(scr,d,st):
               (spark(_rate_hist,14),GOOD)]),
         txt([("Chunks/60s: ",NORM),("%d"%d["chunks"],NORM)]),
         txt([("Session: ",NORM),(human(d["sess"]),NORM)]),
-        txt([("State: ",NORM),(stt,scol)]),
+        txt([("State: ",NORM),(stt,scol)]+([(pl_txt,NORM)] if pl_txt else [])),
         # The note names the largest user of memory. "The container uses 8 GB"
         # starts a support thread. "bzfilelist uses 8 GB" answers it, because a
         # first scan over a large set is when the client needs the most memory.
