@@ -5,16 +5,19 @@
 # container, and /monitor/ sits behind nginx's auth_request, which expects a
 # browser session. So /api/v1 is exempted from that and defends itself with a key.
 #
-# There is no separate on/off setting. The surface is live exactly when an
-# unrevoked key exists, which is one less thing to get out of step, and it means
-# a fresh container answers 404 rather than 403 on every /api/v1 path. A 403
-# would confirm the endpoint is there; with no key there is nothing to confirm.
+# The surface is live when an unrevoked key exists AND the switch is on. The
+# switch exists so a key can be kept, wired into a dashboard, while the API is
+# turned off for a while; without it the only way off was to revoke and the only
+# way back was a new key in every consumer. With no key there is nothing to
+# switch, and a fresh container answers 404 rather than 403 on every /api/v1
+# path: a 403 would confirm the endpoint is there.
 
 import base64, contextlib, fcntl, hashlib, hmac, json, os, re, tempfile, threading, time
 
 DIR = "/config/bb-api"
 KEYS = DIR + "/keys.json"
 LOCK = DIR + "/.lock"
+SETTINGS = DIR + "/settings.json"      # {"enabled": bool}; absent means on
 
 # Every change to the store is read-modify-write, and there are two writers: this
 # service, threaded, and bb-apikey in its own process. Without a lock, recording
@@ -53,14 +56,21 @@ PERMISSIONS = {
     "control:backup-now": "Start a backup if one is not already running.",
     "control:pause":      "Pause a running backup.",
     "report":             "Generate and download a diagnostic bundle.",
+    "diagnose":           "Run bb-doctor, bb-health and bb-version and read their output.",
+    "diagnose:repair":    "Also run bb-doctor --fix, which changes files in the prefix.",
 }
 
 # Ordered for display, and it is the order the settings tab renders in.
-ORDER = ("read", "read:files", "control:backup-now", "control:pause", "report")
+ORDER = ("read", "read:files", "control:backup-now", "control:pause", "report",
+         "diagnose", "diagnose:repair")
 
 # "read" is a permission in its own right, so it is not also a group name. A key
-# that should see file names is granted read:files alongside it.
+# that should see file names is granted read:files alongside it. "diagnose" is
+# the same shape: a permission, with diagnose:repair granted alongside it. It is
+# deliberately not a group as well, because expand() would then turn a request
+# for the check-only permission into both.
 GROUPS = {"control": ("control:backup-now", "control:pause")}
+DIAGNOSE = ("diagnose", "diagnose:repair")     # either admits a key to the tools
 
 # Nothing is held back at present. An entry here is refused at creation as well as
 # being greyed in the settings tab, so a permission cannot be granted before the
@@ -218,6 +228,56 @@ def active():
     return [r for r in _read() if not r["revoked"] and not expired(r, now)]
 
 
+def enabled():
+    """The switch. Absent settings mean on, so a store made before the switch
+    existed behaves as it always did."""
+    try:
+        with open(SETTINGS, encoding="utf-8") as fh:
+            return bool(json.load(fh).get("enabled", True))
+    except (OSError, ValueError, AttributeError):
+        return True
+
+
+def set_enabled(on):
+    with _mutate():
+        fd, tmp = tempfile.mkstemp(dir=DIR)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump({"enabled": bool(on)}, fh)
+            os.chmod(tmp, 0o600)
+            _own_like_config(tmp)
+            os.replace(tmp, SETTINGS)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    return bool(on)
+
+
+def live():
+    """Whether /api/v1 answers at all: a key that could authenticate, and the
+    switch on. Everything that gated on active() for liveness gates on this."""
+    return enabled() and bool(active())
+
+
+def delete(kid):
+    """Remove a revoked or expired key's record for good. An active key cannot
+    be deleted, only revoked, so the table never loses a key that something
+    might still be using without a revocation on record first."""
+    with _mutate():
+        records = _read()
+        for i, r in enumerate(records):
+            if r["id"] == kid:
+                if not r["revoked"] and not expired(r):
+                    return False
+                del records[i]
+                _write(records)
+                return True
+    return False
+
+
 def verify(presented, scope):
     """(ok, key_id_or_None). key_id is returned on a parseable id even when the
     secret is wrong, so a failure can be logged without ever touching the secret.
@@ -239,7 +299,7 @@ def verify(presented, scope):
         # the cost is nothing and it keeps the comparison free of timing shape.
         if not hmac.compare_digest(r["hash"], want):
             return False, kid
-        if r["revoked"] or expired(r):
+        if r["revoked"] or expired(r) or not enabled():
             return False, kid
         if scope is not None:
             want = scope if isinstance(scope, (tuple, list)) else (scope,)

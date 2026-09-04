@@ -1,0 +1,1310 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Backblaze 64 container API",
+    "version": "1",
+    "description": "Status, control and diagnostics for the Backblaze Personal Backup client running in this container. Every response carries `schema`, the payload contract version. Authenticate with a bearer key made in the API tab or with `bb-apikey`. Until a key exists, or while the switch in the API tab is off, every path answers 404."
+  },
+  "servers": [
+    {
+      "url": "/api/v1"
+    }
+  ],
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A key of the form bb64_<id>_<secret>. Permissions are granted per operation: read, read:files, control:backup-now, control:pause, report, diagnose, diagnose:repair."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "integer",
+            "description": "Contract version"
+          },
+          "error": {
+            "type": "string",
+            "description": "What went wrong"
+          }
+        }
+      },
+      "Pause": {
+        "type": "object",
+        "properties": {
+          "paused": {
+            "type": "boolean",
+            "description": "Whether a pause is in force"
+          },
+          "until": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Epoch seconds at which the client's own pause ends, or null"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The client's reason code, for example action_pause_backup or ca_down_but_network_alive"
+          },
+          "draining": {
+            "type": "boolean",
+            "description": "True while transfers already in flight finish after a pause was asked for"
+          }
+        }
+      },
+      "PauseLabel": {
+        "type": "object",
+        "properties": {
+          "who": {
+            "type": "string",
+            "enum": [
+              "here",
+              "client",
+              "unknown"
+            ],
+            "description": "here: set from the Monitor, the API or bzcli. client: the client paused itself."
+          },
+          "title": {
+            "type": "string",
+            "description": "Plain words for the pause"
+          },
+          "detail": {
+            "type": "string",
+            "description": "What the reason code means"
+          },
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The client's reason code"
+          },
+          "until": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Epoch seconds"
+          },
+          "until_str": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Local wall-clock HH:MM"
+          }
+        },
+        "description": "The pause as words, so a consumer need not keep the client's code table."
+      },
+      "Health": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "frozen",
+                "filecheck",
+                "stale",
+                "skipped"
+              ]
+            },
+            "text": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Warnings drawn from the client's own records. Empty when nothing needs attention."
+      },
+      "Milestone": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "pct25",
+              "pct50",
+              "pct75",
+              "tb1"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "at": {
+            "type": "integer",
+            "description": "Epoch seconds when it was passed"
+          }
+        }
+      },
+      "Status": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "integer",
+            "description": "Contract version"
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "False while the monitor is still collecting"
+          },
+          "build": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Image build, for example beta+154"
+          },
+          "time": {
+            "type": "integer",
+            "description": "Epoch seconds"
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Transmitting, Scanning, Preparing, Paused, Pausing, Idle and others as the client reports"
+          },
+          "paused": {
+            "type": "boolean",
+            "description": "Shorthand for pause.paused"
+          },
+          "pause": {
+            "$ref": "#/components/schemas/Pause"
+          },
+          "pause_label": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PauseLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rate_bytes_per_sec": {
+            "type": "integer",
+            "description": "Upload rate over the last minute"
+          },
+          "threads": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Push threads in flight"
+          },
+          "backup": {
+            "type": "object",
+            "properties": {
+              "done_bytes": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Bytes backed up"
+              },
+              "total_bytes": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Bytes selected"
+              },
+              "pct": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "Percent complete"
+              },
+              "remaining_files": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Files still to send"
+              },
+              "eta_seconds": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Estimated seconds to catch up; null while no usable estimate"
+              },
+              "eta_date": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The ETA as a local date"
+              },
+              "eta_samples": {
+                "type": "integer",
+                "description": "Completed transfers behind the estimate"
+              }
+            }
+          },
+          "scan": {
+            "type": "object",
+            "properties": {
+              "dirs_done": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Directories indexed"
+              },
+              "dirs_total": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Directories to index"
+              },
+              "pct": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "Percent of directories indexed"
+              },
+              "files": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Files found so far"
+              },
+              "bytes": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Bytes found so far"
+              }
+            }
+          },
+          "health": {
+            "$ref": "#/components/schemas/Health"
+          },
+          "skipped_files": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "description": "Files the client has given up on"
+              },
+              "top_reason": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The client's most common reason constant"
+              }
+            }
+          },
+          "skipped_list": {
+            "description": "The skipped files themselves. Present only for a key with read:files.",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "completion": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Present for a week after the first backup catches up: {done_at, days, total_bytes}"
+          },
+          "milestones": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Milestone"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Milestones passed within the last week"
+          },
+          "progress_history": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "day": {
+                      "type": "string",
+                      "description": "YYYYMMDD"
+                    },
+                    "pct": {
+                      "type": "number"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "One sample a day of percent complete, oldest first"
+          },
+          "memory": {
+            "type": "object",
+            "properties": {
+              "used_bytes": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": ""
+              },
+              "total_bytes": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": ""
+              },
+              "pct": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": ""
+              }
+            }
+          },
+          "swap": {
+            "type": "object",
+            "properties": {
+              "used_bytes": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": ""
+              },
+              "total_bytes": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": ""
+              },
+              "pct": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": ""
+              }
+            }
+          },
+          "memory_by_process": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "description": "[{name, rss_bytes}] largest first"
+          },
+          "latency": {
+            "type": "object",
+            "properties": {
+              "ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "Smoothed RTT to the upload pod from the kernel"
+              },
+              "host": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The pod"
+              },
+              "note": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Why ms is null, when it is"
+              }
+            }
+          },
+          "uploads_today": {
+            "type": "object",
+            "properties": {
+              "success": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": ""
+              },
+              "retried_attempts": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Attempts a vault turned away; the client retried them"
+              },
+              "failures": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Same as retried_attempts, kept for the contract"
+              },
+              "reasons": {
+                "type": "object"
+              }
+            }
+          },
+          "upload_history": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "description": "[{day, success, retried}] for the last seven recorded days"
+          },
+          "first_backup": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "{days, pct} while a first upload is still working through the set"
+          },
+          "composition": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "backing_up_since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "YYYYMMDD"
+          },
+          "eta_trend": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "{direction: better|worse|steady, delta_seconds}"
+          },
+          "compress_saved_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": ""
+          },
+          "client_measured_kbit": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Backblaze's own measured throughput"
+          },
+          "files": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "in_flight, recent and chunk_map. Present only for a key with read:files."
+          }
+        }
+      },
+      "Job": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "integer",
+            "description": ""
+          },
+          "id": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "running",
+              "done",
+              "failed"
+            ]
+          },
+          "started": {
+            "type": "integer",
+            "description": ""
+          },
+          "finished": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": ""
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Present when done"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Present when failed"
+          },
+          "result": {
+            "type": "string",
+            "description": "The exit code in words, for example 'found problems'"
+          },
+          "command": {
+            "type": "string",
+            "description": "What ran, as the console would show it"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The tool's output so far"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True if output exceeded the cap"
+          },
+          "elapsed": {
+            "type": "integer",
+            "description": "Seconds"
+          }
+        }
+      },
+      "Tool": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "does": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean",
+            "description": "Present in this image"
+          },
+          "inline": {
+            "type": "boolean",
+            "description": "Output is a verdict rather than a report"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "flag": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "does": {
+                  "type": "string"
+                },
+                "confirm": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Text to show before running with this option"
+                },
+                "mutates": {
+                  "type": "boolean",
+                  "description": "Needs diagnose:repair"
+                }
+              }
+            }
+          },
+          "last_job": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Id of the most recent job"
+          },
+          "running": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Id of a job in progress"
+          }
+        }
+      },
+      "ReportJob": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "integer",
+            "description": ""
+          },
+          "job": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "running",
+              "done",
+              "failed"
+            ]
+          },
+          "started": {
+            "type": "integer",
+            "description": ""
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": ""
+          },
+          "size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Present when done"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "File name of the bundle, backblaze64-diag-YYYYMMDDHHMM.zip"
+          },
+          "download": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Single-use path relative to /api/v1, valid for about five minutes"
+          },
+          "download_expires_in": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Seconds"
+          },
+          "joined_existing": {
+            "type": "boolean",
+            "description": "True when the request joined a job already running"
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/status": {
+      "get": {
+        "summary": "Everything the monitor knows",
+        "description": "Requires read. Add ?fields=a,b to trim the payload; unknown names are ignored. A key without read:files gets no file names.",
+        "parameters": [
+          {
+            "name": "fields",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated top-level field names to keep"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Bad or missing key, or the key lacks read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No key exists or the API switch is off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/summary": {
+      "get": {
+        "summary": "The status as a few lines of plain text",
+        "description": "Requires read. What a maintainer asks for first in a support thread. Nothing in it names a file.",
+        "responses": {
+          "200": {
+            "description": "Plain text",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorised",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Prometheus text exposition",
+        "description": "Requires read. Gauges prefixed bb64_ for rate, progress, memory, RTT, skipped files and health warnings.",
+        "responses": {
+          "200": {
+            "description": "Metrics",
+            "content": {
+              "text/plain; version=0.0.4": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorised",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "summary": "Server-sent events on state changes",
+        "description": "Requires read. One `state` event whenever the state, pause, health warnings, skipped count, completion or milestones change, and a comment line every fifteen seconds as a keep-alive. The data is a JSON object with those fields and a time.",
+        "responses": {
+          "200": {
+            "description": "An event stream",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorised",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/key": {
+      "get": {
+        "summary": "What the presented key may do",
+        "description": "Any valid key. Describes only itself.",
+        "responses": {
+          "200": {
+            "description": "Key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schema": {
+                      "type": "integer",
+                      "description": ""
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "permissions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/control": {
+      "get": {
+        "summary": "The control operations this key holds",
+        "description": "Requires at least one control permission; lists only that key's own operations.",
+        "responses": {
+          "200": {
+            "description": "Operations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schema": {
+                      "type": "integer",
+                      "description": ""
+                    },
+                    "available": {
+                      "type": "boolean",
+                      "description": "bzcli present"
+                    },
+                    "operations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "does": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/control/{action}": {
+      "post": {
+        "summary": "Start a backup, or pause one",
+        "description": "backup-now requires control:backup-now; pause requires control:pause. The pause is cooperative and is also how a pause is ended: the client documents backup-now as the way out.",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "backup-now",
+                "pause"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schema": {
+                      "type": "integer",
+                      "description": ""
+                    },
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "action": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorised",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "bzcli not present",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/report": {
+      "post": {
+        "summary": "Start building a diagnostic bundle",
+        "description": "Requires report. One bundle at a time; a second request joins the running job.",
+        "responses": {
+          "202": {
+            "description": "Job started or joined",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportJob"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorised",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/report/{job}": {
+      "get": {
+        "summary": "Poll a bundle job",
+        "description": "Requires report.",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportJob"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/report/download/{token}": {
+      "get": {
+        "summary": "Download a bundle",
+        "description": "Takes no bearer token; the single-use link is the credential. Valid once, for about five minutes.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The zip",
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown, expired or already used",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools": {
+      "get": {
+        "summary": "The command-line tools this key may run",
+        "description": "Requires diagnose or diagnose:repair.",
+        "responses": {
+          "200": {
+            "description": "Tools",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "schema": {
+                      "type": "integer",
+                      "description": ""
+                    },
+                    "build": {
+                      "type": "string"
+                    },
+                    "can_repair": {
+                      "type": "boolean",
+                      "description": "Whether this key holds diagnose:repair"
+                    },
+                    "tools": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Tool"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools/{name}": {
+      "post": {
+        "summary": "Run a tool",
+        "description": "Requires diagnose. An option marked mutates (bb-doctor --fix) also requires diagnose:repair. One run per tool at a time; a second request joins it. The output is the tool's own, line by line, in the job.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "doctor",
+                "health",
+                "version"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "options": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Option keys from the tool's own list, for example [\"fix\"]"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown option",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "diagnose:repair required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Tool not present",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tools/job/{id}": {
+      "get": {
+        "summary": "Poll a tool job",
+        "description": "Requires diagnose or diagnose:repair. Output accumulates while state is running.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "summary": "This document",
+        "description": "Any valid key.",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

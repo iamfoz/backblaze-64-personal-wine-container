@@ -38,6 +38,8 @@ TOOLS = {
         "options": {
             "fix": {
                 "flag": "--fix",
+                # A key needs diagnose:repair to switch this on over the API.
+                "mutates": True,
                 "label": "Repair what can be repaired safely",
                 "does": "Repairs the reported Windows version, missing drive links, "
                         "missing skin aliases and a stale four-hour lock. Never touches "
@@ -57,7 +59,7 @@ TOOLS = {
         "argv": [BIN + "/bb-health"],
         "label": "bb-health",
         "does": "The check the container's HEALTHCHECK runs: OK, or a corroborated "
-                "HANG or WEDGE with the evidence.",
+                "HANG or WEDGE with diagnostic information.",
         "timeout": 30,
         "options": {},
         "exit": {0: "healthy", 1: "fault reported"},
@@ -108,7 +110,8 @@ def describe():
                 "name": name, "label": t["label"], "does": t["does"],
                 "available": available(name), "inline": bool(t.get("inline")),
                 "options": [{"key": k, "flag": o["flag"], "label": o["label"],
-                             "does": o["does"], "confirm": o.get("confirm")}
+                             "does": o["does"], "confirm": o.get("confirm"),
+                             "mutates": bool(o.get("mutates"))}
                             for k, o in t["options"].items()],
                 "last_job": last,
                 "running": _running.get(name),
@@ -262,3 +265,10 @@ def status(jid):
         else:
             out["result"] = "running"
         return out
+
+
+def mutating(name, options):
+    """Whether any of these options changes files, so the caller can ask for the
+    stronger permission before starting."""
+    t = TOOLS.get(name) or {}
+    return any((t.get("options") or {}).get(k, {}).get("mutates") for k in options)
