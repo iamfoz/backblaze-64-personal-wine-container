@@ -237,7 +237,7 @@ jobs:
           # is still present in the image that ships, and that the patched script
           # parses.
           docker run --rm --entrypoint sh bb-beta-test:local -c \
-            'command -v setpriv >/dev/null && sh -n /usr/local/bin/bb-doctor && grep -q bb-doctor-asuser.sh /usr/local/bin/bb-doctor'
+            'command -v setpriv >/dev/null && sh -n /usr/local/bin/bb-doctor && grep -q bb-doctor-asuser.sh /usr/local/bin/bb-doctor && grep -q FROZEN /usr/local/bin/bb-health'
 
       - name: Push the beta image
         uses: docker/build-push-action@v7

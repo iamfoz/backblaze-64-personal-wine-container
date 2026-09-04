@@ -200,11 +200,24 @@ COPY rootfs-beta/ /
 # working configuration, and not everyone can add memory to the host, so with
 # swap present it reads OK instead of WARN. Same rule: the exact line must be
 # found once, or the build fails.
+#
+# The third insert is the source-drive check (ownership before the client has to
+# fail, and whether the client still recognises each drive), after the drive
+# mapping section. bb-health gets one insert of its own, a FROZEN state, so a
+# safety-frozen backup shows unhealthy in the Docker tab; bb-watchdog acts only
+# on HANG and WEDGE, so it cannot turn that into a recovery attempt.
 RUN python3 - <<'PATCH'
 import sys
 doc = "/usr/local/bin/bb-doctor"
 src = open(doc, encoding="utf-8").read()
 inserts = [
+    ("bb-doctor-drives.sh",
+     'echo "Storage"',
+     '''# Source drives. Beta only: see rootfs-beta/usr/local/lib/bb-doctor-drives.sh,
+# to be folded into this script at the next stable release.
+[ -r /usr/local/lib/bb-doctor-drives.sh ] && . /usr/local/lib/bb-doctor-drives.sh
+
+'''),
     ("bb-doctor-asuser.sh",
      'echo "Backblaze container check"',
      '''# Run as the container user, not root. Beta only: see
@@ -252,12 +265,37 @@ for name, old, new in replacements:
     src = src.replace(old, new, 1)
     print("bb-doctor: %s applied" % name)
 open(doc, "w", encoding="utf-8").write(src)
+
+health = "/usr/local/bin/bb-health"
+hsrc = open(health, encoding="utf-8").read()
+anchor = 'echo "OK"\nexit 0\n'
+add = '''# --- FROZEN: Backblaze has safety-frozen this backup --------------------------
+# Beta only, to be folded in at the next stable release. The client records the
+# freeze in status.json and nothing in this container can clear it; it needs a
+# person, which is what an unhealthy state in the Docker tab is for. bb-watchdog
+# matches only HANG and WEDGE, so this cannot start a recovery.
+if grep -q '"frozen"[[:space:]]*:[[:space:]]*true' "${BZ}/bzreports/status.json" 2>/dev/null; then
+    echo "FROZEN Backblaze has safety-frozen this backup; see the Status tab, and the Backblaze page on resolving a safety freeze"
+    exit 1
+fi
+
+'''
+if "FROZEN" in hsrc:
+    print("bb-health: FROZEN already present")
+elif hsrc.count(anchor) != 1:
+    sys.exit("bb-health: anchor not found exactly once, refusing to guess")
+else:
+    open(health, "w", encoding="utf-8").write(hsrc.replace(anchor, add + anchor, 1))
+    print("bb-health: FROZEN added")
 PATCH
 RUN sh -n /usr/local/bin/bb-doctor \
  && grep -q "bb-doctor-asuser.sh" /usr/local/bin/bb-doctor \
  && grep -q "bb-doctor-skipped.sh" /usr/local/bin/bb-doctor \
  && grep -q "swap to absorb the peaks" /usr/local/bin/bb-doctor \
+ && grep -q "bb-doctor-drives.sh" /usr/local/bin/bb-doctor \
  && sh -n /usr/local/lib/bb-doctor-asuser.sh && sh -n /usr/local/lib/bb-doctor-skipped.sh \
+ && sh -n /usr/local/lib/bb-doctor-drives.sh \
+ && sh -n /usr/local/bin/bb-health && grep -q "^FROZEN\|FROZEN Backblaze" /usr/local/bin/bb-health \
  && command -v setpriv >/dev/null
 
 RUN chmod +x /startapp.sh /usr/local/bin/bb-monitor /usr/local/bin/bb-monitor-web \
