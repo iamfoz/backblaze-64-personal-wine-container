@@ -195,6 +195,11 @@ COPY rootfs-beta/ /
 # before the first line of output, so the re-run as the container user prints
 # the report once. The second is the skipped-file check, before the summary so
 # its warnings count in the totals.
+#
+# One line is replaced rather than added: the RAM check. Low RAM with swap is a
+# working configuration, and not everyone can add memory to the host, so with
+# swap present it reads OK instead of WARN. Same rule: the exact line must be
+# found once, or the build fails.
 RUN python3 - <<'PATCH'
 import sys
 doc = "/usr/local/bin/bb-doctor"
@@ -224,11 +229,34 @@ for name, anchor, add in inserts:
         sys.exit("bb-doctor: anchor for %s not found exactly once, refusing to guess" % name)
     src = src.replace(anchor, add + anchor, 1)
     print("bb-doctor: %s added" % name)
+replacements = [
+    ("RAM check with swap",
+     '''[ -n "${mt:-}" ] && { [ "$mt" -ge 12 ] && OK "${mt} GB host RAM" || WARN "${mt} GB host RAM - large file counts can peak at 4-5 GB in one process"; }
+''',
+     '''# Beta: low RAM with swap is a working configuration, not a warning. The peaks
+# that matter land in swap instead of ending in an out-of-memory kill, and not
+# everyone can add memory to the host. Without swap the warning stands.
+if [ -n "${mt:-}" ]; then
+    if [ "$mt" -ge 12 ]; then OK "${mt} GB host RAM"
+    elif [ "${st:-0}" -gt 0 ]; then OK "${mt} GB host RAM, with ${st} GB swap to absorb the peaks"
+    else WARN "${mt} GB host RAM and no swap - large file counts can peak at 4-5 GB in one process"; fi
+fi
+'''),
+]
+for name, old, new in replacements:
+    if new in src:
+        print("bb-doctor: %s already applied" % name)
+        continue
+    if src.count(old) != 1:
+        sys.exit("bb-doctor: line for %s not found exactly once, refusing to guess" % name)
+    src = src.replace(old, new, 1)
+    print("bb-doctor: %s applied" % name)
 open(doc, "w", encoding="utf-8").write(src)
 PATCH
 RUN sh -n /usr/local/bin/bb-doctor \
  && grep -q "bb-doctor-asuser.sh" /usr/local/bin/bb-doctor \
  && grep -q "bb-doctor-skipped.sh" /usr/local/bin/bb-doctor \
+ && grep -q "swap to absorb the peaks" /usr/local/bin/bb-doctor \
  && sh -n /usr/local/lib/bb-doctor-asuser.sh && sh -n /usr/local/lib/bb-doctor-skipped.sh \
  && command -v setpriv >/dev/null
 

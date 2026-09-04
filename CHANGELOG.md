@@ -306,6 +306,19 @@ a stable release.
   log with its command. The page runs as the container user, which is the user whose
   permissions the checks are about. The tab sits behind the web login, like the rest of
   the dashboard.
+
+  `bb-health` shows its answer in its own card, with a tick, a warning sign or a cross,
+  and the tool's lines under it. Its whole output is a verdict, so an output box and a
+  Download button had no purpose there. The output boxes of `bb-doctor` and `bb-version`
+  have a Hide button and a Show button. Every card has a Clear result button, which
+  removes the result from the page and from the service, so a reload does not bring it
+  back. A run in progress cannot be cleared until it finishes.
+- `bb-doctor` no longer warns about low RAM when the host has swap. The peaks that matter
+  land in swap instead of ending in an out-of-memory kill, and not everyone can add memory
+  to the host. With less than 12 GB and swap present, the line reads OK and names the swap.
+  With less than 12 GB and no swap, the warning stands. Beta only, through the same
+  build-time patch as the other `bb-doctor` additions, so the console and the Tools tab
+  give the same answer.
 - The Tools tab builds diagnostic bundles and keeps them. A bundle made from the page is
   stored in `/config/bb-diag` as `backblaze64-diag-YYYYMMDDHHMM.zip`. The page lists the
   bundles with their size and date, and each has a Download button and a Delete button.
