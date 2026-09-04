@@ -29,6 +29,7 @@ import bbapi
 import bbctl
 import bbdata
 import bbreport
+import bbtools
 from bbdata import (BUILD_INFO, BUILD_LABEL, INT, eta_str, gather, human,
                      rec_cols, uptime_str, _diag_dump, _threadpush_uid,
                      _upload_host, _upload_rtt)
@@ -426,10 +427,14 @@ load();
 # auth_request as the dashboard. That matters more here than anywhere else in
 # the monitor: this page is a list of paths on the user's own share, and a list
 # of paths is the one thing that must never be readable without the web login.
-SKIPPED_HTML = """<!doctype html>
+# It began as the Skipped Files page and now leads with everything the client
+# has to say about itself: warnings, a pause, a first backup running or just
+# finished, and then the skipped list under it. One place to look when the
+# monitor shows a red band.
+STATUS_HTML = """<!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Backblaze 64 Skipped Files</title>
+<title>Backblaze 64 Status</title>
 <style>
   :root{
     --bg:#0a1830; --panel:#0e2148; --border:#39c5ff; --title:#39c5ff;
@@ -468,13 +473,28 @@ SKIPPED_HTML = """<!doctype html>
   /* Paths on a mounted share get long and there is nothing to abbreviate them
      to, so they wrap on the separator rather than overflowing the panel. */
   td.path{word-break:break-all;color:var(--dim);}
+  a{color:var(--title);}
+  h2{font-size:15px;margin:18px 0 4px;color:var(--title);}
+  /* One notice per thing that needs attention, with a coloured edge that says
+     how urgently. Text, not icons, so a screen reader gets the same message. */
+  .notice{border-left:4px solid var(--dim);background:var(--panel);border-radius:4px;
+    padding:10px 12px;margin-bottom:8px;max-width:80ch;}
+  .notice.n-bad{border-left-color:var(--bad);}
+  .notice.n-warn{border-left-color:var(--warn);}
+  .notice.n-good{border-left-color:var(--good);}
+  .notice.n-info{border-left-color:var(--title);}
   .err{color:var(--bad);margin-top:8px;}
   @media (max-width:560px){ table,thead,tbody,tr,th,td{display:block;}
     thead{display:none;} tr{border-bottom:1px solid var(--border);padding:6px 0;}
     th,td{border:none;padding:2px 0;white-space:normal;} }
 </style></head><body>
 
-<h1>Skipped Files</h1>
+<h1>Status</h1>
+<p class="dim">What needs your attention, from the client's own records.</p>
+
+<div id="notices"></div>
+
+<h2>Skipped files</h2>
 <p class="dim">Files Backblaze has given up on. They are not queued and they are not
 retried, so they are not backed up, and the Issues tab on the desktop does not list
 them.</p>
@@ -503,8 +523,9 @@ them.</p>
     <strong>About bad permissions</strong>
     <p class="dim" style="margin:8px 0 0">Under this container that almost always means the
     container user cannot read the file. That points at ownership on the mounted share
-    rather than at anything wrong with Backblaze. Run <code>bb-doctor</code>: it diagnoses
-    this case and prints the command that fixes it.</p>
+    rather than at anything wrong with Backblaze. Run <code>bb-doctor</code> from the
+    <a href="/?tab=tools" target="_top">Tools tab</a>: it diagnoses this case and prints
+    the command that fixes it.</p>
   </div>
 
   <div class="panel">
@@ -528,7 +549,7 @@ function pretty(r){
   return s ? s.toLowerCase().replace(/_/g, ' ') : String(r==null?'':r);
 }
 var PERM = 'BZ_FILE_PERMANENT_BAD_PERMISSIONS';
-var DATA = null;   // the last answer from /manage/skipped
+var DATA = null;   // the last answer from /manage/status
 var REASON = '';   // the reason chip in force, empty meaning all of them
 
 function render(){
@@ -589,14 +610,61 @@ function render(){
   document.getElementById('empty').hidden = shown.length > 0;
 }
 
+// Everything above the skipped list. Each notice is one thing the client's own
+// records say needs attention, and the ones bb-doctor can diagnose point at the
+// Tools tab. When there is nothing, the page says so rather than showing an
+// empty space that might be a page that failed to load.
+function renderNotices(j){
+  var out = [];
+  var tools = '<a href="/?tab=tools" target="_top">Tools tab</a>';
+  if(j.ok === false){
+    out.push('<div class="notice n-info"><strong>Collecting.</strong> <span class="dim">' +
+             esc(j.error || 'the monitor is starting') + '</span></div>');
+  }
+  (j.health || []).forEach(function(h){
+    var extra = '';
+    if(h.kind === 'skipped') extra = ' They are listed below.';
+    else if(h.kind === 'frozen') extra = ' Backblaze has stopped the client because something ' +
+      'looked wrong with the drive it was backing up. Nothing is deleted. Run bb-doctor from the ' +
+      tools + ', and read the Backblaze page on resolving a safety freeze before you change anything.';
+    else if(h.kind === 'filecheck') extra = ' Run bb-doctor from the ' + tools + '.';
+    else if(h.kind === 'stale') extra = ' The client has not finished a pass within the limit set in its own settings.';
+    out.push('<div class="notice n-bad"><strong>' + esc(h.text) + '.</strong>' + extra + '</div>');
+  });
+  if(j.paused){
+    var pausing = j.state === 'Pausing';
+    out.push('<div class="notice n-warn"><strong>' + (pausing ? 'Backup pausing.' : 'Backup paused.') +
+             '</strong> ' + (pausing ? 'The client is finishing the transfers already in flight.'
+                                     : 'Nothing uploads until the backup is started again, from the Monitor tab or the desktop.') +
+             '</div>');
+  }
+  if(j.completion){
+    var d = j.completion.days;
+    out.push('<div class="notice n-good"><strong>First backup complete.</strong> ' +
+             esc(j.completion.total_str) + ' uploaded' +
+             (d > 0 ? ' in ' + esc(d) + ' day' + (d === 1 ? '' : 's') : '') + '.</div>');
+  } else if(j.first_backup){
+    var fd = j.first_backup.days;
+    out.push('<div class="notice n-info"><strong>First backup in progress.</strong> ' +
+             esc(j.first_backup.pct) + '% sent after ' + esc(fd) + ' day' + (fd === 1 ? '' : 's') +
+             '. A first upload of a large set takes as long as it takes. This is not a fault.</div>');
+  }
+  if(!out.length){
+    out.push('<div class="notice n-good"><strong class="good">Nothing needs your attention.</strong> ' +
+             '<span class="dim">State: ' + esc(j.state || 'unknown') + '.</span></div>');
+  }
+  document.getElementById('notices').innerHTML = out.join('');
+}
+
 function load(){
   var err = document.getElementById('err');
-  // No poll loop. This changes only when the client rescans, which is minutes
-  // apart at best, so asking every two seconds would buy nothing.
-  return fetch('manage/skipped', {cache:'no-store'})
+  // Every fifteen seconds. The skipped list changes only when the client
+  // rescans, but the notices above it follow the client's state, and a pause or
+  // a freeze should not wait for a page reload to appear.
+  return fetch('manage/status', {cache:'no-store'})
     .then(function(r){ return r.json(); })
-    .then(function(j){ DATA = j; err.hidden = true; render(); })
-    .catch(function(){ err.textContent = 'Could not read the skipped list.';
+    .then(function(j){ DATA = j; err.hidden = true; renderNotices(j); render(); })
+    .catch(function(){ err.textContent = 'Could not read the status.';
                        err.hidden = false; });
 }
 
@@ -613,6 +681,292 @@ try {
   if(t) document.documentElement.setAttribute('data-theme', t);
 } catch(e){}
 load();
+setInterval(load, 15000);
+</script>
+</body></html>
+"""
+
+
+# The command-line tools, run from the page. Served from /tools, reached as
+# /monitor/tools, so it sits behind the same auth_request as the dashboard:
+# bb-doctor prints directory paths on the user's share, which is the same class
+# of data the Status tab protects. The page runs the binaries the console runs
+# (see bbtools.py) and shows their output as text, coloured by the prefixes
+# bb-doctor prints; a line it does not recognise is shown plain, so a change of
+# wording in a tool never hides anything.
+TOOLS_HTML = """<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backblaze 64 Tools</title>
+<style>
+  :root{
+    --bg:#0a1830; --panel:#0e2148; --border:#39c5ff; --title:#39c5ff;
+    --text:#d7e6ff; --good:#3ddc6b; --warn:#ffd23d; --bad:#ff5a5a;
+    --dim:#7f9fc8;
+  }
+  html[data-theme="dark"]{ --bg:#000; --panel:#0d0d0d; --border:#333; --title:#ddd;
+    --text:#ddd; --dim:#888; }
+  *{box-sizing:border-box;}
+  body{margin:0;padding:16px;background:var(--bg);color:var(--text);
+    font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    font-size:14px;line-height:1.5;}
+  h1{font-size:18px;margin:0 0 4px;color:var(--title);}
+  h2{font-size:15px;margin:0 0 4px;color:var(--title);
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+  p{margin:0 0 10px;max-width:70ch;}
+  .dim{color:var(--dim);}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;
+    padding:14px;margin-bottom:16px;}
+  button{padding:7px 14px;border-radius:4px;border:1px solid var(--border);
+    background:var(--title);color:var(--bg);font:inherit;font-weight:600;cursor:pointer;}
+  button.ghost{background:transparent;color:var(--text);font-weight:400;}
+  button[disabled]{opacity:.5;cursor:default;}
+  a{color:var(--title);}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0 0;}
+  .status{font-size:13px;color:var(--dim);margin-left:auto;}
+  /* An option is a checkbox with the flag it stands for and what it does, so
+     the page says exactly what will run before it runs. */
+  label.opt{display:flex;gap:8px;align-items:flex-start;max-width:70ch;font-size:13px;
+    margin:8px 0 0;cursor:pointer;}
+  label.opt input{margin:3px 0 0;}
+  label.opt code{color:var(--title);}
+  pre{margin:10px 0 0;padding:10px;background:var(--bg);border:1px solid var(--border);
+    border-radius:4px;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    white-space:pre-wrap;word-break:break-word;max-height:60vh;overflow:auto;}
+  .ok{color:var(--good);} .warn{color:var(--warn);} .fail{color:var(--bad);font-weight:600;}
+  .fixed{color:var(--good);font-weight:600;} .heading{color:var(--title);font-weight:600;}
+  .note{color:var(--dim);} .rule{color:var(--dim);}
+  table{width:100%;border-collapse:collapse;margin-top:10px;}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);
+    font-size:13px;vertical-align:top;}
+  th{color:var(--dim);font-weight:600;white-space:nowrap;}
+  td.name{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;word-break:break-all;}
+  td.act{white-space:nowrap;text-align:right;}
+  td.act button, td.act a{margin-left:6px;}
+  .err{color:var(--bad);margin-top:8px;}
+  @media (max-width:560px){ table,thead,tbody,tr,th,td{display:block;}
+    thead{display:none;} tr{border-bottom:1px solid var(--border);padding:6px 0;}
+    th,td{border:none;padding:2px 0;white-space:normal;} td.act{text-align:left;} }
+</style></head><body>
+
+<h1>Tools</h1>
+<p class="dim">The same programs as on the console, run here as the container user, which is
+the user whose permissions the checks are about. The output is the program's own output.
+Copy it as it is into a forum post or an issue.</p>
+<p class="dim" id="build"></p>
+
+<div id="tools"></div>
+
+<div class="panel" id="report">
+  <h2>bb-report</h2>
+  <p class="dim">Builds a sanitised diagnostic bundle to attach to a forum post or an issue.
+  File names are replaced with keyed hashes, and no account details or keys are collected.
+  Have a look through it before you post it.</p>
+  <div class="row">
+    <button id="rep-run">Build bundle</button>
+    <button class="ghost" id="rep-refresh">Refresh</button>
+    <span class="status" id="rep-status"></span>
+  </div>
+  <table id="rep-table" hidden><thead><tr><th>Bundle</th><th>Size</th><th>Made</th><th></th></tr></thead>
+  <tbody id="rep-rows"></tbody></table>
+  <p class="dim" id="rep-none" style="margin:10px 0 0" hidden>No bundles yet. Bundles made
+  here are kept in <code>/config/bb-diag</code> until you delete them.</p>
+</div>
+
+<div class="err" id="err" hidden></div>
+
+<script>
+function esc(s){ return String(s==null?'':s).replace(/[&<>\"']/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]; }); }
+var HDR = {'X-Requested-With':'bb64', 'Content-Type':'application/json'};
+function asJson(r){ return r.json().then(function(j){
+  if(!r.ok) throw new Error(j && j.error ? j.error : ('HTTP ' + r.status)); return j; }); }
+function get(url){ return fetch(url, {cache:'no-store'}).then(asJson); }
+function post(url, body){ return fetch(url, {method:'POST', headers:HDR, cache:'no-store',
+  body:JSON.stringify(body || {})}).then(asJson); }
+function showErr(e){ var el = document.getElementById('err');
+  el.textContent = String(e && e.message || e); el.hidden = false; }
+function clearErr(){ document.getElementById('err').hidden = true; }
+
+// The prefixes bb-doctor prints, and bb-health's three words. A line that
+// matches none of them is shown plain: a change of wording in a tool degrades
+// to monochrome and never hides output. This is the one contract between the
+// page and the tools, and it is a soft one on purpose.
+function cls(line){
+  if(line.indexOf('  [ ok ] ') === 0) return 'ok';
+  if(line.indexOf('  [warn] ') === 0) return 'warn';
+  if(line.indexOf('  [FAIL] ') === 0) return 'fail';
+  if(line.indexOf('         -> fixed: ') === 0) return 'fixed';
+  if(line.indexOf('         ') === 0) return 'note';
+  if(line.indexOf('-----') === 0) return 'rule';
+  if(line === 'OK') return 'ok';
+  if(line.indexOf('HANG') === 0 || line.indexOf('WEDGE') === 0) return 'fail';
+  if(line.length && line.charAt(0) !== ' ') return 'heading';
+  return '';
+}
+function fmtBytes(n){ if(n == null) return ''; if(n < 1024) return n + ' B';
+  if(n < 1048576) return (n/1024).toFixed(0) + ' KB'; return (n/1048576).toFixed(1) + ' MB'; }
+function fmtWhen(epoch){ try { return new Date(epoch*1000).toLocaleString(); } catch(e){ return ''; } }
+function stamp(){ var d = new Date(), p = function(n){ return (n < 10 ? '0' : '') + n; };
+  return '' + d.getFullYear() + p(d.getMonth()+1) + p(d.getDate()) + p(d.getHours()) + p(d.getMinutes()); }
+
+var TOOLS = {};   // name -> descriptor from manage/tools
+var JOBS = {};    // name -> the job shown for that tool
+
+function renderTool(t){
+  var opts = t.options.map(function(o){
+    return '<label class="opt"><input type="checkbox" id="opt-' + esc(t.name) + '-' + esc(o.key) +
+           '" data-tool="' + esc(t.name) + '"' + (t.available ? '' : ' disabled') + '> <span><code>' +
+           esc(o.flag) + '</code> ' + esc(o.label) + '<br><span class="dim">' + esc(o.does) +
+           '</span></span></label>';
+  }).join('');
+  return '<div class="panel" id="t-' + esc(t.name) + '">' +
+    '<h2>' + esc(t.label) + '</h2><p class="dim">' + esc(t.does) + '</p>' + opts +
+    '<div class="row">' +
+      '<button data-run="' + esc(t.name) + '"' + (t.available ? '' : ' disabled') + '>Run</button>' +
+      '<button class="ghost" data-copy="' + esc(t.name) + '" hidden>Copy</button>' +
+      '<button class="ghost" data-dl="' + esc(t.name) + '" hidden>Download</button>' +
+      '<span class="status" id="st-' + esc(t.name) + '">' +
+        (t.available ? '' : 'not in this image') + '</span>' +
+    '</div>' +
+    '<pre id="out-' + esc(t.name) + '" hidden></pre></div>';
+}
+
+function renderOut(name){
+  var j = JOBS[name]; if(!j) return;
+  var pre = document.getElementById('out-' + name);
+  var follow = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4;
+  pre.innerHTML = (j.lines || []).map(function(l){
+    var c = cls(l); return c ? '<span class="' + c + '">' + esc(l) + '</span>' : esc(l);
+  }).join('\\n') + (j.truncated ? '\\n<span class="warn">[output truncated]</span>' : '');
+  pre.hidden = false;
+  if(follow || j.state === 'running') pre.scrollTop = pre.scrollHeight;
+  var st = document.getElementById('st-' + name);
+  st.textContent = (j.state === 'running' ? 'running, ' + j.elapsed + 's'
+                    : j.result + ', ' + j.elapsed + 's') + (j.command ? '  (' + j.command + ')' : '');
+  var running = j.state === 'running';
+  var box = document.getElementById('t-' + name);
+  box.querySelector('[data-run]').disabled = running;
+  box.querySelector('[data-copy]').hidden = running || !(j.lines && j.lines.length);
+  box.querySelector('[data-dl]').hidden = running || !(j.lines && j.lines.length);
+}
+
+function poll(name, jid){
+  get('manage/tools/job/' + jid).then(function(st){
+    JOBS[name] = st; renderOut(name);
+    if(st.state === 'running') setTimeout(function(){ poll(name, jid); }, 1000);
+  }).catch(showErr);
+}
+
+function run(name){
+  var t = TOOLS[name]; if(!t) return;
+  var opts = [], ask = null;
+  t.options.forEach(function(o){
+    var cb = document.getElementById('opt-' + name + '-' + o.key);
+    if(cb && cb.checked){ opts.push(o.key); if(o.confirm) ask = o.confirm; }
+  });
+  // The confirmation is the option's own text, which names what can change.
+  if(ask && !window.confirm(ask)) return;
+  clearErr();
+  post('manage/tools/' + name, {options: opts}).then(function(st){
+    JOBS[name] = st; renderOut(name);
+    if(st.state === 'running') setTimeout(function(){ poll(name, st.id); }, 1000);
+  }).catch(showErr);
+}
+
+function outText(name){ var j = JOBS[name]; return j && j.lines ? j.lines.join('\\n') + '\\n' : ''; }
+function copyOut(name){
+  var txt = outText(name), st = document.getElementById('st-' + name);
+  function done(){ var keep = st.textContent; st.textContent = 'copied'; setTimeout(function(){ st.textContent = keep; }, 1200); }
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(done, function(){ fallback(); });
+  } else { fallback(); }
+  function fallback(){
+    var ta = document.createElement('textarea'); ta.value = txt; ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed'; ta.style.left = '-1000px'; document.body.appendChild(ta);
+    ta.select(); try { document.execCommand('copy'); done(); } catch(e){} document.body.removeChild(ta);
+  }
+}
+function dlOut(name){
+  var blob = new Blob([outText(name)], {type:'text/plain'});
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = (TOOLS[name] ? TOOLS[name].label : name) + '-' + stamp() + '.txt';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
+}
+
+// ---- diagnostic bundles ----
+function setRepStatus(st){
+  var el = document.getElementById('rep-status'), btn = document.getElementById('rep-run');
+  if(!st){ el.textContent = ''; btn.disabled = false; return; }
+  if(st.state === 'running'){ el.textContent = 'building, ' + Math.max(0, Math.floor(Date.now()/1000 - st.started)) + 's'; btn.disabled = true; }
+  else if(st.state === 'done'){ el.textContent = 'built ' + (st.name || ''); btn.disabled = false; }
+  else { el.textContent = 'failed: ' + (st.error || 'unknown'); btn.disabled = false; }
+}
+function renderBundles(list){
+  var rows = document.getElementById('rep-rows');
+  document.getElementById('rep-table').hidden = !(list && list.length);
+  document.getElementById('rep-none').hidden = !!(list && list.length);
+  rows.innerHTML = (list || []).map(function(b){
+    return '<tr><td class="name">' + esc(b.name) + '</td><td>' + esc(fmtBytes(b.size_bytes)) +
+           '</td><td>' + esc(fmtWhen(b.modified)) + '</td><td class="act">' +
+           '<a href="manage/report/download/' + encodeURIComponent(b.name) + '">Download</a>' +
+           '<button class="ghost" data-del="' + esc(b.name) + '">Delete</button></td></tr>';
+  }).join('');
+}
+function loadReport(){
+  return get('manage/report').then(function(j){
+    if(j.available === false){ document.getElementById('rep-run').disabled = true;
+      document.getElementById('rep-status').textContent = 'not in this image'; }
+    renderBundles(j.bundles);
+    if(j.running) pollReport(j.running); else if(!j.running && document.getElementById('rep-run').disabled && j.available !== false) setRepStatus(null);
+  }).catch(showErr);
+}
+function pollReport(jid){
+  get('manage/report/job/' + jid).then(function(st){
+    setRepStatus(st);
+    if(st.state === 'running') setTimeout(function(){ pollReport(jid); }, 1500);
+    else loadReport();
+  }).catch(showErr);
+}
+function buildReport(){
+  clearErr();
+  post('manage/report', {}).then(function(st){
+    setRepStatus(st);
+    if(st.state === 'running') setTimeout(function(){ pollReport(st.job); }, 1500);
+    else loadReport();
+  }).catch(showErr);
+}
+function delBundle(name){
+  if(!window.confirm('Delete ' + name + '? This cannot be undone.')) return;
+  clearErr();
+  post('manage/report/delete', {name: name}).then(function(j){ renderBundles(j.bundles); }).catch(showErr);
+}
+
+document.addEventListener('click', function(e){
+  var t = e.target; if(!t || !t.getAttribute) return;
+  if(t.getAttribute('data-run')) return run(t.getAttribute('data-run'));
+  if(t.getAttribute('data-copy')) return copyOut(t.getAttribute('data-copy'));
+  if(t.getAttribute('data-dl')) return dlOut(t.getAttribute('data-dl'));
+  if(t.getAttribute('data-del')) return delBundle(t.getAttribute('data-del'));
+});
+document.getElementById('rep-run').addEventListener('click', buildReport);
+document.getElementById('rep-refresh').addEventListener('click', loadReport);
+
+try {
+  var th = localStorage.getItem('bbMonitorTheme');
+  if(th) document.documentElement.setAttribute('data-theme', th);
+} catch(e){}
+
+get('manage/tools').then(function(j){
+  document.getElementById('build').textContent = j.build ? 'Build ' + j.build : '';
+  var box = document.getElementById('tools');
+  box.innerHTML = j.tools.map(function(t){ TOOLS[t.name] = t; return renderTool(t); }).join('');
+  // A run that is still going, or the last one finished, so a reload does not
+  // lose what the tool said.
+  j.tools.forEach(function(t){ if(t.running || t.last_job) poll(t.name, t.running || t.last_job); });
+}).catch(showErr);
+loadReport();
 </script>
 </body></html>
 """
@@ -967,6 +1321,7 @@ INDEX_HTML = """<!doctype html>
   .file-row.cells .meta{font-size:12px;}
   #empty{opacity:.6;}
   #err{color:var(--bad);padding:10px;}
+  #health a{color:inherit;text-decoration:underline;}
   #health{color:var(--hi-bg);background:var(--bad);padding:7px 10px;margin-bottom:10px;
        border-radius:2px;font-weight:bold;}
   /* The one thing this dashboard ever has to celebrate, so it takes the good
@@ -1440,7 +1795,9 @@ async function tick(){
     var hw = document.getElementById('health');
     if(d.health && d.health.length){
       hw.style.display = 'block';
-      hw.innerHTML = d.health.map(function(h){ return esc(h.text); }).join(' &bull; ');
+      // The band is the headline; the Status tab has the detail and what to do.
+      hw.innerHTML = '<a href="/?tab=status" target="_top" title="Open the Status tab">' +
+        d.health.map(function(h){ return esc(h.text); }).join(' &bull; ') + '</a>';
     } else { hw.style.display = 'none'; }
     var cw = document.getElementById('completion');
     if(d.completion){
@@ -1780,6 +2137,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"schema": bbapi.SCHEMA,
                              "error": "link unknown, expired or already used"})
             return
+        self._stream_zip(path)
+
+    def _stream_zip(self, path):
         try:
             size = os.path.getsize(path)
             with open(path, "rb") as fh:
@@ -1896,14 +2256,58 @@ class Handler(BaseHTTPRequestHandler):
                                 for n in bbapi.ORDER],
                 "groups": {g: list(m) for g, m in bbapi.GROUPS.items()}})
             return True
-        if path == "/manage/skipped":
+        if path == "/manage/tools":
+            self._json(200, {"schema": bbapi.SCHEMA, "build": BUILD_LABEL,
+                             "tools": bbtools.describe()})
+            return True
+        if path.startswith("/manage/tools/job/"):
+            st = bbtools.status(path[len("/manage/tools/job/"):])
+            if st is None:
+                self._json(404, {"error": "no such job"})
+            else:
+                st["schema"] = bbapi.SCHEMA
+                self._json(200, st)
+            return True
+        if path == "/manage/report":
+            self._json(200, {"schema": bbapi.SCHEMA, "available": bbreport.available(),
+                             "bundles": bbreport.listing(), "running": bbreport.current()})
+            return True
+        if path.startswith("/manage/report/job/"):
+            st = bbreport.status(path[len("/manage/report/job/"):])
+            if st is None:
+                self._json(404, {"error": "no such job"})
+            else:
+                st["schema"] = bbapi.SCHEMA
+                self._json(200, st)
+            return True
+        if path.startswith("/manage/report/download/"):
+            # By name, for the browser session that is already logged in. The
+            # single-use token flow stays on /api/v1/, where there is no session
+            # and the token is the credential. path_for() admits only names that
+            # match the bundle pattern, so nothing outside the store is reachable.
+            p = bbreport.path_for(path[len("/manage/report/download/"):])
+            if not p:
+                self._json(404, {"error": "no such bundle"})
+            else:
+                self._stream_zip(p)
+            return True
+        if path in ("/manage/status", "/manage/skipped"):
             # Served from the cached display snapshot, the same one /api/status
             # hands out, so the page costs nothing beyond a dictionary lookup and
             # never re-reads Backblaze's report file itself. Read under the lock
-            # because the collector thread rebinds _latest wholesale.
+            # because the collector thread rebinds _latest wholesale. The old
+            # /manage/skipped name answers the same, for anything that kept it.
             with _lock:
                 snap = _latest
             self._json(200, {"schema": bbapi.SCHEMA,
+                             "ok": snap.get("ok", False), "error": snap.get("error"),
+                             "state": snap.get("state"), "clock": snap.get("clock"),
+                             "build": snap.get("build_label"),
+                             "health": snap.get("health") or [],
+                             "paused": snap.get("paused", False),
+                             "completion": snap.get("completion"),
+                             "first_backup": snap.get("first_backup"),
+                             "last_backup_days": snap.get("last_backup_days"),
                              "skipped": snap.get("skipped"),
                              "list": snap.get("skipped_list")})
             return True
@@ -1929,6 +2333,57 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "bad request body"})
             return
 
+        if path.startswith("/manage/tools/"):
+            # The page's Run button. A tool is named by path and its options by
+            # key; both are looked up in bbtools.TOOLS, and nothing else from the
+            # request reaches the argument list.
+            name = path[len("/manage/tools/"):]
+            if name not in bbtools.TOOLS:
+                self._json(404, {"error": "no such tool"})
+                return
+            if not bbtools.available(name):
+                self._json(503, {"error": "%s is not present in this image" % name})
+                return
+            opts = body.get("options") or []
+            if not isinstance(opts, list) or not all(isinstance(o, str) for o in opts):
+                self._json(400, {"error": "options must be a list of option names"})
+                return
+            try:
+                jid, joined = bbtools.start(name, opts)
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            st = bbtools.status(jid) or {"id": jid, "state": "running"}
+            # Every run is logged with the command, so a changed prefix or a
+            # cleared lock has a line in the container log that explains it.
+            sys.stderr.write("bb-monitor-web: web session %s job %s: %s\n"
+                             % ("joined" if joined else "started", jid,
+                                st.get("command", name)))
+            st["schema"] = bbapi.SCHEMA
+            st["joined_existing"] = joined
+            self._json(202, st)
+            return
+        if path == "/manage/report":
+            if not bbreport.available():
+                self._json(503, {"error": "bb-report is not present in this image"})
+                return
+            jid, joined = bbreport.start()
+            sys.stderr.write("bb-monitor-web: web session %s report job %s\n"
+                             % ("joined" if joined else "started", jid))
+            st = bbreport.status(jid) or {"job": jid, "state": "running"}
+            st["schema"] = bbapi.SCHEMA
+            st["joined_existing"] = joined
+            self._json(202, st)
+            return
+        if path == "/manage/report/delete":
+            name = (body.get("name") or "").strip()
+            if bbreport.delete(name):
+                sys.stderr.write("bb-monitor-web: web session deleted bundle %s\n" % name)
+                self._json(200, {"schema": bbapi.SCHEMA, "deleted": name,
+                                 "bundles": bbreport.listing()})
+            else:
+                self._json(404, {"error": "no such bundle"})
+            return
         if path.startswith("/manage/control/"):
             # The page's own pause button. Session-authorised like the rest of
             # /manage/ (auth_request plus the same-origin guard), so no API key
@@ -1987,8 +2442,17 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
-        if path == "/skipped":
-            payload = SKIPPED_HTML.encode("utf-8")
+        if path == "/tools":
+            payload = TOOLS_HTML.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        if path in ("/status", "/skipped"):
+            payload = STATUS_HTML.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
