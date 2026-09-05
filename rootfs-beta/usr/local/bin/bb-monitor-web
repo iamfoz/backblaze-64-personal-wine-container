@@ -360,7 +360,16 @@ KEYS_HTML = """<!doctype html>
     font-size:13px;white-space:nowrap;}
   th{color:var(--dim);font-weight:600;}
   td.label{white-space:normal;}
-  .revoked{opacity:.45;}
+  /* A revoked or expired row is dimmed by colour rather than opacity, so the bin
+     on it stays white; opacity on the row would grey the icon with the text. */
+  .revoked td,.revoked td code{color:var(--dim);}
+  /* The delete control on a revoked or expired row is a bin, not a word: the row
+     is already greyed and the action is the only one left, so an icon reads
+     faster than a second label beside the state. White on every theme, because
+     every palette here is dark. */
+  .icon-btn{padding:4px 6px;background:transparent;border-color:transparent;line-height:0;vertical-align:middle;}
+  .icon-btn svg{width:18px;height:18px;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+  .icon-btn:hover{border-color:var(--border);}
   .secret{margin-top:12px;padding:12px;border:1px solid var(--good);border-radius:4px;
     background:var(--bg);}
   .secret code{display:block;word-break:break-all;font-size:13px;margin:8px 0;
@@ -510,7 +519,8 @@ function render(d){
       '<td>'+(k.expires ? when(k.expires) : '<span class="dim">never</span>')+'</td>' +
       '<td>'+(k.state === 'active'
         ? '<button class="ghost" data-revoke="'+esc(k.id)+'">Revoke</button>'
-        : '<span class="dim">'+esc(k.state)+'</span> <button class="ghost" data-delete="'+esc(k.id)+'" data-state="'+esc(k.state)+'">Delete</button>')+'</td></tr>';
+        : '<span class="dim">'+esc(k.state)+'</span> <button class="ghost icon-btn" data-delete="'+esc(k.id)+'" data-state="'+esc(k.state)+'" title="Delete this key" aria-label="Delete this key">' +
+          '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>')+'</td></tr>';
   }).join('');
   document.getElementById('none').hidden = d.keys.length > 0;
 }
@@ -542,7 +552,9 @@ document.getElementById('copy').addEventListener('click', function(){
   this.textContent = 'Copied';
 });
 document.getElementById('rows').addEventListener('click', function(e){
-  var t = e.target; if(!t.getAttribute) return;
+  // The click may land on the icon inside the button; find the button.
+  var t = e.target && e.target.closest ? e.target.closest('button') : e.target;
+  if(!t || !t.getAttribute) return;
   var id = t.getAttribute('data-revoke');
   if(id){
     if(!confirm('Revoke key ' + id + '? Anything using it stops working immediately.')) return;
