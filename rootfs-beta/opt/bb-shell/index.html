@@ -39,7 +39,7 @@
      about 30. */
   @media (max-width:560px){
     #brand{display:none;}
-    #tabs button{flex:1 1 0;padding:12px 8px;min-height:44px;}
+    #tabs button{flex:1 1 0;padding:12px 4px;min-height:44px;font-size:11px;}
   }
 </style>
 </head>
@@ -50,6 +50,7 @@
   <button role="tab" data-pane="status" aria-controls="pane-status" aria-selected="false">Status</button>
   <button role="tab" data-pane="tools" aria-controls="pane-tools" aria-selected="false">Tools</button>
   <button role="tab" data-pane="api" aria-controls="pane-api" aria-selected="false">API</button>
+  <button role="tab" data-pane="settings" aria-controls="pane-settings" aria-selected="false">Settings</button>
   <span id="brand">Backblaze 64</span>
 </div>
 
@@ -90,21 +91,28 @@
 <iframe id="pane-api" class="pane" role="tabpanel" hidden
         title="API keys"></iframe>
 
+<!-- Notifications and quiet hours. Configuration, so its own tab rather than a
+     corner of the API page; behind the login because tokens are typed here. -->
+<iframe id="pane-settings" class="pane" role="tabpanel" hidden
+        title="Settings"></iframe>
+
 <script>
 (function(){
   var MON = '/monitor/';
   var STATUS = '/monitor/status';
   var TOOLS = '/monitor/tools';
   var API = '/monitor/apikeys';
-  var ORDER = ['desktop', 'monitor', 'status', 'tools', 'api'];   // the digit keys, in tab order
+  var SETTINGS = '/monitor/settings';
+  var ORDER = ['desktop', 'monitor', 'status', 'tools', 'api', 'settings'];   // the digit keys, in tab order
   var tabs = Array.prototype.slice.call(document.querySelectorAll('#tabs button'));
   var panes = { desktop: document.getElementById('pane-desktop'),
                 monitor: document.getElementById('pane-monitor'),
                 status: document.getElementById('pane-status'),
                 tools: document.getElementById('pane-tools'),
-                api: document.getElementById('pane-api') };
-  var loaded = { desktop: true, monitor: false, status: false, tools: false, api: false };
-  var SRC = { monitor: MON, status: STATUS, tools: TOOLS, api: API };
+                api: document.getElementById('pane-api'),
+                settings: document.getElementById('pane-settings') };
+  var loaded = { desktop: true, monitor: false, status: false, tools: false, api: false, settings: false };
+  var SRC = { monitor: MON, status: STATUS, tools: TOOLS, api: API, settings: SETTINGS };
 
   function show(name){
     if(name === 'skipped') name = 'status';   // the tab's old name, in saved state and old links
@@ -142,12 +150,12 @@
   document.addEventListener('keydown', function(e){
     var tg = e.target && e.target.tagName;
     if(tg === 'INPUT' || tg === 'SELECT' || tg === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
-    if(e.key >= '1' && e.key <= '5') show(ORDER[Number(e.key) - 1]);
+    if(e.key >= '1' && e.key <= '6') show(ORDER[Number(e.key) - 1]);
   });
   window.addEventListener('message', function(e){
     if(e.origin !== location.origin) return;
     var m = e.data;
-    if(m && m.bb64 === 'tab' && m.n >= 1 && m.n <= 5) show(ORDER[m.n - 1]);
+    if(m && m.bb64 === 'tab' && m.n >= 1 && m.n <= 6) show(ORDER[m.n - 1]);
   });
 
   // The tab title carries the state, because the browser tab is the one part of

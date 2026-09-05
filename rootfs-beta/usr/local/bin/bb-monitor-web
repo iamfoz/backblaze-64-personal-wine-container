@@ -32,6 +32,7 @@ import bbreport
 import bbtools
 import bbnotify
 import bbquiet
+import bbtimeline
 from bbdata import (BUILD_INFO, BUILD_LABEL, INT, eta_str, gather, human,
                      rec_cols, uptime_str, _diag_dump, _threadpush_uid,
                      _upload_host, _upload_rtt)
@@ -417,40 +418,6 @@ port at <code>/api/v1/status</code> and takes a key instead of the web login.</p
   <p id="none" class="dim" hidden>No keys yet.</p>
 </div>
 
-<h2>Notifications</h2>
-<div class="panel" id="notify">
-  <p class="dim">The container tells you when the backup needs you. Send to an ntfy topic, or JSON to
-  a webhook that Home Assistant, Gotify, Discord, Slack or a script can take. Each event is sent once
-  when it starts and once when it clears, never on every poll. Nothing that names a file is ever
-  sent: the skipped-files event carries a count and a reason.</p>
-  <div id="endpoints"></div>
-  <button class="ghost" id="ep-add">Add endpoint</button>
-  <h3>Events</h3>
-  <div class="ev" id="events"></div>
-  <label for="skipped-threshold">Files skipped: send from</label>
-  <div class="row"><input type="number" id="skipped-threshold" min="1" style="width:6em"> <span class="dim">files</span></div>
-  <div class="row" style="margin-top:12px"><button id="notify-save">Save notifications</button><span class="dim" id="notify-msg"></span></div>
-  <div id="notify-err" class="err" hidden></div>
-  <p class="dim" style="margin:12px 0 0">Tokens are kept in <code>/config/bb-api</code>, readable by the
-  container user only. They have to be sent, so they cannot be hashed the way API keys are.</p>
-</div>
-
-<h2>Quiet hours</h2>
-<div class="panel" id="quiet">
-  <p class="dim">Pause the backup on a schedule. At the start of a window the container asks the client
-  to pause; at the end it starts the backup again. The client's own pause lasts about two hours, so
-  inside a window the container renews it. If you start the backup yourself during a window, it stays
-  running until that window ends. Times are in the container's time zone.</p>
-  <div class="row">
-    <label class="switch"><input type="checkbox" id="quiet-enabled"> <span>Quiet hours enabled</span></label>
-    <span class="dim" id="quiet-state"></span>
-  </div>
-  <div id="windows"></div>
-  <button class="ghost" id="win-add">Add window</button>
-  <div class="row" style="margin-top:12px"><button id="quiet-save">Save quiet hours</button><span class="dim" id="quiet-msg"></span></div>
-  <div id="quiet-err" class="err" hidden></div>
-</div>
-
 <script>
 function esc(s){ return String(s==null?'':s).replace(/[&<>\"']/g, function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -596,6 +563,146 @@ document.getElementById('switch').addEventListener('change', function(){
   });
 });
 
+// Digits switch the shell's tabs from inside this frame; the shell owns them.
+document.addEventListener('keydown', function(e){
+  var tg = e.target && e.target.tagName;
+  if(tg === 'INPUT' || tg === 'SELECT' || tg === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
+  if(e.key >= '1' && e.key <= '6' && window.parent !== window) window.parent.postMessage({bb64: 'tab', n: Number(e.key)}, location.origin);
+});
+try {
+  var t = localStorage.getItem('bbMonitorTheme');
+  if(t) document.documentElement.setAttribute('data-theme', t);
+} catch(e){}
+load();
+</script>
+</body></html>
+"""
+
+
+# Settings: notifications and quiet hours. Configuration rather than keys, so it
+# has a tab of its own instead of living under API. Served from /settings,
+# reached as /monitor/settings, behind the same login as everything else here;
+# tokens are entered on this page.
+SETTINGS_HTML = """<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backblaze 64 Settings</title>
+<style>
+""" + THEME_CSS + PAGE_CSS + """  *{box-sizing:border-box;}
+  body{margin:0 auto;max-width:1132px;padding:16px;background:var(--bg);color:var(--text);
+    font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    font-size:14px;line-height:1.5;}
+  h1{font-size:18px;margin:0 0 4px;color:var(--title);}
+  h2{font-size:14px;margin:20px 0 8px;color:var(--title);font-weight:600;}
+  p{margin:0 0 12px;max-width:100ch;}
+  .dim{color:var(--dim);}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;
+    padding:14px;margin-bottom:16px;}
+  .state{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;}
+  .on{background:var(--good);color:#04101f;}
+  .off{background:var(--dim);color:#04101f;}
+  .row{display:flex;gap:14px;align-items:center;flex-wrap:wrap;}
+  /* A switch rather than a button pair: it shows the current state and the
+     other state in one control, and it reads the same on a phone. */
+  .switch{display:inline-flex;gap:8px;align-items:center;font-size:13px;cursor:pointer;margin:0;}
+  .switch input{appearance:none;-webkit-appearance:none;width:38px;height:20px;margin:0;border-radius:10px;
+    background:var(--dim);position:relative;cursor:pointer;border:0;flex:0 0 auto;}
+  .switch input:checked{background:var(--good);}
+  .switch input::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+    background:var(--bg);transition:left .15s;}
+  .switch input:checked::after{left:20px;}
+  .switch input:disabled{opacity:.4;cursor:default;}
+  h3{font-size:13px;margin:16px 0 6px;color:var(--title);}
+  .ep,.win{display:grid;grid-template-columns:1fr;gap:6px 10px;padding:10px 0;border-bottom:1px solid var(--border);}
+  .ep:last-child,.win:last-child{border-bottom:0;}
+  .ep .f{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--dim);}
+  .ep .f input,.ep .f select{max-width:none;width:100%;}
+  .ep .acts,.win .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .days{display:flex;gap:6px;flex-wrap:wrap;}
+  .days label{display:inline-flex;gap:4px;align-items:center;font-size:12px;margin:0;}
+  input[type=time],input[type=number]{padding:6px 8px;border-radius:4px;border:1px solid var(--border);
+    background:var(--bg);color:var(--text);font:inherit;}
+  .ev label{display:flex;gap:8px;align-items:flex-start;margin:0 0 8px;font-size:13px;}
+  @media (min-width:720px){ .ep{grid-template-columns:1.2fr .8fr 2fr .8fr 1fr 1.2fr auto;align-items:end;} }
+  label{display:block;margin:10px 0 4px;font-size:13px;}
+  input[type=text]{width:100%;max-width:340px;padding:6px 8px;border-radius:4px;
+    border:1px solid var(--border);background:var(--bg);color:var(--text);font:inherit;}
+  select{padding:6px 8px;border-radius:4px;border:1px solid var(--border);
+    background:var(--bg);color:var(--text);font:inherit;}
+  .scopes{margin:8px 0 4px;}
+  .scopes label{display:flex;gap:8px;align-items:flex-start;margin:0 0 8px;}
+  .scopes code{font-size:12px;}
+  .everyone{padding-bottom:8px;border-bottom:1px solid var(--border);}
+  .group{margin:10px 0;}
+  .grouphead{margin-bottom:6px;}
+  .members{padding-left:22px;border-left:2px solid var(--border);}
+  button{padding:7px 14px;border-radius:4px;border:1px solid var(--border);
+    background:var(--title);color:var(--bg);font:inherit;font-weight:600;cursor:pointer;}
+  button.ghost{background:transparent;color:var(--text);font-weight:400;}
+  button:disabled{opacity:.5;cursor:default;}
+  table{width:100%;border-collapse:collapse;margin-top:6px;}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);
+    font-size:13px;white-space:nowrap;}
+  th{color:var(--dim);font-weight:600;}
+  td.label{white-space:normal;}
+  .revoked{opacity:.45;}
+  .secret{margin-top:12px;padding:12px;border:1px solid var(--good);border-radius:4px;
+    background:var(--bg);}
+  .secret code{display:block;word-break:break-all;font-size:13px;margin:8px 0;
+    color:var(--good);}
+  .err{color:var(--bad);margin-top:8px;}
+  @media (max-width:560px){ table,thead,tbody,tr,th,td{display:block;}
+    thead{display:none;} tr{border-bottom:1px solid var(--border);padding:6px 0;}
+    th,td{border:none;padding:2px 0;white-space:normal;} }
+</style></head><body>
+
+<h1>Settings</h1>
+<p class="dim">How the container tells you about the backup, and when it should leave it alone.
+Keys for the HTTP API are on the API tab.</p>
+
+<h2>Notifications</h2>
+<div class="panel" id="notify">
+  <p class="dim">The container tells you when the backup needs you. Send to an ntfy topic, or JSON to
+  a webhook that Home Assistant, Gotify, Discord, Slack or a script can take. Each event is sent once
+  when it starts and once when it clears, never on every poll. Nothing that names a file is ever
+  sent: the skipped-files event carries a count and a reason.</p>
+  <div id="endpoints"></div>
+  <button class="ghost" id="ep-add">Add endpoint</button>
+  <h3>Events</h3>
+  <div class="ev" id="events"></div>
+  <label for="skipped-threshold">Files skipped: send from</label>
+  <div class="row"><input type="number" id="skipped-threshold" min="1" style="width:6em"> <span class="dim">files</span></div>
+  <div class="row" style="margin-top:12px"><button id="notify-save">Save notifications</button><span class="dim" id="notify-msg"></span></div>
+  <div id="notify-err" class="err" hidden></div>
+  <p class="dim" style="margin:12px 0 0">Tokens are kept in <code>/config/bb-api</code>, readable by the
+  container user only. They have to be sent, so they cannot be hashed the way API keys are.</p>
+</div>
+
+<h2>Quiet hours</h2>
+<div class="panel" id="quiet">
+  <p class="dim">Pause the backup on a schedule. At the start of a window the container asks the client
+  to pause; at the end it starts the backup again. The client's own pause lasts about two hours, so
+  inside a window the container renews it. If you start the backup yourself during a window, it stays
+  running until that window ends. Times are in the container's time zone.</p>
+  <div class="row">
+    <label class="switch"><input type="checkbox" id="quiet-enabled"> <span>Quiet hours enabled</span></label>
+    <span class="dim" id="quiet-state"></span>
+  </div>
+  <div id="windows"></div>
+  <button class="ghost" id="win-add">Add window</button>
+  <div class="row" style="margin-top:12px"><button id="quiet-save">Save quiet hours</button><span class="dim" id="quiet-msg"></span></div>
+  <div id="quiet-err" class="err" hidden></div>
+</div>
+
+<script>
+function esc(s){ return String(s==null?'':s).replace(/[&<>\"']/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]; }); }
+function post(path, body){
+  return fetch(path, {method:'POST', cache:'no-store',
+    headers:{'Content-Type':'application/json','X-Requested-With':'bb64'},
+    body: JSON.stringify(body||{})}).then(function(r){
+      return r.json().then(function(j){ return {ok:r.ok, body:j}; }); });
+}
 // ---- notifications ----
 var NOTIFY = null;
 var KINDS = [['ntfy', 'ntfy topic'], ['webhook', 'Webhook (JSON)']];
@@ -719,13 +826,12 @@ document.getElementById('quiet-save').addEventListener('click', function(){
 document.addEventListener('keydown', function(e){
   var tg = e.target && e.target.tagName;
   if(tg === 'INPUT' || tg === 'SELECT' || tg === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
-  if(e.key >= '1' && e.key <= '5' && window.parent !== window) window.parent.postMessage({bb64: 'tab', n: Number(e.key)}, location.origin);
+  if(e.key >= '1' && e.key <= '6' && window.parent !== window) window.parent.postMessage({bb64: 'tab', n: Number(e.key)}, location.origin);
 });
 try {
   var t = localStorage.getItem('bbMonitorTheme');
   if(t) document.documentElement.setAttribute('data-theme', t);
 } catch(e){}
-load();
 loadNotify();
 loadQuiet();
 setInterval(loadQuiet, 30000);
@@ -791,10 +897,12 @@ STATUS_HTML = """<!doctype html>
   .notice a{color:var(--title);}
   /* State transitions, newest last, as a plain list with the time in a fixed
      column so the eye can run down it. */
-  .tl{list-style:none;margin:0 0 6px;padding:0;font-size:13px;}
-  .tl li{display:flex;gap:12px;padding:2px 0;}
+  .tl{list-style:none;margin:0 0 6px;padding:8px 10px;font-size:13px;max-height:220px;overflow:auto;
+    background:var(--panel);border:1px solid var(--border);border-radius:4px;}
+  .tl li{display:flex;gap:12px;padding:2px 0;align-items:baseline;}
   .tl time{color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
     flex:0 0 5.5em;}
+  .tl .note{color:var(--dim);}
   .err{color:var(--bad);margin-top:8px;}
   @media (max-width:560px){ table,thead,tbody,tr,th,td{display:block;}
     thead{display:none;} tr{border-bottom:1px solid var(--border);padding:6px 0;}
@@ -994,8 +1102,13 @@ function renderTimeline(list){
   var ul = document.getElementById('timeline'), none = document.getElementById('tl-none');
   list = list || [];
   ul.hidden = !list.length; none.hidden = !!list.length;
-  ul.innerHTML = list.map(function(t){
-    return '<li><time>' + esc(fmtTime(t.at)) + '</time><span>' + esc(t.state || '?') + '</span></li>';
+  // Newest first: the question is "what just happened", and a box that scrolls
+  // should open on the answer. Summary lines after a spell of uploading sit in
+  // the list at the moment the spell ended.
+  ul.innerHTML = list.slice().reverse().map(function(t){
+    return '<li><time>' + esc(fmtTime(t.at)) + '</time>' +
+           (t.state ? '<span>' + esc(t.state) + '</span>' : '') +
+           (t.note ? '<span class="note">' + esc(t.note) + '</span>' : '') + '</li>';
   }).join('');
 }
 function copySummary(){
@@ -1032,7 +1145,7 @@ document.getElementById('chips').addEventListener('click', function(e){
 document.addEventListener('keydown', function(e){
   var tg = e.target && e.target.tagName;
   if(tg === 'INPUT' || tg === 'SELECT' || tg === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
-  if(e.key >= '1' && e.key <= '5' && window.parent !== window) window.parent.postMessage({bb64: 'tab', n: Number(e.key)}, location.origin);
+  if(e.key >= '1' && e.key <= '6' && window.parent !== window) window.parent.postMessage({bb64: 'tab', n: Number(e.key)}, location.origin);
 });
 try {
   var t = localStorage.getItem('bbMonitorTheme');
@@ -1387,7 +1500,7 @@ document.getElementById('rep-refresh').addEventListener('click', loadReport);
 document.addEventListener('keydown', function(e){
   var tg = e.target && e.target.tagName;
   if(tg === 'INPUT' || tg === 'SELECT' || tg === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
-  if(e.key >= '1' && e.key <= '5' && window.parent !== window) window.parent.postMessage({bb64: 'tab', n: Number(e.key)}, location.origin);
+  if(e.key >= '1' && e.key <= '6' && window.parent !== window) window.parent.postMessage({bb64: 'tab', n: Number(e.key)}, location.origin);
 });
 try {
   var th = localStorage.getItem('bbMonitorTheme');
@@ -1599,7 +1712,7 @@ def _loop():
 # scheduler, and the wake-up for anyone holding an events stream. All of them
 # see the API payload, which is the contract, so what they react to is what a
 # consumer would see.
-_timeline = []                     # [(epoch, state)], newest last, 24 hours
+_timeline = bbtimeline.Timeline()  # state changes and upload summaries, 24 hours
 _timeline_lock = threading.Lock()
 _events_cv = threading.Condition()
 _events_seq = 0
@@ -1614,11 +1727,8 @@ def _after_snapshot(api):
     now = time.time()
     changed = False
     with _timeline_lock:
-        if not _timeline or _timeline[-1][1] != api.get("state"):
-            _timeline.append((int(now), api.get("state")))
+        if _timeline.observe(api, now):
             changed = True
-        while _timeline and now - _timeline[0][0] > 86400:
-            _timeline.pop(0)
     try:
         if bbnotify.observe(api):
             changed = True
@@ -1637,7 +1747,7 @@ def _after_snapshot(api):
 
 def timeline():
     with _timeline_lock:
-        return [{"at": t, "state": st} for t, st in _timeline]
+        return _timeline.listing()
 
 
 def summary_text(api):
@@ -1989,7 +2099,7 @@ INDEX_HTML = """<!doctype html>
       </div>
       <p class="fhint">Five lines of plain text for a forum post or an issue: build, state,
          progress, health. Nothing in it names a file.</p>
-      <p class="fhint">Keys: <code>1</code> to <code>5</code> switch tabs, <code>s</code> opens
+      <p class="fhint">Keys: <code>1</code> to <code>6</code> switch tabs, <code>s</code> opens
          this dialog, <code>p</code> pauses or starts the backup, <code>Esc</code> closes.</p>
     </div>
     <div class="mpane" id="pane-about" role="tabpanel" hidden></div>
@@ -2557,7 +2667,7 @@ async function tick(){
     if(typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
     if(e.key === 's'){ document.getElementById('settings-btn').click(); }
     else if(e.key === 'p'){ var pb = document.getElementById('pause-btn'); if(pb && pb.style.display !== 'none') pb.click(); }
-    else if(e.key >= '1' && e.key <= '5' && window.parent !== window){
+    else if(e.key >= '1' && e.key <= '6' && window.parent !== window){
       // The shell owns the tabs; tell it. Same origin, so the target is exact.
       window.parent.postMessage({bb64: 'tab', n: Number(e.key)}, location.origin);
     }
@@ -3218,6 +3328,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/apikeys":
             payload = KEYS_HTML.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        if path == "/settings":
+            payload = SETTINGS_HTML.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
