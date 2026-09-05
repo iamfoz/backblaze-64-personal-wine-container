@@ -339,7 +339,7 @@ a stable release.
   example when Backblaze's cluster authority is not answering, which is usually their
   maintenance and resumes on its own. A pause set from here is a button; a pause the client
   chose is a wait, and the page says which.
-- Notifications. The API tab has a Notifications section. Add an ntfy topic or a webhook
+- Notifications. The Settings tab has a Notifications section. Add an ntfy topic or a webhook
   that receives JSON, with an optional bearer token or basic auth, and choose the events:
   safety freeze, files skipped from a threshold, no completed backup within the client's
   own limit, a stall that `bb-health` reports, a pause the client chose, first backup
@@ -349,7 +349,7 @@ a stable release.
   the failure; there is no queue. Nothing that names a file is ever sent. A Test button
   sends a message to one endpoint. Tokens are stored in `/config/bb-api`, readable by the
   container user only, because they have to be sent and so cannot be hashed.
-- Quiet hours. The API tab has a schedule of pause windows: days of the week, a start and
+- Quiet hours. The Settings tab has a schedule of pause windows: days of the week, a start and
   an end, in the container's time zone. At the start of a window the container asks the
   client to pause; at the end it starts the backup again. The client's own pause lasts
   about two hours, so inside a window the container renews it and says so in the log. A
@@ -385,8 +385,11 @@ a stable release.
   `bb-doctor --fix`. The status payload gains `pause_label`, `milestones` and
   `progress_history`.
 - The Status tab shows more. Milestones, each once for a week: a quarter, half, three
-  quarters of the way, and the first terabyte. The last 24 hours of state changes as a
-  list with the time. The safety-freeze notice links to the Backblaze page on resolving one
+  quarters of the way, and the first terabyte. The last 24 hours as a list in a box that
+  scrolls, newest first: every change of state, and after each spell of uploading one line
+  with what it amounted to, for example "Uploaded 28 files (1.4 GB) in 9m: average 40.0
+  Mbit/s, 8.0 threads, mem 1.9 GB, swap 95 MB". A spell allows gaps of up to a minute, so
+  the client's flicker between Transmitting and Preparing on small files does not split it. The safety-freeze notice links to the Backblaze page on resolving one
   and says what the uninstall step means in this container: delete the client's program
   directory and restart, and never recreate the Wine prefix, which would destroy the backup
   state.
@@ -394,7 +397,7 @@ a stable release.
   today: uploads, retried attempts, files skipped. A progress-over-time line in the About
   tab, one sample a day of percent complete, kept for a year. The exact bytes per second in
   the rate's tooltip.
-- Keys. `1` to `5` switch tabs from any page, `s` opens the Monitor's settings, `p` pauses
+- Keys. `1` to `6` switch tabs from any page, `s` opens the Monitor's settings, `p` pauses
   or starts the backup. The list is in the settings dialog.
 - The browser tab's title carries the state: a dot while uploading, a pause mark while
   paused, an exclamation mark while a warning is raised.
@@ -412,8 +415,9 @@ a stable release.
 - `bb-health`'s description on the Tools tab reads "with diagnostic information".
 
 ### Changed
-- The tabs in the web interface are Desktop, Monitor, Status, Tools and API. "Upload
-  Monitor" is now "Monitor" and "Skipped Files" is now "Status". A saved tab or an old link
+- The tabs in the web interface are Desktop, Monitor, Status, Tools, API and Settings.
+  "Upload Monitor" is now "Monitor" and "Skipped Files" is now "Status". Settings holds
+  notifications and quiet hours; API holds the keys. A saved tab or an old link
   that names `skipped` opens the Status tab.
 - `bb-doctor` runs as the container user when you start it as root. `docker exec` enters
   the container as root, and root passes every permission test. `bb-doctor` uses

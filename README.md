@@ -515,8 +515,8 @@ It differs from the stable images in four ways worth knowing:
   vetted.
 - It tracks **Ubuntu 26.04**, the newer LTS, rather than the stable default.
 - It is rebuilt on a schedule rather than pinned to a release, so it moves.
-- The web interface has Monitor, Status, Tools and API tabs beside the desktop, and the
-  key-authenticated HTTP API. The API tab also holds Notifications (ntfy or a webhook, on
+- The web interface has Monitor, Status, Tools, API and Settings tabs beside the desktop,
+  and the key-authenticated HTTP API. Settings holds Notifications (ntfy or a webhook, on
   a safety freeze, skipped files, a stall, a pause the client chose, and more) and Quiet
   hours (pause windows on a weekly schedule). These are described in the changelog and in
   [`docs/api-v1.md`](docs/api-v1.md).
