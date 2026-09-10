@@ -31,6 +31,14 @@ _tlock = threading.RLock()
 @contextlib.contextmanager
 def _mutate():
     os.makedirs(DIR, exist_ok=True)
+    # Here rather than in _write, because quiet hours and the notification
+    # endpoints write through this lock too and can create the directory before
+    # a key is ever minted. Left to _write it stayed at the umask's 0755, on a
+    # directory that is on the user's own share.
+    try:
+        os.chmod(DIR, 0o700)
+    except OSError:
+        pass        # not ours to tighten, which _own_like_config reports on
     _own_like_config(DIR)
     with _tlock:
         fd = os.open(LOCK, os.O_CREAT | os.O_RDWR, 0o600)
@@ -58,11 +66,17 @@ PERMISSIONS = {
     "report":             "Generate and download a diagnostic bundle.",
     "diagnose":           "Run bb-doctor, bb-health and bb-version and read their output.",
     "diagnose:repair":    "Also run bb-doctor --fix, which changes files in the prefix.",
+    # Reading what the client is set to needs only "read". This is for changing
+    # it. The set of settings a key can reach is fixed in bbconfig.WRITABLE, and
+    # deliberately excludes anything that decides what is backed up: the file
+    # selection, the exclusions and the schedule are not reachable over HTTP at
+    # all, because a wrong edit there stops a backup rather than slowing one.
+    "configure":          "Change the backup client's settings: threads, throttle, and the like.",
 }
 
 # Ordered for display, and it is the order the settings tab renders in.
 ORDER = ("read", "read:files", "control:backup-now", "control:pause", "report",
-         "diagnose", "diagnose:repair")
+         "diagnose", "diagnose:repair", "configure")
 
 # "read" is a permission in its own right, so it is not also a group name. A key
 # that should see file names is granted read:files alongside it. "diagnose" is
@@ -109,7 +123,7 @@ def _own_like_config(path):
     bb-apikey is normally run through `docker exec`, which is root, while the
     service runs as the container's own user. Left alone, root creates the store
     0700 root-owned and the service cannot open it: keys created on the command
-    line simply never appear, and the API answers 404 as though none existed.
+    line never appear, and the API answers 404 as though none existed.
     /config is already owned correctly, so its ownership is the answer, and this
     repairs a store created before the fix the next time a key is written.
     """
@@ -123,7 +137,6 @@ def _own_like_config(path):
 
 def _write(records):
     os.makedirs(DIR, exist_ok=True)
-    os.chmod(DIR, 0o700)
     _own_like_config(DIR)
     # Written through a temporary file in the same directory so a crash mid-write
     # cannot leave a truncated key store, which would lock the owner out.
@@ -153,6 +166,10 @@ def create(label, scopes, expires_in_days=None):
     for something wired into a dashboard that should keep working. A key handed
     to someone for a support thread is the case that wants a date on it.
     """
+    # One bounded line. The store is read back on every API request, so a
+    # multi-megabyte label would be re-parsed on every poll, and the label is
+    # written to the container log, where a newline could forge a line.
+    label = (label or "").replace("\r", " ").replace("\n", " ").strip()[:60]
     scopes = expand(scopes)
     bad = [s for s in scopes if s not in PERMISSIONS]
     if bad:

@@ -17,7 +17,7 @@
 # from that tool's own list, each of which maps to a fixed flag. Nothing from a
 # request reaches argv except through those lookups. Same rule as bbctl.ACTIONS.
 
-import os, secrets, subprocess, threading, time
+import os, secrets, signal, subprocess, threading, time
 
 BIN = "/usr/local/bin"
 PREFIX = os.environ.get("WINEPREFIX", "/config/wine")
@@ -175,15 +175,25 @@ def _run(jid):
 
     def kill():
         timed_out.append(True)
+        # The group, not the process. bb-doctor and bb-version both start wine,
+        # and a wedged client leaves a child behind holding the stdout it
+        # inherited: killing only the tool left the readline loop below waiting
+        # on a pipe that would never reach end of file, so the job stayed
+        # "running" for the life of the service and its tool could never be run
+        # again. start_new_session=True below puts this one job in a group of
+        # its own, so this cannot reach the client's own wineserver.
         try:
-            p.kill()
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
         except OSError:
-            pass
+            try:
+                p.kill()
+            except OSError:
+                pass
 
     try:
         p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, env=_env(),
-                             cwd=os.path.dirname(argv[0]))
+                             cwd=os.path.dirname(argv[0]), start_new_session=True)
     except OSError as exc:
         _finish(jid, error="could not run %s: %s" % (os.path.basename(argv[0]), exc))
         return
@@ -208,7 +218,13 @@ def _run(jid):
                     j["lines"].append(line)
                 else:
                     j["truncated"] = True     # keep draining so the tool can exit
-        p.wait()
+        # Bounded: the group kill above releases the pipe, but a grandchild that
+        # made a session of its own is out of its reach, and this thread must
+        # end either way rather than hold a job open.
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
     finally:
         timer.cancel()
     if timed_out:

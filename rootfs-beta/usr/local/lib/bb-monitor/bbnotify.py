@@ -20,8 +20,8 @@
 # no queue on disk. A stall notification an hour late is still worth having; one
 # a week late is not.
 
-import base64, json, os, secrets, socket, subprocess, sys, tempfile, threading, time
-import urllib.error, urllib.request
+import base64, ipaddress, json, os, secrets, socket, subprocess, sys, tempfile, threading, time
+import urllib.error, urllib.parse, urllib.request
 
 import bbapi
 
@@ -42,6 +42,50 @@ TEMPLATES = {
 }
 PLACEHOLDERS = ("title", "message", "event", "container", "build", "state", "time", "priority")
 DEFAULT_URLS = {"pushbullet": "https://api.pushbullet.com/v2/pushes"}
+
+
+def clean_label(s):
+    """One bounded line. The label is written to the container log, which is the
+    audit trail for the control routes, so an embedded newline in it could forge
+    a line there."""
+    return (s or "").replace("\r", " ").replace("\n", " ").strip()[:60]
+
+
+def blocked_address(url):
+    """The address this URL resolves to that the container will not send to, or
+    None.
+
+    An endpoint is the one place a person can make the container issue an
+    outbound request with a body and headers they choose, so the addresses that
+    mean "me" are closed: loopback, the link-local range that carries a cloud
+    host's metadata service, and the unspecified address. Private LAN ranges
+    stay open, because ntfy and Gotify are usually run on the LAN.
+
+    A name that will not resolve is not a refusal. The send fails on its own,
+    and refusing at save time would stop a person configuring an endpoint while
+    the network is down.
+    """
+    host = ""
+    try:
+        host = urllib.parse.urlsplit(url).hostname or ""
+    except ValueError:
+        return None
+    if not host:
+        return None
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except (OSError, UnicodeError):
+        return None
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        # ::ffff:127.0.0.1 is loopback wearing an IPv6 shape.
+        ip = getattr(ip, "ipv4_mapped", None) or ip
+        if ip.is_loopback or ip.is_link_local or ip.is_unspecified:
+            return str(ip)
+    return None
 
 
 def render(template, values):
@@ -168,6 +212,10 @@ def save(conf):
             raise ValueError("endpoint kind must be one of %s" % ", ".join(KINDS))
         if not (url.startswith("http://") or url.startswith("https://")):
             raise ValueError("endpoint URL must start with http:// or https://")
+        bad = blocked_address(url)
+        if bad:
+            raise ValueError("that URL resolves to %s, which is the container itself "
+                             "or a link-local address" % bad)
         auth = (e.get("auth") or "none").strip()
         if auth not in ("none", "bearer", "basic"):
             raise ValueError("auth must be none, bearer or basic")
@@ -181,7 +229,7 @@ def save(conf):
             except ValueError:
                 raise ValueError("the body template is not valid JSON once the placeholders are filled")
         rec = {"id": e.get("id") or secrets.token_hex(4),
-               "label": (e.get("label") or "").strip()[:60] or kind,
+               "label": clean_label(e.get("label")) or kind,
                "kind": kind, "url": url, "auth": auth,
                "token": (e.get("token") or "").strip() or kept.get(e.get("id") or "", ""),
                "user": (e.get("user") or "").strip(), "template": template}
@@ -215,6 +263,14 @@ def public(conf):
 
 # ---- what is true right now ------------------------------------------------------
 
+# The same state as the file holds, kept here as well. observe() rebuilds its
+# baseline from disk on every poll, so a store that cannot be written at all
+# used to mean prev was always None and no event ever fired again, silently.
+# Held in memory the failure degrades to "forgotten across a restart".
+_state_mem = {}
+_state_warned = False
+
+
 def _state_load():
     try:
         with open(STATE, encoding="utf-8") as fh:
@@ -223,15 +279,23 @@ def _state_load():
                 return st
     except (OSError, ValueError):
         pass
-    return {}
+    return dict(_state_mem)
 
 
 def _state_save(st):
+    global _state_warned
+    _state_mem.clear()
+    _state_mem.update(st)
     try:
         with bbapi._mutate():
             _write(STATE, st)
-    except OSError:
-        pass
+    except OSError as exc:
+        # Once only. This runs on the poll loop, so a line per poll would be
+        # 43,000 a day in the container log.
+        if not _state_warned:
+            _state_warned = True
+            sys.stderr.write("bb-monitor-web: notification state cannot be saved (%s); "
+                             "events still fire but are forgotten on restart\n" % exc)
 
 
 def health_verdict():
@@ -319,9 +383,14 @@ def observe(api, conf=None, deliver=None, now=None):
                 and prev.get("build") != cur["build"]:
             fired.append(("build", "Container updated",
                           "Now running build %s (was %s)." % (cur["build"], prev["build"])))
-    st["conditions"] = dict(cur_flags, milestones=cur["milestones"], build=cur["build"])
-    st["seen"] = int(now)
-    _state_save(st)
+    now_conditions = dict(cur_flags, milestones=cur["milestones"], build=cur["build"])
+    # Only when something moved. Written on every poll this was 43,000 atomic
+    # replaces a day on the user's appdata share, each one taking the store lock
+    # that key creation and use also want, for a record that had not changed.
+    if now_conditions != prev:
+        st["conditions"] = now_conditions
+        st["seen"] = int(now)
+        _state_save(st)
     for key, title, message in fired:
         deliver(conf, key, title, message, api)
     return fired
@@ -392,9 +461,27 @@ def _deliver(ep, key, title, message, payload):
     return False
 
 
+def _quiet_detail(ep, reason, said):
+    """What a delivery record says, with the reason kept to the container log.
+
+    The record is read back from the page, so it is the one place the remote's
+    answer could be read by whoever can reach /manage/. A person debugging their
+    own endpoint gets the full reason from the log, where it was always going.
+    """
+    sys.stderr.write("bb-monitor-web: notify %s (%s): %s\n"
+                     % (ep.get("label"), ep.get("kind"), reason))
+    return said
+
+
 def send_once(ep, key, title, message, payload):
     """One attempt. (ok, detail). Never raises."""
     try:
+        # Again here and not only at save time: a name that resolved to the LAN
+        # when the endpoint was stored can resolve to loopback later, and a
+        # store written by hand never passed save() at all.
+        bad = blocked_address(ep.get("url") or "")
+        if bad:
+            return False, "refused: %s is not a permitted destination" % bad
         headers = {"User-Agent": "bb-monitor-web"}
         if ep.get("auth") == "bearer" and ep.get("token"):
             headers["Authorization"] = "Bearer " + ep["token"]
@@ -421,11 +508,16 @@ def send_once(ep, key, title, message, payload):
                 body = json.dumps(dict(payload, body=message)).encode("utf-8")
         req = urllib.request.Request(ep["url"], data=body, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            return 200 <= resp.status < 300, "HTTP %d" % resp.status
+            # The status code stays out of the detail: it is recorded and read
+            # back through GET /manage/notify, and a code per host is a probe of
+            # whatever the URL points at. The container log keeps the number.
+            if 200 <= resp.status < 300:
+                return True, "delivered"
+            return False, _quiet_detail(ep, "HTTP %d" % resp.status, "rejected by the endpoint")
     except urllib.error.HTTPError as exc:
-        return False, "HTTP %d" % exc.code
+        return False, _quiet_detail(ep, "HTTP %d" % exc.code, "rejected by the endpoint")
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        return False, str(exc)
+        return False, _quiet_detail(ep, str(exc), "not reachable")
 
 
 def test(ep_id, conf=None):

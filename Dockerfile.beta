@@ -181,7 +181,7 @@ COPY rootfs/ /
 # one; when this work reaches a stable release the two merge back and this
 # directory goes away.
 COPY rootfs-beta/ /
-# Two beta-only additions to bb-doctor.
+# Beta-only additions to bb-doctor.
 #
 # bb-doctor itself ships in rootfs/ and is stable's file. Rather than keep a
 # second copy here, which would drift the way the two monitors did before they
@@ -206,6 +206,13 @@ COPY rootfs-beta/ /
 # mapping section. bb-health gets one insert of its own, a FROZEN state, so a
 # safety-frozen backup shows unhealthy in the Docker tab; bb-watchdog acts only
 # on HANG and WEDGE, so it cannot turn that into a recovery attempt.
+#
+# The fourth insert is the client-settings check: it asks bzcli what the client
+# itself thinks (licence, safety freeze, encryption, per-drive selection, and
+# whether the container's own config directory is excluded), which catches the
+# case where a file on disk and the client's own view of it have drifted apart.
+# It shares the source-drives anchor and is ordered after it in this list, so
+# it runs immediately after that section and still before Storage.
 RUN python3 - <<'PATCH'
 import sys
 doc = "/usr/local/bin/bb-doctor"
@@ -216,6 +223,16 @@ inserts = [
      '''# Source drives. Beta only: see rootfs-beta/usr/local/lib/bb-doctor-drives.sh,
 # to be folded into this script at the next stable release.
 [ -r /usr/local/lib/bb-doctor-drives.sh ] && . /usr/local/lib/bb-doctor-drives.sh
+
+'''),
+    ("bb-doctor-config.sh",
+     'echo "Storage"',
+     '''# Client settings, read from bzcli rather than inferred from files on disk.
+# Beta only: see rootfs-beta/usr/local/lib/bb-doctor-config.sh, to be folded
+# into this script at the next stable release. Anchored on the same line as
+# the source-drives insert above, so it lands right after that section and
+# still before Storage.
+[ -r /usr/local/lib/bb-doctor-config.sh ] && . /usr/local/lib/bb-doctor-config.sh
 
 '''),
     ("bb-doctor-asuser.sh",
@@ -293,10 +310,94 @@ RUN sh -n /usr/local/bin/bb-doctor \
  && grep -q "bb-doctor-skipped.sh" /usr/local/bin/bb-doctor \
  && grep -q "swap to absorb the peaks" /usr/local/bin/bb-doctor \
  && grep -q "bb-doctor-drives.sh" /usr/local/bin/bb-doctor \
+ && grep -q "bb-doctor-config.sh" /usr/local/bin/bb-doctor \
  && sh -n /usr/local/lib/bb-doctor-asuser.sh && sh -n /usr/local/lib/bb-doctor-skipped.sh \
  && sh -n /usr/local/lib/bb-doctor-drives.sh \
+ && sh -n /usr/local/lib/bb-doctor-config.sh \
  && sh -n /usr/local/bin/bb-health && grep -q "^FROZEN\|FROZEN Backblaze" /usr/local/bin/bb-health \
  && command -v setpriv >/dev/null
+
+# Beta-only addition to bb-report: a settings capture alongside the rest of the
+# diagnostic bundle, read the same way the bb-doctor check above reads it - via
+# bzcli, and restricted to /settings for the same reason: the full report and
+# /backup/account both carry the account email, and this bundle exists so that
+# never has to be collected. Same anchored-replace discipline as above: each
+# anchor must be found exactly once, or the build fails naming it, rather than
+# shipping a bundle where the item is silently missing or, on a rebuild,
+# silently duplicated.
+RUN python3 - <<'PATCH'
+import sys
+rep = "/usr/local/bin/bb-report"
+src = open(rep, encoding="utf-8").read()
+
+helper_anchor = "# Every item is (name in bundle, description, producer). Nothing else is collected.\n"
+helper = '''# Client settings, via bzcli. Beta only: to be folded into this script at the
+# next stable release. bzcli reports the client's own view of what it is
+# doing, which belongs alongside the files bb-report already reads back out of
+# bzdata. Only /settings is queried, never the whole report and never
+# /backup/account: both carry the account email.
+def _bzcli_settings():
+    prefix = os.environ.get("WINEPREFIX", "/config/wine/")
+    bbdir = os.path.join(prefix, "drive_c", "Program Files", "Backblaze")
+    if not os.path.exists(os.path.join(bbdir, "bzcli.exe")):
+        return "bzcli is not in this image\\n"
+    env = dict(os.environ)
+    env["PATH"] = "/opt/wine/bin:" + env.get("PATH", "")
+    env["WINEPREFIX"] = prefix
+    env["WINEDEBUG"] = "-all"
+    env["HOME"] = "/config"
+    try:
+        p = subprocess.run(["wine", "bzcli.exe", "report", "-v", "/settings"],
+                            cwd=bbdir, env=env, capture_output=True, text=True, timeout=60)
+        text = (p.stdout or "") + (p.stderr or "")
+        # online_hostname is the name this machine shows under at
+        # backblaze.com, and sanitise() does not hash it: it is a bare
+        # value rather than a path, so it would reach a bundle whole. A
+        # bundle is meant to be safe to post in public, and a machine
+        # name is often a person's or a company's. Redacted by value, not
+        # by whole line: bzcli can emit this report as compact single-line
+        # JSON, and a whole-line match there would erase every sibling
+        # setting on that line along with it.
+        text = re.sub(r'("online_hostname"\\s*:\\s*)"[^"]*"',
+                      r'\\1"<hidden>"', text)
+        # RE_KEYVAL further down only matches an *unquoted* key ("key:
+        # value" or "key=value"); a JSON key is quoted ("hguid": "..."),
+        # so the character right after the key is the key's own closing
+        # quote, not "=" or ":", and RE_KEYVAL's match never starts.
+        # bzcli's settings report is JSON, so every name in SECRET_KEYS
+        # needs this same by-value redaction here, before this text
+        # reaches sanitise() and RE_KEYVAL gets a pass at a shape it
+        # cannot see.
+        text = re.sub(
+            r'(?i)"(' + "|".join(re.escape(k) for k in SECRET_KEYS) + r')"(\\s*:\\s*)"[^"]*"',
+            r'"\\1"\\2"<redacted>"', text)
+        return text
+    except Exception as e:
+        return "command failed: %s\\n" % e
+
+'''
+
+item_anchor = "    return items\n"
+item = '''    items.append(("backblaze/settings.txt",
+                  "client settings (drive selection, exclusions, licence, encryption)",
+                  _bzcli_settings))
+'''
+
+if "_bzcli_settings" in src:
+    print("bb-report: settings capture already present")
+else:
+    if src.count(helper_anchor) != 1:
+        sys.exit("bb-report: helper anchor not found exactly once, refusing to guess")
+    if src.count(item_anchor) != 1:
+        sys.exit("bb-report: return-items anchor not found exactly once, refusing to guess")
+    src = src.replace(helper_anchor, helper + helper_anchor, 1)
+    src = src.replace(item_anchor, item + item_anchor, 1)
+    open(rep, "w", encoding="utf-8").write(src)
+    print("bb-report: settings capture added")
+PATCH
+RUN python3 -m py_compile /usr/local/bin/bb-report \
+ && grep -q "_bzcli_settings" /usr/local/bin/bb-report \
+ && grep -q "backblaze/settings.txt" /usr/local/bin/bb-report
 
 RUN chmod +x /startapp.sh /usr/local/bin/bb-monitor /usr/local/bin/bb-monitor-web \
         /usr/local/bin/bb-health /usr/local/bin/bb-watchdog /usr/local/bin/bb-version \

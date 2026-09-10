@@ -26,6 +26,11 @@ secret, revoke the key and create another. `bb-apikey list` shows the keys that 
 `bb-apikey revoke <id>` revokes one key, and `bb-apikey permissions` prints the permissions
 that you can grant.
 
+`--scope` is repeatable; pass `--all` instead to grant every permission that is currently
+available, skipping any that are reserved for a future release. `--expires-days N` makes the
+key stop working N days from now; omit it for a key that never expires, which is what
+something long-running wants.
+
 ## Authenticating
 
 Send the key as a bearer token:
@@ -70,6 +75,7 @@ includes another one.
 | `report` | Generate and download a diagnostic bundle. |
 | `diagnose` | Run `bb-doctor`, `bb-health` and `bb-version` and read their output. |
 | `diagnose:repair` | Also switch on `bb-doctor --fix`, which changes files in the prefix. Grant `diagnose` with it. |
+| `configure` | Change the backup client's settings: threads, throttle, and the like. Not the file selection, the exclusions or the schedule. |
 
 `control` is a shorthand for both control operations. The container expands the shorthand
 when it creates the key, so it always stores the explicit list.
@@ -239,12 +245,20 @@ Requires `diagnose`. `<name>` is `doctor`, `health` or `version`. The body may c
 the API answers 403 without it. One run per tool at a time; a second request joins the run
 with `joined_existing: true`. Returns the job.
 
+`bb-doctor`'s own output can name drives and directories, which is what `read:files` gates
+everywhere else in this API. A key that holds `diagnose` but not `read:files` still gets a
+job back, but `lines` is `null` and the response carries `"withheld": "read:files"` instead
+of the tool's output.
+
 ### `GET /api/v1/tools/job/<id>`
 
 Requires `diagnose` or `diagnose:repair`. The job, with the tool's output so far in
 `lines`. `state` is `running`, `done` or `failed`. `exit_code` is the tool's own; for
 `bb-doctor`, 1 means it found problems, and `result` gives the meaning. The container
 discards a finished job after an hour.
+
+The same `read:files` gate applies here as on the run route above: without it, `lines` is
+`null` and `"withheld": "read:files"` is added, rather than the tool's output.
 
 ## Schema versioning
 
@@ -305,12 +319,64 @@ The pause as text, or `null` when not paused: `who` (`here`, `client` or `unknow
 the client paused itself, for example `ca_down_but_network_alive` when Backblaze's cluster
 authority is not answering.
 
+### `client`
+
+`null`, or what the Backblaze client reports about itself through its own `bzcli`, read on a
+slow cycle:
+
+| Field | Meaning |
+|---|---|
+| `licence` | `status` and `type` as Backblaze report them, plus `renewal_failure` and `renewal_failed` |
+| `encrypted` | Whether a private encryption key is set. Backblaze cannot recover a forgotten one |
+| `cluster`, `cluster_url` | The datacentre cluster this account is assigned to |
+| `safety_freeze` | The client's own field, `not_frozen` or otherwise |
+| `summary` | The client's own one-line account of what it is doing |
+| `transmit` | The state of the transmit process |
+| `settings` | The current value of each setting the container can change |
+| `schedule` | The client's backup schedule. Read only: the container never writes it |
+| `drive_selection` | Per drive, `whichfiles` and `backed_up`. A drive reading `none` backs up nothing while still appearing ticked in the client's settings window |
+| `excluded_dirs` | Directories the client is set to skip |
+| `at`, `ok`, `error` | When the reading was taken and whether it succeeded |
+
+`drive_selection` and `excluded_dirs` name directories on the user's own share, so a key
+without `read:files` receives `null` for both.
+
+The account email, the login and the host guid are never read. The container queries five
+subtrees by path and `/backup/account` is not one of them.
+
+### `GET /api/v1/client`
+
+Requires `read`. The reading above, plus the settings that can be changed with their current
+values and the client's own description of each.
+
+### `POST /api/v1/client`
+
+Requires `configure`. Body `{"key": ..., "value": ...}`. Changes one setting. The keys are a
+fixed list: `num_backup_threads`, `net_auto_throttle`, `net_throttle`, `max_filesize_mb`,
+`numdays_warn_if_no_backup`, `online_hostname`, `allow_network_tests`, `backup_on_battery`.
+
+Anything else is refused, including everything that decides what is backed up: the file
+selection, the exclusions and the schedule. A wrong edit there stops a backup rather than
+slowing one. The private encryption key verbs are not reachable at all.
+
+`net_throttle` is megabits per second **per thread**, not for the backup as a whole, and
+applies only with `net_auto_throttle` off.
+
+A change is written to the client's configuration at once. Whether a running client honours
+it without a container restart has not been established.
+
 ### `per_volume`
 
 `null`, or a list of one entry per mapped drive: `guid`, `path`, `total`, `done`,
 `remaining`, `pct`, `total_files` and `remaining_files`, largest first. From the per-volume
 figures in the client's own total and remaining files. `path` falls back to the head of the
 volume guid when the client records no mount path for it.
+
+Without `read:files`, `guid` is dropped from every row (a stable identifier for the
+machine), and `path` is reduced to a bare drive letter such as `D:`, or `null` when the
+client's own mount path is longer than a bare drive root, because anything more names the
+mounted share the way a full file path would. The numbers are unaffected: they say how much
+of a drive is backed up without saying what is on it.
 
 ### `remaining_shape`
 
@@ -495,7 +561,7 @@ repeat it.
 
 `null` entirely for a key without `read:files`.
 
-`in_flight` — an array of the files that are uploading now:
+`in_flight`: an array of the files that are uploading now.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -505,7 +571,7 @@ repeat it.
 | `part_bytes` | int, null | Size of one part. |
 | `parts` | object, null | `done` and `total` for a multi-part file. |
 
-`recent` — an array of recent completions, oldest first:
+`recent`: an array of recent completions, oldest first.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -516,10 +582,10 @@ repeat it.
 | `bytes` / `seconds` / `kbit_per_sec` | int | Transfer figures. |
 | `thread` | int | Which thread carried it. |
 | `measured` | bool | `false` for a file too small to observe during the transfer: the client named it and continued, so there is no thread, size or rate, and the container infers the completion rather than confirms it. |
-| `dedup` | bool | With `measured: false` only. `true` when the client's transmission report shows the datacenter already held the file and nothing was sent. After a restart the client re-checks the small files between its checkpoint and where it had got to, one round trip each; those rows carry `dedup: true`. |
+| `dedup` | bool | With `measured: false` only. `true` when the client's transmission report shows the datacentre already held the file and nothing was sent. After a restart the client re-checks the small files between its checkpoint and where it had got to, one round trip each; those rows carry `dedup: true`. |
 
-`chunk_map` — how far the parts of the large file that is currently being split have got,
-or `null` if there is none:
+`chunk_map`: how far the parts of the large file that is currently being split have got,
+or `null` if there is none.
 
 | Field | Type | Meaning |
 |---|---|---|

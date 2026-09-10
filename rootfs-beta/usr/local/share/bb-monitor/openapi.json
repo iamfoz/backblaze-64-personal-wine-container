@@ -20,7 +20,7 @@
       "bearer": {
         "type": "http",
         "scheme": "bearer",
-        "description": "A key of the form bb64_<id>_<secret>. Permissions are granted per operation: read, read:files, control:backup-now, control:pause, report, diagnose, diagnose:repair."
+        "description": "A key of the form bb64_<id>_<secret>. Permissions are granted per operation: read, read:files, control:backup-now, control:pause, report, diagnose, diagnose:repair, configure."
       }
     },
     "schemas": {
@@ -530,12 +530,124 @@
             ],
             "description": "Backblaze's own measured throughput"
           },
+          "per_volume": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "guid": {
+                      "type": "string",
+                      "description": "Stable identifier for the volume. Absent for a key without read:files."
+                    },
+                    "path": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "The client's own mount path. Without read:files, reduced to a bare drive letter such as \"D:\", or null when the real path is longer than a bare drive root."
+                    },
+                    "total": {
+                      "type": "integer",
+                      "description": "Bytes"
+                    },
+                    "done": {
+                      "type": "integer",
+                      "description": "Bytes"
+                    },
+                    "remaining": {
+                      "type": "integer",
+                      "description": "Bytes"
+                    },
+                    "pct": {
+                      "type": "number"
+                    },
+                    "total_files": {
+                      "type": "integer"
+                    },
+                    "remaining_files": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "One entry per mapped drive, largest first. Without read:files, guid is dropped from every row and path is reduced as described above."
+          },
           "files": {
             "type": [
               "object",
               "null"
             ],
             "description": "in_flight, recent and chunk_map. Present only for a key with read:files."
+          },
+          "client": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ClientReading"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "remaining_shape": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The average size of a file still to send against the average of one already sent, in bytes. A high ratio means the remainder is made of large files and will take longer than its count suggests. null until both averages exist.",
+            "properties": {
+              "avg_remaining": {
+                "type": "number",
+                "description": "Bytes"
+              },
+              "avg_done": {
+                "type": "number",
+                "description": "Bytes"
+              },
+              "ratio": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "avg_remaining divided by avg_done, or null when nothing has been sent yet."
+              }
+            }
+          },
+          "rate_limits": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "What bounds the upload rate. Wine answers the ideal-send-backlog query with a fixed 64 KB, so a connection holds at most that much in flight and is bounded by it divided by the round trip. modelled is a floor of unknown tightness rather than a ceiling to tune against. null without a latency reading.",
+            "properties": {
+              "per_thread": {
+                "type": "number",
+                "description": "Bytes per second one connection can carry at the measured round trip."
+              },
+              "modelled": {
+                "type": "number",
+                "description": "per_thread multiplied by the live thread count, bytes per second."
+              },
+              "observed": {
+                "type": "number",
+                "description": "The measured upload rate, bytes per second."
+              },
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "at",
+                  "below",
+                  "above"
+                ],
+                "description": "observed against modelled."
+              }
+            }
           }
         }
       },
@@ -600,11 +712,18 @@
             "description": "What ran, as the console would show it"
           },
           "lines": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
               "type": "string"
             },
-            "description": "The tool's output so far"
+            "description": "The tool's output so far, or null when withheld (see withheld)"
+          },
+          "withheld": {
+            "type": "string",
+            "description": "Present, naming the missing permission, when the key lacks read:files. bb-doctor's own output can name drives and directories, so a key with diagnose but not read:files gets the job back with lines null and this set to \"read:files\"."
           },
           "truncated": {
             "type": "boolean",
@@ -743,6 +862,101 @@
           "joined_existing": {
             "type": "boolean",
             "description": "True when the request joined a job already running"
+          }
+        }
+      },
+      "ClientReading": {
+        "type": "object",
+        "description": "What the Backblaze client reports about itself through its own bzcli. The account email, login and host guid are never read: the container queries five subtrees by path and /backup/account is not one of them.",
+        "properties": {
+          "licence": {
+            "type": "object",
+            "description": "status and type as Backblaze report them, plus renewal_failure and renewal_failed"
+          },
+          "encrypted": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether a private encryption key is set. Backblaze cannot recover a forgotten one."
+          },
+          "cluster": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cluster_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "safety_freeze": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The client's own field: not_frozen, or otherwise"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The client's own one-line account of what it is doing"
+          },
+          "transmit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "settings": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Current value of each setting the container can change"
+          },
+          "schedule": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The client's backup schedule. Read only."
+          },
+          "drive_selection": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Per drive, whichfiles and backed_up. A drive reading none backs up nothing while still appearing ticked in the client's settings window. Withheld from a key without read:files."
+          },
+          "excluded_dirs": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Withheld from a key without read:files."
+          },
+          "at": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       }
@@ -1302,6 +1516,67 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/client": {
+      "get": {
+        "summary": "What the client reports about itself",
+        "description": "Requires read. The reading, plus the settings that can be changed with their current values and the client's own description of each.",
+        "responses": {
+          "200": {
+            "description": "Reading",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientReading"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorised"
+          },
+          "404": {
+            "description": "No key exists or the API switch is off"
+          }
+        }
+      },
+      "post": {
+        "summary": "Change one of the client's settings",
+        "description": "Requires configure. Keys are a fixed list: num_backup_threads, net_auto_throttle, net_throttle, max_filesize_mb, numdays_warn_if_no_backup, online_hostname, allow_network_tests, backup_on_battery. Anything deciding what is backed up is refused: the file selection, the exclusions and the schedule. The private encryption key verbs are not reachable at all. net_throttle is megabits per second per thread, not for the backup as a whole, and applies only with net_auto_throttle off. A change is written at once; whether a running client honours it without a container restart is not established.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "value": {}
+                },
+                "required": [
+                  "key",
+                  "value"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Applied"
+          },
+          "400": {
+            "description": "Not a settable key, or the value is out of range"
+          },
+          "401": {
+            "description": "Unauthorised"
+          },
+          "503": {
+            "description": "bzcli not present"
           }
         }
       }

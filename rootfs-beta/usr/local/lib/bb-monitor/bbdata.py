@@ -18,7 +18,7 @@ Imported by path rather than installed as a package, since both callers live in
     sys.path.insert(0, "/usr/local/lib/bb-monitor")
     import bbdata
 """
-import calendar, html, ipaddress, json, os, re, socket, struct, threading, time, unicodedata
+import calendar, html, ipaddress, json, os, re, socket, struct, time
 from collections import deque
 
 # ---- config (identical to bb-monitor) ------------------------------------
@@ -49,7 +49,31 @@ RPTS = BZ + "/bzreports"
 RPTLOG = BZ + "/bzlogs/bzreports_lastfilestransmitted"
 BZINFO = BZ + "/bzinfo.xml"
 
-_logged = set()
+# The "seen" maps below are keyed by file path or file name and were only ever
+# added to. A first backup walks millions of files, so on a container the notes
+# describe as memory-tight that is a monitor process that grows all week. Each is
+# bounded to its most recently touched entries, oldest dropped first; anything
+# still in flight is touched on every poll, so it is never the one dropped.
+_SEEN_MAX = 400           # per-file entries kept in _part_seen and _logged
+_CHUNK_FILES_MAX = 50     # files kept in _chunk_seen, each a whole chunk map
+
+
+def _bound(d, limit=_SEEN_MAX):
+    """Trim a dict to its `limit` newest keys. Insertion ordered, so a caller
+    that wants a key kept must re-insert it rather than overwrite it in place."""
+    while len(d) > limit:
+        d.pop(next(iter(d)))
+
+
+def _touch(d, key, value, limit=_SEEN_MAX):
+    """Set d[key], moving it to the newest end, and keep d within limit."""
+    d.pop(key, None)
+    d[key] = value
+    _bound(d, limit)
+    return value
+
+
+_logged = {}                # file name -> True, an ordered set for the one-off log line
 _inflight = {}
 _recent = []
 _last_named = [None]        # last whole file the client named
@@ -355,6 +379,12 @@ _chunk_cache = {"file": None, "map": {}, "total": 0}
 _chunk_seen = {}          # file name -> {index: "sent"|"inflight"}
 
 
+def _chunk_seen_for(name):
+    """The chunk map for one file, created if new and kept as the newest entry
+    so the bound on _chunk_seen drops files nobody is uploading any more."""
+    return _touch(_chunk_seen, name, _chunk_seen.get(name) or {}, _CHUNK_FILES_MAX)
+
+
 def _chunk_map():
     """{sha1: (index, offset, size)} plus the file it belongs to."""
     cur = read(LFDIR + "/currentlargefile.xml")
@@ -380,7 +410,7 @@ def _chunk_map():
     return name, out, len(out)
 
 
-def health():
+def health(data=None):
     """Conditions worth warning about, from the client's own records.
 
     A safety freeze stops backups entirely, an unclean file check means the
@@ -400,7 +430,7 @@ def health():
     # that would be warning about a first upload doing exactly what it should.
     last = re.search(r'gmt_millis="(\d+)"', read(RPTS + "/bzstat_lastbackupcompleted.xml"))
     warn = re.search(r'numdays_warn_if_no_backup="(\d+)"', read(BZINFO))
-    if last and _caught_up():
+    if last and _caught_up(data):
         days = (time.time() - int(last.group(1)) / 1000.0) / 86400.0
         limit = int(warn.group(1)) if warn else 7
         if days > limit:
@@ -419,12 +449,77 @@ CAUGHT_UP_FRACTION = 0.02
 SCAN_STALE = 300          # seconds without a write before a scan counts as over
 
 
-def _caught_up():
-    b = backup_totals()
+def _caught_up(data=None):
+    # gather() already has a backup_totals() reading and hands it down, so one
+    # poll reads the two stat files once rather than once per caller. Every one
+    # of these still reads for itself when called on its own, which is how the
+    # web dashboard and the tests use them.
+    b = data if data is not None else backup_totals()
     if not b or not b.get("total"):
         return True                       # nothing to judge against; do not suppress
     remaining = max(0, b["total"] - b["done"])
     return remaining <= b["total"] * CAUGHT_UP_FRACTION
+
+
+SKIPPED = "/bzlist_skipped_files.txt"
+_skipped_cache = {"key": None, "counts": None, "rows": None, "reasons": None}
+
+
+def _skipped_parse():
+    """(counts, rows, reasons) from the skipped-files report, parsed once per
+    change of the file.
+
+    Both public readers run on every poll, and a permissions mistake on one
+    mounted directory puts tens of thousands of rows in this report: parsing it
+    twice a second, twice over, was a measurable share of the container's CPU
+    for a list that changes hourly at most. Cached on st_mtime_ns the way
+    dedup_names() caches its own report. The row dicts are shared with every
+    caller, so a caller that needs to change one must copy it first.
+    """
+    p = RPTS + SKIPPED
+    try:
+        stt = os.stat(p)
+        key = (stt.st_mtime_ns, stt.st_size)
+    except OSError:
+        key = None
+    if key is not None and key == _skipped_cache["key"]:
+        return _skipped_cache["counts"], _skipped_cache["rows"], _skipped_cache["reasons"]
+    counts = rows = reasons = None
+    t = read(p)
+    if t:
+        by_reason, found = {}, []
+        for line in t.splitlines():
+            # The report opens with a "# SkippedFilesReportStarted" line. As
+            # observed it carries no tabs, so the field test below already
+            # excludes it, but a tabbed variant would be counted as a file with
+            # a date for a reason. Excluding comments outright costs one
+            # condition and makes this agree with bb-doctor, which already does
+            # it.
+            if not line or line.startswith("#"):
+                continue
+            f = line.split("\t")
+            if len(f) < 3 or not f[1]:
+                continue
+            by_reason[f[1]] = by_reason.get(f[1], 0) + 1
+            # The path is located by drive letter rather than taken from a fixed
+            # column, since only the reason column is established from a real
+            # capture.
+            path = next((x for x in f if re.match(r'^[A-Za-z]:\\', x)), None)
+            if path:
+                found.append({"path": path, "reason": f[1],
+                              "name": path.split("\\")[-1]})
+        if by_reason:
+            counts = {"total": sum(by_reason.values()),
+                      "top_reason": max(by_reason, key=by_reason.get),
+                      "reasons": by_reason}
+        if found:
+            found.reverse()     # the client appends, so the newest are last
+            rows = found
+            reasons = {}
+            for r in rows:
+                reasons[r["reason"]] = reasons.get(r["reason"], 0) + 1
+    _skipped_cache.update(key=key, counts=counts, rows=rows, reasons=reasons)
+    return counts, rows, reasons
 
 
 def skipped_files():
@@ -436,26 +531,7 @@ def skipped_files():
     permissions or ownership problem on the mounted source rather than anything
     wrong with Backblaze.
     """
-    t = read(RPTS + "/bzlist_skipped_files.txt")
-    if not t:
-        return None
-    reasons = {}
-    for line in t.splitlines():
-        # The report opens with a "# SkippedFilesReportStarted" line. As observed
-        # it carries no tabs, so the field test below already excludes it, but a
-        # tabbed variant would be counted as a file with a date for a reason.
-        # Excluding comments outright costs one condition and makes this agree
-        # with skipped_list() and bb-doctor, which both already do it.
-        if not line or line.startswith("#"):
-            continue
-        f = line.split("\t")
-        if len(f) >= 3 and f[1]:
-            reasons[f[1]] = reasons.get(f[1], 0) + 1
-    if not reasons:
-        return None
-    total = sum(reasons.values())
-    top = max(reasons, key=reasons.get)
-    return {"total": total, "top_reason": top, "reasons": reasons}
+    return _skipped_parse()[0]
 
 
 def skipped_list(limit=500):
@@ -465,42 +541,18 @@ def skipped_list(limit=500):
     to fix the problem actually needs. Capped, because a permissions mistake on
     one directory can list tens of thousands and nobody reads past the first
     screen; the count beside it says how many there are in total.
-
-    Non-record lines are excluded the same way the counter excludes them: the
-    file carries a "# SkippedFilesReportStarted" header and other lines with no
-    reason, which a naive read counts as files. The path is located by drive
-    letter rather than taken from a fixed column, since only the reason column
-    is established from a real capture.
     """
-    t = read(RPTS + "/bzlist_skipped_files.txt")
-    if not t:
-        return None
-    rows = []
-    for line in t.splitlines():
-        if not line or line.startswith("#"):
-            continue
-        f = line.split("\t")
-        if len(f) < 3 or not f[1]:
-            continue
-        path = next((x for x in f if re.match(r'^[A-Za-z]:\\', x)), None)
-        if not path:
-            continue
-        rows.append({"path": path, "reason": f[1],
-                     "name": path.split("\\")[-1]})
+    _, rows, reasons = _skipped_parse()
     if not rows:
         return None
-    rows.reverse()          # the client appends, so the newest are last
     # The count uses every row, not only the rows that this function returns. A
     # display that shows the first few hundred files can thus give the correct
     # number for each reason.
-    reasons = {}
-    for r in rows:
-        reasons[r["reason"]] = reasons.get(r["reason"], 0) + 1
     return {"total": len(rows), "shown": min(len(rows), limit),
             "reasons": reasons, "files": rows[:limit]}
 
 
-def first_backup():
+def first_backup(data=None):
     """Progress of a first upload still working through the set, or None.
 
     The client exposes no "initial backup finished" flag, so this is inferred:
@@ -508,9 +560,9 @@ def first_backup():
     the day the first file went up, so a long upload reads as progress rather
     than as something being wrong.
     """
-    if _caught_up():
+    if _caught_up(data):
         return None
-    b = backup_totals()
+    b = data if data is not None else backup_totals()
     t = read(RPTS + "/bzstat_firstbackupfirstfileuploadedmillis.txt").strip()
     if not t.isdigit():
         return None
@@ -581,7 +633,7 @@ DONE_MARK = "/config/.bb-first-backup-done"
 CELEBRATE_DAYS = 7
 
 
-def completion():
+def completion(data=None):
     """The first time the backup catches up, remember it and say so for a week.
 
     A latch rather than a live reading: once written it is never celebrated
@@ -589,8 +641,7 @@ def completion():
     replay it. Returns {days, total_bytes, done_at} while the moment is fresh,
     None otherwise.
     """
-    b = backup_totals()
-    fb = first_backup()
+    b = data if data is not None else backup_totals()
     mark = read(DONE_MARK)
     if mark:
         m = re.search(r'done_at=(\d+) days=(\d+) bytes=(\d+)', mark)
@@ -918,7 +969,11 @@ def rate_str(nbytes, secs, kbit_fallback=0):
         kbit = nbytes / secs * 8 / 1000.0
         return "%.2f MB/s" % (nbytes / secs / 1048576) if kbit > 1024 else "%d kbit/s" % kbit
     if kbit_fallback > 1024:
-        return "%.2f MB/s" % (kbit_fallback / 8192.0)
+        # kbit is 1000 bits, as the measured branch above reads it, and the
+        # printed figure is mebibytes as human() uses them: 1000 / 8 / 1048576
+        # inverted. Dividing by 8192 mixed the two and read 2.4% high, so the
+        # same physical rate printed differently depending on which branch ran.
+        return "%.2f MB/s" % (kbit_fallback / 8388.608)
     return "%d kbit/s" % kbit_fallback if kbit_fallback else ""
 
 
@@ -956,8 +1011,10 @@ def _part_size(fields, live):
     if live >= _MIN_PART:
         best = max(best, live)
     if best:
-        _part_seen[key] = best
-        return best
+        # _touch rather than a plain assignment: a file being uploaded is asked
+        # about on every poll, so re-inserting it keeps it off the end that the
+        # bound drops.
+        return _touch(_part_seen, key, best)
     return live
 
 
@@ -996,10 +1053,22 @@ def dedup_names():
     when the file changes, since this runs on every poll.
     """
     now = time.localtime()
-    paths = [RPTLOG + "/%02d.log" % now.tm_mday]
+    # The rows inside the file are UTC-stamped, and the client's own naming
+    # convention for the file is not established from a live capture, so both
+    # candidates are tried. They are the same file for most of the day; on a
+    # container well east or west of UTC they differ for the hours the offset
+    # covers, and reading only the local one returned nothing for that whole
+    # window.
+    days = []
     if now.tm_hour == 0 and now.tm_min < 10:
-        yday = time.localtime(time.time() - 86400)
-        paths.insert(0, RPTLOG + "/%02d.log" % yday.tm_mday)
+        days.append(time.localtime(time.time() - 86400).tm_mday)
+    days.append(time.gmtime().tm_mday)
+    days.append(now.tm_mday)
+    paths = []
+    for mday in days:
+        p = RPTLOG + "/%02d.log" % mday
+        if p not in paths:
+            paths.append(p)
     key = []
     for p in paths:
         try:
@@ -1021,7 +1090,14 @@ def dedup_names():
             if "dedup - 0 bytes" not in line:
                 continue
             # "2026-09-06 01:02:56 -  small  - throttle x  -  -  dedup - 0 bytes - D:\...\name"
-            path = line.rsplit(" - ", 1)[-1].strip()
+            # Taken from the fixed prefix rather than by splitting on the last
+            # " - ": the row's own separator is " - " too, so a file name that
+            # contains one ("Artist - Track.mp3") lost everything before it and
+            # never matched the name the client reports.
+            mp = re.search(r"dedup - 0 bytes - (.*)$", line)
+            if not mp:
+                continue
+            path = mp.group(1).strip()
             name = path.replace("/", "\\").split("\\")[-1]
             m = re.match(r"\d{4}-\d{2}-\d{2} (\d{2}:\d{2}:\d{2})", line)
             if name:
@@ -1204,14 +1280,6 @@ def backup_totals():
              "done_files": done_files, "remaining_files": rem_files}
 
 
-def uptime_str():
-    secs = int(time.time() - START_TIME)
-    d, rem = divmod(secs, 86400)
-    h, rem = divmod(rem, 3600)
-    m, _ = divmod(rem, 60)
-    return "%02dD:%02dH:%02dM" % (d, h, m)
-
-
 # ---- data collection (identical logic to bb-monitor's gather()) ---------
 def gather(prev):
     global _inflight, _recent, _sess
@@ -1290,7 +1358,21 @@ def gather(prev):
     blob = tail_log()
     comps = [l for l in blob.splitlines() if "Leaving bztrans_thread_push" in l]
     times = [_secs(m.group(1)) for l in comps for m in [re.search(r'(\d\d:\d\d:\d\d)', l)] if m]
-    o["chunks"] = sum(1 for t in times if (times[-1] - t) % 86400 <= 60) if times else 0
+    # Against now, not against the newest line in the tail. Measured against the
+    # tail the figure froze at whatever the last burst reached and stayed there
+    # for hours after uploads stopped, and the modular arithmetic also let a line
+    # a whole day old satisfy the test. The stamps are UTC, so the comparison
+    # point is UTC seconds of day too.
+    g = time.gmtime(ts)
+    now_sod = g.tm_hour * 3600 + g.tm_min * 60 + g.tm_sec
+    nchunks = 0
+    for t in times:
+        age = now_sod - t
+        if age < 0:
+            age += 86400          # the line is on the other side of midnight
+        if age <= 60:
+            nchunks += 1
+    o["chunks"] = nchunks
     sb = ss = 0
     for l in comps[-20:]:
         m = re.search(r'elapsedSec=(\d+).*?numBytes=(\d+) bytes', l)
@@ -1336,7 +1418,7 @@ def gather(prev):
             except OSError:
                 pass
         if fsize > part * 1.5 and name not in _logged:
-            _logged.add(name)
+            _touch(_logged, name, True)
             try:
                 with open(MPLOG, "a") as fh:
                     fh.write("%s  file=%d part=%d ~parts=%d\n" % (time.strftime("%F %T"), fsize, part, -(-fsize // part)))
@@ -1352,7 +1434,7 @@ def gather(prev):
         pct = min(99.0, max(0.0, el * ptbps / part * 100)) if part > 0 else 0
         sha = fields[8] if len(fields) > 8 else ""
         if sha and sha in cmap:
-            seen = _chunk_seen.setdefault(cname, {})
+            seen = _chunk_seen_for(cname)
             seen[cmap[sha][0]] = "inflight"
             inflight_now.add(cmap[sha][0])
         files.append((name, part, fsize, pct, _parts_progress(name, fsize, part)))
@@ -1366,9 +1448,13 @@ def gather(prev):
     # it, so a change of name means it has finished with the one before.
     if act and not act["internal"] and act["part"] is None and act["file"] \
             and act["phase"] == "Uploading":
-        prev = _last_named[0]
-        if prev and prev != act["file"] and not any(r["name"] == prev for r in _recent):
-            _recent.append({"chunked": False, "small": True, "name": prev, "thr": 0,
+        # Not `prev`: that is this function's parameter, the previous (bytes,
+        # timestamp) sample, and rebinding it here would hand a file name to
+        # anything later that read it.
+        last_named = _last_named[0]
+        if last_named and last_named != act["file"] \
+                and not any(r["name"] == last_named for r in _recent):
+            _recent.append({"chunked": False, "small": True, "name": last_named, "thr": 0,
                             "t": time.strftime("%H:%M:%S"), "bytes": 0,
                             "secs": 0, "kbit": 0, "dedup": False})
         _last_named[0] = act["file"]
@@ -1382,7 +1468,7 @@ def gather(prev):
     # client naming it.
     live = bool(inflight_now) or bool(act and act.get("file") == cname)
     if cname and live:
-        seen = _chunk_seen.setdefault(cname, {})
+        seen = _chunk_seen_for(cname)
         for idx, st in list(seen.items()):
             if st == "inflight" and idx not in inflight_now:
                 seen[idx] = "sent"
@@ -1420,24 +1506,28 @@ def gather(prev):
             small = [r for r in _recent[-6:] if r.get("small")]
             if small and all(r.get("dedup") for r in small):
                 o["state"] = "Checking"
+    # The reading taken at the top of this poll, handed to everything below that
+    # would otherwise re-read the same two stat files for itself. Seven of them
+    # did, so one poll read that pair sixteen times.
+    bt = o.get("backup")
     o["per_volume"] = per_volume()
-    o["remaining_shape"] = remaining_shape()
+    o["remaining_shape"] = remaining_shape(bt)
     o["perf"] = measured_perf()
-    o["health"] = health()
+    o["health"] = health(bt)
     o["upload_success"] = upload_success_today()
     o["upload_history"] = upload_history()
-    o["completion"] = completion()
+    o["completion"] = completion(bt)
     o["composition"] = composition()
     o["backing_up_since"] = backing_up_since()
-    o["eta_trend"] = _eta_trend(o.get("backup"))
+    o["eta_trend"] = _eta_trend(bt)
     o["compress_saved"] = compress_saved()
     o["last_backup_days"] = last_backup_days()
-    o["first_backup"] = first_backup()
+    o["first_backup"] = first_backup(bt)
     o["skipped"] = skipped_files()
     o["skipped_list"] = skipped_list()
     o["pause_label"] = pause_label(o["pause"])
-    o["milestones"] = milestones()
-    o["progress_history"] = progress_history()
+    o["milestones"] = milestones(bt)
+    o["progress_history"] = progress_history(data=bt)
     o["files"] = files
 
     for xb, (nm, fs, part, thr, seen) in _inflight.items():
@@ -1556,9 +1646,9 @@ _MILESTONES = (("pct25", "A quarter of the way"),
                ("tb1", "The first terabyte is up"))
 
 
-def milestones():
+def milestones(data=None):
     """[{key, label, at}] for milestones reached within the last week, or None."""
-    b = backup_totals()
+    b = data if data is not None else backup_totals()
     # Positive evidence only, as completion() demands: no totals, no judgement.
     if not b or not b.get("total") or not b.get("done"):
         return None
@@ -1569,8 +1659,12 @@ def milestones():
     except ValueError:
         marks = {}
     pct = b.get("pct") or 0.0
+    # A tebibyte, because human() renders TB at 1024^4 and the banner sits beside
+    # a gauge drawn by human(). At a decimal 10^12 the banner announced the first
+    # terabyte over a gauge reading 931.3 GB, and the mark is latched to disk so
+    # waiting could not correct it.
     reached = {"pct25": pct >= 25, "pct50": pct >= 50, "pct75": pct >= 75,
-               "tb1": b["done"] >= 10 ** 12}
+               "tb1": b["done"] >= 1099511627776}
     now = int(time.time())
     changed = False
     for key, _ in _MILESTONES:
@@ -1598,7 +1692,7 @@ PROGRESS_HIST = "/config/.bb-progress-history"
 PROGRESS_KEEP = 400
 
 
-def progress_history(record=True):
+def progress_history(record=True, data=None):
     """[{day: YYYYMMDD, pct}] oldest first, or None. Records today's sample once."""
     try:
         hist = json.loads(read(PROGRESS_HIST) or "{}")
@@ -1607,7 +1701,7 @@ def progress_history(record=True):
     except ValueError:
         hist = {}
     if record:
-        b = backup_totals()
+        b = data if data is not None else backup_totals()
         if b and b.get("total") and b.get("pct") is not None:
             today = time.strftime("%Y%m%d")
             if hist.get(today) is None:
@@ -1684,9 +1778,9 @@ def per_volume():
 # is not available. The average size of what remains against the average of what
 # has gone is available, and it is the figure that explains a long ETA: a
 # remainder made of large files takes far longer than its file count suggests.
-def remaining_shape():
+def remaining_shape(data=None):
     """{avg_remaining, avg_done, ratio} in bytes, or None."""
-    b = backup_totals()
+    b = data if data is not None else backup_totals()
     if not b or not b.get("total_files") or b.get("remaining_files") is None:
         return None
     rem_files = b["remaining_files"]

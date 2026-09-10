@@ -188,6 +188,12 @@ def status(jid):
 def claim(token):
     """The file this token unlocks, and burn the token. None if unknown, expired
     or already used."""
+    # compare_digest raises TypeError on a str with a character above U+007F,
+    # and the path arrives decoded latin-1, so a raw high byte in the URL would
+    # otherwise drop the connection with a traceback. A token is hex; anything
+    # outside ASCII is not one.
+    if not isinstance(token, str) or not token.isascii():
+        return None
     now = time.time()
     with _lock:
         _sweep(now)

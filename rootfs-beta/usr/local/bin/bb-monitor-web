@@ -26,6 +26,7 @@ from urllib.parse import urlsplit
 # the page; the terminal one owns curses. Neither owns data collection.
 sys.path.insert(0, "/usr/local/lib/bb-monitor")
 import bbapi
+import bbconfig
 import bbctl
 import bbdata
 import bbreport
@@ -85,6 +86,97 @@ CORS_ORIGINS = tuple(o.strip().rstrip("/") for o in
                      os.environ.get("API_CORS_ORIGINS", "").split(",") if o.strip())
 
 
+# ---- what the client says about itself --------------------------------------
+# Read through Backblaze's own bzcli, which starts a Wine process for every
+# reading, so bbconfig caches it and nothing here ever reads it directly. Before
+# the first reading lands, and on an image with no bzcli in it, cached() answers
+# None and every field below is absent rather than wrong.
+def client_reading():
+    """The client's own account of itself, one shape for the page and the API.
+
+    Spelled out field by field rather than passed through, for the same reason
+    api_v1_payload is: bbconfig's shape is its own business, and passing it
+    through would make it a published contract the moment it shipped. "licence"
+    is spelt the British way because it is our field name; bbconfig keeps
+    Backblaze's spelling for the field it reads.
+    """
+    d = bbconfig.cached()
+    if not d:
+        return None
+    lic = d.get("license") or {}
+    failure = lic.get("renewal_failure")
+    return {
+        # When the reading was taken, so a page can say how old it is rather
+        # than presenting a five-minute-old value as the state of things now.
+        "at": d.get("at"),
+        "ok": d.get("ok"),
+        "error": d.get("error"),
+        "version": d.get("client_version"),
+        "licence": {
+            "status": lic.get("status"),
+            "type": lic.get("type"),
+            # Two fields for one question: whether the last renewal failed, and
+            # what the client called the failure. A failed renewal stops the
+            # backup, and nothing else in this container can see it happen.
+            "renewal_failed": bool(failure and failure != "none"),
+            "renewal_failure": failure,
+            "renewal_failed_at": lic.get("renewal_failed_at"),
+        },
+        "encrypted": d.get("encrypted"),
+        "cluster": d.get("cluster"),
+        "cluster_url": d.get("cluster_url"),
+        "safety_freeze": d.get("safety_freeze"),
+        # The client's own words, beside the state the monitor derives from the
+        # files. Not a replacement for it, which is finer grained, but the phrase
+        # to quote in a support thread.
+        "summary": d.get("summary"),
+        "transmit": d.get("transmit"),
+        "settings": d.get("settings") or {},
+        # Read only, and it stays that way: the container's own quiet hours
+        # already cover this ground, and two mechanisms fighting over one
+        # behaviour is a fault waiting to happen.
+        "schedule": d.get("schedule") or {},
+        # Both of these name directories on the user's own share, so both are
+        # dropped for a key without read:files. See strip_file_names().
+        "drive_selection": bbconfig.drive_selection(d),
+        "excluded_dirs": bbconfig.excluded_dirs(d),
+    }
+
+
+def client_health(pairs):
+    """The health list with the client's own warnings merged into it.
+
+    bbdata raises "frozen" from status.json and bbconfig raises it again from the
+    field the client documents, so a freeze would otherwise be reported twice on
+    one page. De-duplicated by kind, with whatever is already there kept: the
+    file is read every poll, and the bzcli reading can be minutes old.
+    """
+    out = list(pairs or [])
+    seen = set(k for k, _ in out)
+    try:
+        extra = bbconfig.health()
+    except Exception as exc:        # a settings reading must not break health
+        sys.stderr.write("bb-monitor-web: client health: %s\n" % exc)
+        return out
+    for kind, text in extra:
+        if kind not in seen:
+            seen.add(kind)
+            out.append((kind, text))
+    return out
+
+
+def strip_client_dirs(client):
+    """The client reading with nothing left in it that names a directory on the
+    user's share. The licence, the cluster and the container's own settings stay:
+    they say nothing about what is being backed up."""
+    if not client:
+        return client
+    out = dict(client)
+    out["drive_selection"] = None
+    out["excluded_dirs"] = None
+    return out
+
+
 # ---- JSON snapshot builder ------------------------------------------------
 def snapshot_to_json(d):
     r = d["rate"]
@@ -109,7 +201,10 @@ def snapshot_to_json(d):
         "state": d["state"],
         "rate_mb": round(r, 3),
         "rate_str": "%.2f MB/s" % r,
-        "rate_mbit_str": "~%d Mbit/s" % (r * 8),
+        # SI megabits, from the bytes/s figure, because that is the unit a line
+        # speed is sold in and it is what summary_text and the timeline use.
+        # r is MiB/s, so multiplying it by 8 was 5% high against both of them.
+        "rate_mbit_str": "~%d Mbit/s" % (r * 1048576 * 8 / 1e6),
         "chunks": d["chunks"],
         "session_str": human(d["sess"]),
         "mem": {"used_str": human(mem[0]), "total_str": human(mem[1]), "pct": round(mem[2], 1)} if mem else None,
@@ -144,7 +239,7 @@ def snapshot_to_json(d):
                    "size_str": human(d["scan"]["bytes"]) if d["scan"]["bytes"] else None}
                   if d.get("scan") else None),
         "perf": d.get("perf"),
-        "health": [{"kind": k, "text": t} for k, t in (d.get("health") or [])],
+        "health": [{"kind": k, "text": t} for k, t in client_health(d.get("health"))],
         "upload_success": d.get("upload_success"),
         # Raw counts rather than a pre-drawn chart: the page scales the bars to
         # its own tallest day, and the day strings are already display-ready.
@@ -207,6 +302,10 @@ def snapshot_to_json(d):
         "latency_host": lat_host,
         "latency_note": lat_note,
         "upload_pod": _upload_host(),
+        # What the client says about itself: licence, cluster, encryption, its
+        # own summary, and the settings behind them. None until the first bzcli
+        # reading lands, and on an image that has no bzcli.
+        "client": client_reading(),
         "about": ABOUT,
     }
 
@@ -666,6 +765,17 @@ SETTINGS_HTML = """<!doctype html>
   .ep .ep-last{grid-column:1 / -1;margin:0;font-size:12px;}
   .ep .ep-last.bad{color:var(--bad);}
   .ep .ep-last.good{color:var(--good);}
+  /* One row per client setting: the client's own name for it, its own
+     description, the control, and a Save that answers for that setting alone. */
+  .cs{padding:12px 0;border-bottom:1px solid var(--border);}
+  .cs:last-child{border-bottom:0;}
+  .cs .cs-name{font-weight:600;}
+  .cs .cs-does,.cs .cs-note{margin:2px 0 6px;font-size:12px;color:var(--dim);max-width:100ch;}
+  .cs .cs-acts{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+  .cs input[type=number]{width:9em;}
+  .cs-msg{font-size:12px;color:var(--dim);}
+  .cs-msg.bad{color:var(--bad);}
+  .cs-msg.good{color:var(--good);}
   .days{display:flex;gap:6px;flex-wrap:wrap;}
   .days label{display:inline-flex;gap:4px;align-items:center;font-size:12px;margin:0;}
   input[type=time],input[type=number]{padding:6px 8px;border-radius:4px;border:1px solid var(--border);
@@ -705,6 +815,20 @@ SETTINGS_HTML = """<!doctype html>
 </style></head><body>
 
 <h1>Settings</h1>
+
+<h2>Backup client</h2>
+<div class="panel" id="client">
+  <p class="dim">Settings held by the Backblaze client itself, read and written through its own
+  command line. The description under each one is the client's own wording, so it says what the
+  Backblaze settings window says.</p>
+  <p class="dim">Reading them starts a Windows process under Wine, so the values here are taken
+  every few minutes rather than continuously. A change is written to the client's configuration
+  file straight away, but whether a backup that is already running picks it up without the
+  container being restarted has not been established. If a change does not seem to be taking
+  effect, restart the container.</p>
+  <div id="client-settings"><p class="dim">Reading the client.</p></div>
+  <div id="client-err" class="err" hidden></div>
+</div>
 
 <h2>Notifications</h2>
 <div class="panel" id="notify">
@@ -757,6 +881,125 @@ function post(path, body){
     body: JSON.stringify(body||{})}).then(function(r){
       return r.json().then(function(j){ return {ok:r.ok, body:j}; }); });
 }
+// ---- the backup client ----
+// The label and the description of every setting come from bbconfig, which took
+// them from bzcli's own help text. Nothing here keeps its own list of settings:
+// a key absent from that whitelist cannot be written, and does not appear.
+var CLIENT = null;
+// What the client's own help text does not say, and someone running it in this
+// container needs to know. Beside the setting rather than in the text above,
+// because each of these is about one setting and nothing else.
+var CS_EXTRA = {
+  net_throttle: 'Megabits per second per thread, not for the backup as a whole. It does nothing at all while the automatic throttle above is on.',
+  num_backup_threads: 'A ceiling, not a target: the client opens as many as it has work for. Under Wine each thread is separately limited by the send buffer divided by the round trip, so raising this only helps while that per-thread limit is not already what is holding the rate down.'
+};
+// The throttle multiplied out. Worked from the reader's own two settings rather
+// than from an example: a fixed illustration using someone else's numbers reads
+// as a description of the reader's setup and is wrong for almost everyone.
+// `rows` is the describe() list, not a map of values, so the two figures are
+// looked up by key rather than read off an object.
+function csValue(rows, key){
+  if(!rows || !rows.length) return null;
+  for(var i = 0; i < rows.length; i++) if(rows[i].key === key) return rows[i].value;
+  return null;
+}
+function throttleTotal(rows){
+  var per = Number(csValue(rows, 'net_throttle')), n = Number(csValue(rows, 'num_backup_threads'));
+  if(!(per > 0) || !(n > 0)) return '';
+  return ' At ' + per + ' Mbps across ' + n + ' thread' + (n === 1 ? '' : 's') +
+         ', that is a ceiling of about ' + (per * n) + ' Mbps for the backup as a whole.';
+}
+function mbit(bytesPerSec){ return (bytesPerSec * 8 / 1e6).toFixed(1); }
+// The live per-thread ceiling from the Monitor, so the thread count can be read
+// against the thing that actually bounds a thread rather than on its own.
+function perThreadNote(rl){
+  if(!rl || rl.per_thread == null) return '';
+  var line = 'Right now a thread is bounded at about ' + esc(mbit(rl.per_thread)) +
+    ' Mbit/s by the send buffer and the round trip, so the threads in use model out at about ' +
+    esc(mbit(rl.modelled)) + ' Mbit/s against ' + esc(mbit(rl.observed)) + ' Mbit/s measured.';
+  if(rl.verdict === 'at') line += ' The rate is at that ceiling, so more threads should carry more.';
+  else if(rl.verdict === 'below') line += ' The rate is below that ceiling, so something other than the thread count is holding it down and more threads are unlikely to help.';
+  else if(rl.verdict === 'above') line += ' The rate is above that ceiling, so the model is understating what one thread can carry.';
+  return line;
+}
+function csControl(s){
+  if(s.type === 'bool'){
+    return '<label class="switch"><input type="checkbox" class="cs-val"' +
+      (s.value === true || String(s.value) === 'true' ? ' checked' : '') +
+      '> <span>' + esc(s.label) + '</span></label>';
+  }
+  if(s.type === 'int'){
+    return '<input type="number" class="cs-val" value="' + esc(s.value == null ? '' : s.value) + '">' +
+      (s.unit ? ' <span class="dim">' + esc(s.unit) + '</span>' : '');
+  }
+  return '<input type="text" class="cs-val" value="' + esc(s.value == null ? '' : s.value) + '">';
+}
+function csRow(s, limits){
+  var extra = CS_EXTRA[s.key] || '';
+  if(s.key === 'num_backup_threads'){
+    var pt = perThreadNote(limits);
+    if(pt) extra += (extra ? ' ' : '') + pt;
+  }
+  if(s.key === 'net_throttle') extra += throttleTotal(CLIENT && CLIENT.settings);
+  return '<div class="cs" data-key="' + esc(s.key) + '">' +
+    '<div class="cs-name">' + esc(s.label) + '</div>' +
+    '<p class="cs-does">' + esc(s.does) + '</p>' +
+    (s.note ? '<p class="cs-note">' + esc(s.note) + '</p>' : '') +
+    (extra ? '<p class="cs-note">' + extra + '</p>' : '') +
+    '<div class="cs-acts">' + csControl(s) +
+    '<button class="ghost cs-save">Save</button><span class="cs-msg"></span></div></div>';
+}
+function renderClient(d){
+  CLIENT = d;
+  var box = document.getElementById('client-settings');
+  if(!d.available){
+    box.innerHTML = '<p class="dim">There is no bzcli in this image, so the client cannot be read ' +
+      'or changed from here.</p>';
+    return;
+  }
+  var list = d.settings || [];
+  var vals = (d.client && d.client.settings) || null;
+  if(!list.length || !vals){
+    box.innerHTML = '<p class="dim">The client has not been read yet. Each reading starts a Windows ' +
+      'process under Wine, so the first one arrives a little after the monitor starts. Reload this ' +
+      'page in a moment.</p>';
+    return;
+  }
+  box.innerHTML = list.map(function(s){ return csRow(s, d.rate_limits); }).join('');
+}
+function loadClient(){
+  var err = document.getElementById('client-err');
+  return fetch('manage/client', {cache:'no-store'}).then(function(r){ return r.json(); })
+    .then(function(j){ err.hidden = true; renderClient(j); })
+    .catch(function(){ err.textContent = 'Could not read the client settings.'; err.hidden = false; });
+}
+document.getElementById('client-settings').addEventListener('click', function(e){
+  var t = e.target;
+  if(!t.classList || !t.classList.contains('cs-save')) return;
+  var row = t.closest('.cs'), key = row.getAttribute('data-key');
+  var el = row.querySelector('.cs-val');
+  var val = el.type === 'checkbox' ? el.checked : el.value;
+  var msg = row.querySelector('.cs-msg');
+  msg.className = 'cs-msg'; msg.textContent = 'Saving.';
+  t.disabled = true;
+  post('manage/client', {key: key, value: val}).then(function(res){
+    t.disabled = false;
+    // A refusal says which rule it broke, in the validator's own words or the
+    // client's, rather than a bare "could not save".
+    if(!res.ok){ msg.className = 'cs-msg bad'; msg.textContent = res.body.error || 'Could not save.'; return; }
+    msg.className = 'cs-msg good';
+    msg.textContent = 'Saved. A restart may be needed before a running backup honours it.';
+    // Show what the client now holds rather than what was typed: the two differ
+    // if it stored something other than the figure that was sent.
+    if(res.body.value != null){
+      if(el.type === 'checkbox') el.checked = (res.body.value === true || String(res.body.value) === 'true');
+      else el.value = res.body.value;
+    }
+  }, function(){
+    t.disabled = false; msg.className = 'cs-msg bad'; msg.textContent = 'Could not save.';
+  });
+});
+
 // ---- notifications ----
 var NOTIFY = null;
 var KINDS = [['ntfy', 'ntfy topic'], ['pushbullet', 'Pushbullet'], ['discord', 'Discord webhook'],
@@ -854,7 +1097,10 @@ document.getElementById('endpoints').addEventListener('click', function(e){
     var id = row.querySelector('.ep-id').value; var msg = document.getElementById('notify-msg');
     msg.textContent = 'sending a test\u2026';
     post('manage/notify/test', {id: id}).then(function(res){
-      msg.textContent = res.ok ? 'Test delivered (' + res.body.detail + ').' : 'Test failed: ' + (res.body.detail || res.body.error || 'unknown');
+      // The route answers "delivered" or "not delivered" and nothing more, so
+      // the reason for a failure is in the container log rather than here.
+      msg.textContent = res.ok ? 'Test delivered.'
+        : 'Test not delivered. The container log says what the endpoint answered.';
     });
   }
 });
@@ -938,6 +1184,7 @@ try {
   var t = localStorage.getItem('bbMonitorTheme');
   if(t) document.documentElement.setAttribute('data-theme', t);
 } catch(e){}
+loadClient();
 loadNotify();
 loadQuiet();
 setInterval(loadQuiet, 30000);
@@ -1019,6 +1266,14 @@ STATUS_HTML = """<!doctype html>
 <p class="dim">What needs your attention, from the client's own records.</p>
 
 <div id="notices" aria-live="polite"></div>
+
+<h2>The backup client</h2>
+<div class="panel" id="client">
+  <p class="dim" id="client-none">The client has not been read yet. It is read through its own
+  command line, which starts a Windows process under Wine, so the first reading arrives a little
+  after the monitor starts.</p>
+  <div id="client-body" hidden></div>
+</div>
 
 <h2>Last 24 hours</h2>
 <p class="dim" id="tl-none">Nothing recorded yet.</p>
@@ -1163,6 +1418,15 @@ function renderNotices(j){
       '<code>/config/wine/drive_c/Program Files/Backblaze/</code> and restarting: the client is put back ' +
       'on the next start. It does not mean recreating the Wine prefix, which would destroy the backup ' +
       'state you are trying to save. If you get that far, ask before you do it.';
+    else if(h.kind === 'licence') extra = ' Backblaze reports this account as something other than ' +
+      'active. A licence that has lapsed stops the backup, and the client keeps running as though ' +
+      'nothing were wrong, so the monitor will not show a fault until files start going stale. ' +
+      'Check the billing page on your Backblaze account. Nothing already backed up is deleted ' +
+      'while a licence is being sorted out, but do not leave it: Backblaze remove the data after ' +
+      'the account has been inactive long enough, and how long that is depends on the plan.';
+    else if(h.kind === 'renewal') extra = ' The card or the billing details Backblaze holds did not ' +
+      'go through. Nothing new is being backed up until it does. Sign in at backblaze.com and ' +
+      'update the payment details on the account; the client picks it up on its own afterwards.';
     else if(h.kind === 'filecheck') extra = ' Run bb-doctor from the ' + tools + '.';
     else if(h.kind === 'stale') extra = ' The client has not finished a pass within the limit set in its own settings.';
     out.push('<div class="notice n-bad"><strong>' + esc(h.text) + '.</strong>' + extra + '</div>');
@@ -1173,7 +1437,12 @@ function renderNotices(j){
     var detail = pausing ? 'The client is finishing the transfers already in flight.'
                : q.active ? 'The backup starts again when the window ends' +
                             (q.window_end ? ', at ' + esc(fmtTime(q.window_end)) : '') + '.'
-               : (pl.detail || 'Nothing uploads until the backup is started again, from the Monitor tab or the desktop.') +
+               // Escaped like everything else here. For a code the monitor
+               // knows this is one of its own constants, but for one it does
+               // not it is the reason string out of the client's pauseinfo.xml,
+               // which is the only Backblaze-written text on this page that
+               // reaches innerHTML.
+               : esc(pl.detail || 'Nothing uploads until the backup is started again, from the Monitor tab or the desktop.') +
                  (pl.until_str ? ' Until ' + esc(pl.until_str) + '.' : '');
     var who = pl.who === 'client' ? ' The client did this itself.'
             : pl.who === 'here' && !q.active ? ' Start it again from the Monitor tab when you are ready.' : '';
@@ -1200,6 +1469,64 @@ function renderNotices(j){
              '<span class="dim">State: ' + esc(j.state || 'unknown') + '.</span></div>');
   }
   document.getElementById('notices').innerHTML = out.join('');
+}
+
+// What the client says about itself: whether a private key is set, which
+// datacentre it is assigned to, and, per drive, whether it is set to back that
+// drive up at all. The last of those is the one worth the space: a drive set to
+// none is ticked in the client settings window and still backs nothing up.
+function renderClient(c){
+  var body = document.getElementById('client-body'), none = document.getElementById('client-none');
+  if(!c){ body.hidden = true; none.hidden = false; return; }
+  none.hidden = true; body.hidden = false;
+  var out = [];
+  var sel = c.drive_selection || {};
+  var drives = Object.keys(sel).sort();
+  var off = drives.filter(function(k){ return !sel[k].backed_up; });
+  if(off.length){
+    out.push('<div class="notice n-bad" style="margin-bottom:12px"><strong>' + esc(off.join(', ')) +
+      (off.length === 1 ? ' is' : ' are') + ' set to back up nothing.</strong> The client is set to ' +
+      'skip everything on ' + (off.length === 1 ? 'that drive' : 'those drives') + '. It still shows ' +
+      'as ticked in the Backblaze settings window, which is what makes this one hard to find, and it ' +
+      'is the state behind the message "No files are selected". Fix it in the Backblaze settings ' +
+      'window, under Settings and then Exclusions, by removing the exclusion on the drive itself.</div>');
+  }
+  out.push('<p style="margin:0 0 8px"><strong>Private encryption key:</strong> ' +
+    (c.encrypted === true
+      ? 'set. Backblaze cannot recover a forgotten private encryption key and cannot restore your ' +
+        'backup without it, so keep a copy of it somewhere that is not this machine.'
+      : c.encrypted === false
+      ? 'not set. Your data is encrypted in transit and where it is stored, with Backblaze holding ' +
+        'the key, so a restore needs only your account.'
+      : 'not reported.') + '</p>');
+  out.push('<p style="margin:0 0 8px"><strong>Cluster:</strong> ' +
+    (c.cluster ? esc(c.cluster) : 'not reported') +
+    (c.cluster_url ? ' <span class="dim">(' + esc(c.cluster_url) + ')</span>' : '') +
+    ' <span class="dim">The datacentre this account is assigned to. When its authority server stops ' +
+    'answering, the client pauses itself, and the pause has nothing to do with your connection.</span></p>');
+  if(c.summary){
+    out.push('<p style="margin:0 0 8px"><strong>The client says:</strong> ' + esc(c.summary) +
+      (c.transmit ? ' <span class="dim">(transfer: ' + esc(c.transmit) + ')</span>' : '') +
+      '</p>');
+  }
+  if(drives.length){
+    out.push('<table><thead><tr><th>Drive</th><th>Set to back up</th></tr></thead><tbody>' +
+      drives.map(function(k){
+        var s = sel[k] || {};
+        return '<tr><td>' + esc(k) + '</td><td>' + (s.backed_up
+          ? 'Yes, all files'
+          : '<strong style="color:var(--bad)">No, nothing</strong> <span class="dim">(' +
+            esc(s.whichfiles == null ? 'not set' : s.whichfiles) + ')</span>') + '</td></tr>';
+      }).join('') + '</tbody></table>');
+  }
+  if(c.at){
+    var when = '';
+    try { when = new Date(c.at*1000).toLocaleTimeString(); } catch(e){}
+    out.push('<p class="dim" style="margin:8px 0 0">Read from the client at ' + esc(when) +
+      '. Reading it starts a Windows process, so it is taken every few minutes rather than every poll.' +
+      (c.error ? ' Last reading reported: ' + esc(c.error) : '') + '</p>');
+  }
+  body.innerHTML = out.join('');
 }
 
 function fmtTime(epoch){ try { var d = new Date(epoch*1000); return (d.getHours()<10?'0':'')+d.getHours()+':'+(d.getMinutes()<10?'0':'')+d.getMinutes(); } catch(e){ return ''; } }
@@ -1233,7 +1560,8 @@ function load(){
   // a freeze should not wait for a page reload to appear.
   return fetch('manage/status', {cache:'no-store'})
     .then(function(r){ return r.json(); })
-    .then(function(j){ DATA = j; err.hidden = true; renderNotices(j); renderTimeline(j.timeline); render(); })
+    .then(function(j){ DATA = j; err.hidden = true; renderNotices(j); renderClient(j.client);
+                       renderTimeline(j.timeline); render(); })
     .catch(function(){ err.textContent = 'Could not read the status.';
                        err.hidden = false; });
 }
@@ -1714,7 +2042,7 @@ def api_v1_payload(d):
         "scan": {"dirs_done": sc.get("dirs_done"), "dirs_total": sc.get("dirs_total"),
                  "pct": round(sc["pct"], 2) if sc.get("pct") is not None else None,
                  "files": sc.get("files"), "bytes": sc.get("bytes")} if sc else None,
-        "health": [{"kind": k, "text": t} for k, t in (d.get("health") or [])],
+        "health": [{"kind": k, "text": t} for k, t in client_health(d.get("health"))],
         "skipped_files": d.get("skipped"),
         # The counts above say how many were given up on; this names them. It is
         # kept at the top level rather than under "files" because it is a
@@ -1727,6 +2055,10 @@ def api_v1_payload(d):
         "latency": {"ms": d.get("latency_ms"), "host": d.get("latency_host"),
                     "note": d.get("latency_note")},
         "upload_pod": d.get("upload_pod"),
+        # The client's own reading, from bzcli. Two of its fields name
+        # directories on the user's share and are dropped for a key without
+        # read:files; see strip_file_names().
+        "client": client_reading(),
         "compress_saved_bytes": d.get("compress_saved"),
         # Backblaze's own measurement, not ours.
         "client_measured_kbit": d.get("perf"),
@@ -1779,16 +2111,39 @@ def api_v1_payload(d):
     }
 
 
+# A bare drive root, "D:" or "D:\", says nothing about what is on the drive, so
+# it survives the strip. Anything longer is the mounted share's own name.
+_DRIVE_ROOT = re.compile(r"^([A-Za-z]:)\\?$")
+
+
 # What names a file the user is backing up. A key without read:files gets status
 # without any of it: a dashboard tile showing rate, progress, memory and latency
 # has no need for the name of every file on the array.
 def strip_file_names(payload):
     out = dict(payload)
     out["files"] = None
+    # per_volume's "path" is the volume's mount point, which on a mounted share
+    # is the user's own directory name, and its "guid" is a stable identifier
+    # for the machine that the display snapshot deliberately never sends. The
+    # numbers say which drive is holding the backup up without either.
+    pv = out.get("per_volume")
+    if pv:
+        rows = []
+        for v in pv:
+            row = {k: val for k, val in v.items() if k not in ("guid", "path")}
+            m = _DRIVE_ROOT.match(v.get("path") or "")
+            row["path"] = m.group(1).upper() if m else None
+            rows.append(row)
+        out["per_volume"] = rows
     # Every entry in the skipped list is a full path on the source share, which
     # names the file just as plainly as the in-flight list does. The counts in
     # skipped_files stay: they say how much is not backed up without saying what.
     out["skipped_list"] = None
+    # The drive selection and the exclusion list are both lists of directories on
+    # the user's own share, and a directory names files as plainly as a full path
+    # does: "d:\\photos\\" is not backed up says what is on the drive.
+    if out.get("client"):
+        out["client"] = strip_client_dirs(out["client"])
     act = out.get("activity")
     if act:
         act = dict(act)
@@ -1820,7 +2175,14 @@ def _loop():
             global _latest, _latest_api
             _latest = js
             _latest_api = api
-        _after_snapshot(api)
+        try:
+            _after_snapshot(api)
+        except Exception as e:
+            # This is the only thread that produces snapshots. Left bare, one
+            # fault in an observer stopped it for good and the API went on
+            # answering ok with a frozen clock, which is worse than an outage
+            # because nothing downstream could tell.
+            sys.stderr.write("bb-monitor-web: after-snapshot: %s\n" % e)
         time.sleep(INT)
 
 
@@ -1836,27 +2198,63 @@ _events_seq = 0
 _quiet = bbquiet.Scheduler(bbctl.run)
 _WATCHED = ("state", "paused")
 
+# Held while a bzcli reading is in flight. bbconfig.read() starts a Wine process
+# whenever its own cache has gone stale, which takes seconds and sometimes tens
+# of seconds, and the poll loop runs every INT seconds: doing it inline would
+# stall collection for every reader of the page. So the refresh runs on its own
+# thread, and this lock keeps a slow reading from having a second one queued
+# behind it every poll for the whole time it takes.
+_client_refresh = threading.Lock()
+
+
+def _refresh_client():
+    """Ask bbconfig to renew its cache if it has gone stale, off the poll thread.
+
+    read() decides for itself whether anything needs doing: inside the TTL it
+    returns what it holds and starts nothing, so calling this every poll costs a
+    lock check and a dictionary lookup on all but one poll in TTL seconds.
+    """
+    if not bbconfig.available():
+        return
+    if not _client_refresh.acquire(False):
+        return                       # one already running; its result covers this poll
+
+    def work():
+        try:
+            bbconfig.read()
+        except Exception as exc:     # a settings reading must not stop the poll
+            sys.stderr.write("bb-monitor-web: client configuration: %s\n" % exc)
+        finally:
+            _client_refresh.release()
+
+    try:
+        threading.Thread(target=work, daemon=True).start()
+    except Exception as exc:
+        _client_refresh.release()
+        sys.stderr.write("bb-monitor-web: client configuration: %s\n" % exc)
+
 
 def _after_snapshot(api):
     global _events_seq
+    # Ahead of the ok check, deliberately. When collection from Backblaze's own
+    # files is failing, what the client says about itself is exactly the reading
+    # someone needs, and it comes from a different source that may still work.
+    _refresh_client()
     if not api or not api.get("ok"):
         return
     now = time.time()
-    changed = False
     with _timeline_lock:
-        if _timeline.observe(api, now):
-            changed = True
+        _timeline.observe(api, now)
     try:
-        if bbnotify.observe(api):
-            changed = True
+        bbnotify.observe(api)
     except Exception as exc:                   # a notifier fault must not stop the poll
         sys.stderr.write("bb-monitor-web: notify: %s\n" % exc)
     try:
         _quiet.observe(api)
     except Exception as exc:
         sys.stderr.write("bb-monitor-web: quiet hours: %s\n" % exc)
-    # Wake the events streams on any state change, or every poll when something
-    # they watch moved; they compare and decide for themselves.
+    # The streams are woken every poll; each one compares its own signature and
+    # decides whether it has anything to send.
     with _events_cv:
         _events_seq += 1
         _events_cv.notify_all()
@@ -1893,8 +2291,12 @@ def summary_text(api):
         if b.get("eta_date"):
             line += ", ETA %s" % b["eta_date"]
             tr = api.get("eta_trend")
-            if tr and tr.get("direction") in ("better", "worse"):
-                line += " (%dd %s than yesterday)" % (abs(tr.get("delta_seconds", 0)) // 86400, tr["direction"])
+            # bbdata says "improving" or "worsening"; the words the page and the
+            # terminal monitor put on screen are "better" and "slower".
+            if tr and tr.get("direction") in ("improving", "worsening"):
+                line += " (%dd %s than yesterday)" % (
+                    abs(tr.get("delta_seconds", 0)) // 86400,
+                    "better" if tr["direction"] == "improving" else "slower")
         parts.append(line)
     sc = api.get("scan")
     if sc and sc.get("pct") is not None:
@@ -1943,7 +2345,11 @@ def metrics_text(api):
     sk = api.get("skipped_files") or {}
     g("skipped_files", sk.get("total", 0) if sk else 0, "Files the client has given up on")
     kinds = {h["kind"] for h in (api.get("health") or [])}
-    for k in ("frozen", "filecheck", "stale", "skipped"):
+    # licence and renewal come from the client's own report through bbconfig.
+    # They reached the JSON payload and the event stream but not this gauge,
+    # which would have left a Grafana alert silent for the one failure that
+    # stops backups without anything else going wrong.
+    for k in ("frozen", "filecheck", "stale", "skipped", "licence", "renewal"):
         g("health_warning", 1 if k in kinds else 0, "1 while this warning is raised", '{kind="%s"}' % k)
     up = api.get("uploads_today") or {}
     g("uploads_today", up.get("success"), "Successful uploads recorded today")
@@ -2296,6 +2702,30 @@ function perVolumeHtml(vols){
                      v.remaining_files != null ? v.remaining_files.toLocaleString() + ' files left' : '', '', 2);
   }).join('');
 }
+// The datacentre the account is assigned to. The client reports it outright, so
+// that reading is preferred over the pod the monitor infers from the sockets the
+// push threads own: the inferred one is right when it answers, and answers
+// nothing at all while nothing is uploading, which is most of a quiet day.
+function clusterHtml(d){
+  var said = (d.client && d.client.cluster) || '';
+  var name = said || d.upload_pod || '';
+  if(!name) return '';
+  return '<span class="stat dim" title="' + (said
+    ? 'Reported by the client itself. When this cluster stops answering, the client pauses itself.'
+    : 'Worked out from the sockets the push threads own, so it is only known while something is uploading.') +
+    '">Cluster: ' + esc(name) + '</span>';
+}
+// Whether a private encryption key is set. It changes what advice is safe to
+// give, particularly around the reinstall step in freeze recovery, so it is
+// worth a line rather than being something to go and look up.
+function encryptionHtml(d){
+  var e = d.client ? d.client.encrypted : null;
+  if(e == null) return '';
+  return '<span class="stat dim" title="' + (e
+    ? 'A private encryption key is set. Backblaze cannot recover a forgotten one, and cannot restore the backup without it.'
+    : 'No private encryption key. Backblaze holds the key, so a restore needs only the account.') +
+    '">Encryption: ' + (e ? 'private key' : 'Backblaze key') + '</span>';
+}
 // Which readings the status panel shows. Kept per device like the theme, because
 // it is a choice about this screen rather than about the container: a phone
 // wants less than a desk.
@@ -2304,9 +2734,11 @@ function perVolumeHtml(vols){
 // leaves them free to change, so "something in between" needs no extra concept.
 var STAT_ITEMS = [
   ['Now', [['state','State'],['rate','Upload rate'],['threads','Threads'],['chunks','Chunks a minute'],
-           ['rtt','Round-trip time'],['session','This session'],['scan','Scan progress']]],
+           ['rtt','Round-trip time'],['session','This session'],['scan','Scan progress'],
+           ['cluster','Upload cluster']]],
   ['Progress', [['backup','Backup total'],['drives','Per drive'],['remaining','Files remaining'],
-                ['first','First backup'],['since','Backing up since'],['composition','What it is made of']]],
+                ['first','First backup'],['since','Backing up since'],['composition','What it is made of'],
+                ['encrypted','Encryption']]],
   ['Today', [['uploads','Uploads today'],['week','Last seven days'],['today','Today in one line'],
              ['compression','Compression saved'],['clientest','Client estimate']]],
   ['System', [['mem','Memory'],['swap','Swap']]]
@@ -2727,7 +3159,8 @@ async function tick(){
         ['session', '<span class="stat">Session: '+d.session_str+'</span>'],
         ['scan', d.scan ? '<span class="stat">Scanning: '+d.scan.dirs+' dirs \u2022 ' +
                   esc((d.scan.files||0).toLocaleString())+' files' +
-                  (d.scan.size_str ? ' \u2022 '+esc(d.scan.size_str) : '') + '</span>' : '']
+                  (d.scan.size_str ? ' \u2022 '+esc(d.scan.size_str) : '') + '</span>' : ''],
+        ['cluster', clusterHtml(d)]
       ]],
       ['Progress', [
         ['backup', gaugeHtml('Backup', d.backup, true,
@@ -2746,7 +3179,8 @@ async function tick(){
         ['since', fmtDay(d.backing_up_since) ? '<span class="stat dim" title="When this backup ' +
                   'began, from the date the client recorded at install.">Backing up since: ' +
                   esc(fmtDay(d.backing_up_since)) + '</span>' : ''],
-        ['composition', compositionHtml(d.composition)]
+        ['composition', compositionHtml(d.composition)],
+        ['encrypted', encryptionHtml(d)]
       ]],
       ['Today', [
         ['uploads', d.upload_success ? '<span class="stat" title="Uploads the client recorded for ' +
@@ -2964,8 +3398,38 @@ class Handler(BaseHTTPRequestHandler):
     # the reused connection desynchronises.
     protocol_version = "HTTP/1.1"
 
+    # A keep-alive connection that goes quiet, or one that never sends a request
+    # line at all, held a worker thread for as long as it liked. The events
+    # stream writes a keep-alive every 15 seconds, so it stays well inside this.
+    timeout = 30
+
+    # Nothing this service accepts is large: the biggest body is a settings write
+    # or a list of tool options. nginx bounds the proxied path at 1m; this bounds
+    # anything reaching the loopback port directly.
+    MAX_BODY = 1000000
+
     def log_message(self, fmt, *args):
         pass  # keep the container log quiet
+
+    def _body_length(self):
+        """The declared body length, or None after answering the request with
+        the error that applies.
+
+        A negative Content-Length makes rfile.read() block until the peer goes
+        away, which on a keep-alive connection pins a thread for as long as the
+        caller cares to hold it.
+        """
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            # A header that does not parse is the caller's mistake, which is 400,
+            # not a body that is too big.
+            self._json(400, {"error": "malformed Content-Length"})
+            return None
+        if not 0 <= n <= self.MAX_BODY:
+            self._json(413, {"error": "request body too large"})
+            return None
+        return n
 
     def _cors(self, path):
         """Echo the origin back when it is on the list. Never a wildcard, and
@@ -3037,6 +3501,19 @@ class Handler(BaseHTTPRequestHandler):
             # spelling it in a URL.
             if name in bbctl.ACTIONS:
                 return "control:" + name, lambda: self._api_control_run(name)
+        if method == "GET" and path == "/api/v1/client":
+            return "read", self._api_client
+        if method == "POST" and path == "/api/v1/client":
+            # Changing a setting is not a read and not a control action, so it
+            # needed a permission of its own: "configure". It now exists in
+            # bbapi.PERMISSIONS and bbapi.ORDER, added there rather than here,
+            # since bbapi.py is not this file's to change. The guard stays even
+            # though it is always true now, so a future bbapi.py that drops the
+            # permission takes this route down with it rather than leaving it
+            # live with nothing gating it. The GET stays on "read", which is
+            # what it is.
+            if "configure" in bbapi.PERMISSIONS:
+                return "configure", self._api_client_set
         if method == "GET" and path == "/api/v1/summary":
             return "read", self._api_summary
         if method == "GET" and path == "/api/v1/metrics":
@@ -3139,11 +3616,29 @@ class Handler(BaseHTTPRequestHandler):
                          "can_repair": "diagnose:repair" in bbapi.perms(self._kid),
                          "tools": bbtools.describe()})
 
+    def _withhold_tool_output(self, st):
+        """A tool's output verbatim, or the job record without it.
+
+        bb-doctor names directories on the user's share: the drives the client
+        is set to back up, and the directories it is skipping. That is exactly
+        what read:files gates on every other route, and "diagnose" is a
+        permission for running a check, not for reading the array's contents.
+        The state, the exit code and the verdict all survive, so a key issued to
+        watch that a check passed still works.
+        """
+        if "read:files" in bbapi.perms(self._kid):
+            return st
+        out = dict(st)
+        out["lines"] = None
+        out["withheld"] = "read:files"
+        return out
+
     def _api_tools_job(self, jid):
         st = bbtools.status(jid)
         if st is None:
             self._json(404, {"schema": bbapi.SCHEMA, "error": "no such job"})
             return
+        st = self._withhold_tool_output(st)
         st["schema"] = bbapi.SCHEMA
         self._json(200, st)
 
@@ -3151,8 +3646,10 @@ class Handler(BaseHTTPRequestHandler):
         if not bbtools.available(name):
             self._json(503, {"schema": bbapi.SCHEMA, "error": "%s is not present in this image" % name})
             return
+        n = self._body_length()
+        if n is None:
+            return
         try:
-            n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or "{}") if n else {}
         except (ValueError, OSError):
             self._json(400, {"schema": bbapi.SCHEMA, "error": "bad request body"})
@@ -3174,6 +3671,9 @@ class Handler(BaseHTTPRequestHandler):
         st = bbtools.status(jid) or {"id": jid, "state": "running"}
         sys.stderr.write("bb-monitor-web: key %s %s job %s: %s\n"
                          % (self._kid, "joined" if joined else "started", jid, st.get("command", name)))
+        # Joining a run that has already finished hands back its output in this
+        # very reply, so the same gate applies here as on the job route.
+        st = self._withhold_tool_output(st)
         st["schema"] = bbapi.SCHEMA
         st["joined_existing"] = joined
         self._json(202, st)
@@ -3196,6 +3696,51 @@ class Handler(BaseHTTPRequestHandler):
                 want |= {"schema", "ok", "error"}
                 payload = {k: v for k, v in payload.items() if k in want}
         self._json(200, payload)
+
+    def _api_client(self):
+        if not bbconfig.available():
+            self._json(503, {"schema": bbapi.SCHEMA,
+                             "error": "bzcli is not present in this image"})
+            return
+        client = client_reading()
+        if client and "read:files" not in bbapi.perms(self._kid):
+            client = strip_client_dirs(client)
+        self._json(200, {"schema": bbapi.SCHEMA, "ok": True, "client": client,
+                         "settings": bbconfig.describe(),
+                         "writable": "configure" in bbapi.perms(self._kid)})
+
+    def _api_client_set(self):
+        if not bbconfig.available():
+            self._json(503, {"schema": bbapi.SCHEMA,
+                             "error": "bzcli is not present in this image"})
+            return
+        n = self._body_length()
+        if n is None:
+            return
+        try:
+            body = json.loads(self.rfile.read(n) or "{}") if n else {}
+        except (ValueError, OSError):
+            self._json(400, {"schema": bbapi.SCHEMA, "error": "bad request body"})
+            return
+        key = str(body.get("key") or "").strip()
+        try:
+            ok, detail = bbconfig.write(key, body.get("value"))
+        except ValueError as exc:
+            # Every refusal comes from bbconfig's own whitelist and validators, so
+            # a key that is not writable and a value out of range read the same
+            # way here as they do on the settings page.
+            self._json(400, {"schema": bbapi.SCHEMA, "error": str(exc)})
+            return
+        sys.stderr.write("bb-monitor-web: key %s set %s=%s: %s\n"
+                         % (self._kid, key, body.get("value"),
+                            "ok" if ok else "failed, " + detail))
+        if not ok:
+            self._json(502, {"schema": bbapi.SCHEMA, "key": key, "ok": False,
+                             "error": detail})
+            return
+        self._json(200, {"schema": bbapi.SCHEMA, "key": key, "ok": True,
+                         "value": ((bbconfig.cached() or {}).get("settings") or {}).get(key),
+                         "detail": detail})
 
     def _api_report_start(self):
         if not bbreport.available():
@@ -3228,6 +3773,7 @@ class Handler(BaseHTTPRequestHandler):
         self._stream_zip(path)
 
     def _stream_zip(self, path):
+        started, size, sent = False, 0, 0
         try:
             size = os.path.getsize(path)
             with open(path, "rb") as fh:
@@ -3239,13 +3785,27 @@ class Handler(BaseHTTPRequestHandler):
                                  'attachment; filename="%s"' % os.path.basename(path))
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
+                started = True
                 while True:
                     chunk = fh.read(65536)
                     if not chunk:
                         break
                     self.wfile.write(chunk)
+                    sent += len(chunk)
         except OSError as exc:
             sys.stderr.write("bb-monitor-web: report download failed: %s\n" % exc)
+            if not started:
+                # The bundle went between the claim and the read, most likely
+                # deleted in another tab. The request still needs an answer:
+                # with nothing written the connection is reused for a reply that
+                # never comes, and the browser waits until it gives up.
+                self._json(404, {"schema": bbapi.SCHEMA,
+                                 "error": "the bundle is no longer there"})
+                return
+        if started and sent != size:
+            # Content-Length promised bytes that did not arrive, so this
+            # connection cannot carry another request.
+            self.close_connection = True
 
     def _api_key_self(self):
         held = bbapi.perms(self._kid)
@@ -3277,11 +3837,6 @@ class Handler(BaseHTTPRequestHandler):
         """Returns True when the request was handled here."""
         if not path.startswith("/api/v1/") and path != "/api/v1":
             return False
-        # Ahead of the key check: the single-use token in the path is what
-        # authorises this one, which is the whole point of issuing it.
-        if method == "GET" and path.startswith("/api/v1/report/download/"):
-            self._serve_report(path[len("/api/v1/report/download/"):])
-            return True
         # No key means the surface does not exist, so say so rather than 403.
         # A 403 would confirm the endpoint is here; with no key there is nothing
         # to confirm, and every fresh container would be advertising it.
@@ -3289,6 +3844,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.send_header("Content-Length", "0")
             self.end_headers()
+            return True
+        # Below that gate and above the key check. The single-use token in the
+        # path is what authorises this one, which is the whole point of issuing
+        # it, but a token can only exist if a key existed to start the job, so
+        # nothing is lost by letting the "no key, no surface" answer come first.
+        # Above it, this route's JSON 404 told a keyless container apart from
+        # any other by its shape.
+        if method == "GET" and path.startswith("/api/v1/report/download/"):
+            self._serve_report(path[len("/api/v1/report/download/"):])
             return True
         need, handler = self._api_route(method, path)
         auth = self.headers.get("Authorization", "")
@@ -3357,6 +3921,19 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"schema": bbapi.SCHEMA, "config": conf,
                              "state": _quiet.state(conf), "days": list(bbquiet.DAYS)})
             return True
+        if path == "/manage/client":
+            # The reading and the writable settings in one answer, because the
+            # settings section needs both to draw a single row, and the live
+            # per-thread ceiling with them: the thread count means little without
+            # the figure that says whether another thread would carry anything.
+            with _lock:
+                limits = _latest.get("rate_limits")
+            self._json(200, {"schema": bbapi.SCHEMA,
+                             "available": bbconfig.available(),
+                             "client": client_reading(),
+                             "settings": bbconfig.describe() if bbconfig.available() else [],
+                             "rate_limits": limits})
+            return True
         if path == "/manage/timeline":
             self._json(200, {"schema": bbapi.SCHEMA, "timeline": timeline()})
             return True
@@ -3415,6 +3992,10 @@ class Handler(BaseHTTPRequestHandler):
                              "state": snap.get("state"), "clock": snap.get("clock"),
                              "build": snap.get("build_label"),
                              "health": snap.get("health") or [],
+                             # The Status tab draws the encryption, cluster and
+                             # per-drive panel from this, so it travels with the
+                             # rest rather than costing the page a second fetch.
+                             "client": snap.get("client"),
                              "paused": snap.get("paused", False),
                              "completion": snap.get("completion"),
                              "first_backup": snap.get("first_backup"),
@@ -3441,8 +4022,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not self._guard():
             return
+        n = self._body_length()
+        if n is None:
+            return
         try:
-            n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or "{}") if n else {}
         except (ValueError, OSError):
             self._json(400, {"error": "bad request body"})
@@ -3526,6 +4109,32 @@ class Handler(BaseHTTPRequestHandler):
                              % (name, "ok" if ok else "failed, " + msg))
             self._json(200 if ok else 502, {"action": name, "ok": ok, "detail": msg})
             return
+        if path == "/manage/client":
+            # One setting at a time. The key is looked up in bbconfig.WRITABLE and
+            # the value goes through that key's own validator, so nothing from the
+            # request reaches an argument list unchecked, and a key that is not on
+            # the list cannot be written however it is spelt.
+            if not bbconfig.available():
+                self._json(503, {"error": "bzcli is not present in this image"})
+                return
+            key = str(body.get("key") or "").strip()
+            try:
+                ok, detail = bbconfig.write(key, body.get("value"))
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            # Logged like the tools and control routes: a changed thread count or
+            # throttle should have a line in the container log that explains it.
+            sys.stderr.write("bb-monitor-web: web session set %s=%s: %s\n"
+                             % (key, body.get("value"),
+                                "ok" if ok else "failed, " + detail))
+            if not ok:
+                self._json(502, {"error": detail})
+                return
+            self._json(200, {"schema": bbapi.SCHEMA, "key": key, "detail": detail,
+                             "value": ((bbconfig.cached() or {}).get("settings") or {}).get(key),
+                             "settings": bbconfig.describe()})
+            return
         if path == "/manage/keys/enabled":
             on = bbapi.set_enabled(bool(body.get("enabled")))
             sys.stderr.write("bb-monitor-web: web session switched the API %s\n" % ("on" if on else "off"))
@@ -3549,7 +4158,16 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/manage/notify/test":
             ok, detail = bbnotify.test((body.get("id") or "").strip())
-            self._json(200 if ok else 502, {"schema": bbapi.SCHEMA, "ok": ok, "detail": detail})
+            # The remote's own answer does not come back out of here. A test is
+            # synchronous, so handing back "HTTP 403" for one URL and
+            # "Connection refused" for another turned this route into a probe
+            # for whatever the container can reach. The real reason goes to the
+            # container log, which is where someone debugging their own endpoint
+            # already looks for the delivery lines.
+            sys.stderr.write("bb-monitor-web: notification test: %s\n" % detail)
+            self._json(200 if ok else 502,
+                       {"schema": bbapi.SCHEMA, "ok": ok,
+                        "detail": "delivered" if ok else "not delivered"})
             return
         if path == "/manage/quiet":
             try:
@@ -3641,6 +4259,11 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
+            # The one page that was left out. It is a static template today, but
+            # a proxy holding a build behind for a container that has been
+            # updated is a confusing thing to debug, and every sibling page says
+            # not to cache it.
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(payload)
         else:

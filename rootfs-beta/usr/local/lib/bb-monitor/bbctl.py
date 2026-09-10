@@ -14,7 +14,7 @@
 # maps a path segment to a key in ACTIONS, and nothing from a request ever
 # reaches the argument list.
 
-import os, subprocess
+import os, signal, subprocess
 
 BZCLI = "/config/wine/drive_c/Program Files/Backblaze/bzcli.exe"
 PREFIX = os.environ.get("WINEPREFIX", "/config/wine")
@@ -35,6 +35,42 @@ ACTIONS = {
 TIMEOUT = 60          # wine start-up is slow; a hung call must not hold a worker
 
 
+def _finish(p, timeout):
+    """(timed_out, stdout, stderr) from a started process, bounded either way.
+
+    Started with start_new_session=True, so the whole call sits in a process
+    group of its own and the timeout can take the group rather than only wine:
+    a wedged client leaves a child behind holding the pipes it inherited, and
+    killing wine alone leaves that child running for the life of the container.
+    The group holds this one call, so the client's own wineserver, started
+    elsewhere, is out of reach.
+    """
+    try:
+        out, err = p.communicate(timeout=timeout)
+        return False, out, err
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+    except OSError:
+        try:
+            p.kill()
+        except OSError:
+            pass
+    try:
+        # Bounded too: a grandchild that made a session of its own is out of
+        # reach of the group kill and can still be holding the write end.
+        p.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        for pipe in (p.stdout, p.stderr):
+            if pipe is not None:
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
+    return True, b"", b""
+
+
 def run(name):
     """(ok, message). `name` must already be a key of ACTIONS."""
     argv = ACTIONS[name][0]
@@ -49,17 +85,19 @@ def run(name):
     if "/opt/wine/bin" not in env.get("PATH", ""):
         env["PATH"] = "/opt/wine/bin:" + env.get("PATH", "/usr/bin:/bin")
     try:
-        p = subprocess.run(["wine", BZCLI] + argv, env=env, timeout=TIMEOUT,
-                           cwd=os.path.dirname(BZCLI),
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        p = subprocess.Popen(["wine", BZCLI] + argv, env=env,
+                             cwd=os.path.dirname(BZCLI), stdin=subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             start_new_session=True)
     except FileNotFoundError:
         return False, "wine is not on PATH"
     except OSError as exc:
         return False, "could not run wine: %s" % exc
-    except subprocess.TimeoutExpired:
+    timed_out, out_b, err_b = _finish(p, TIMEOUT)
+    if timed_out:
         return False, "bzcli did not finish within %ds" % TIMEOUT
-    out = (p.stdout or b"").decode("utf-8", "replace").strip()
-    err = (p.stderr or b"").decode("utf-8", "replace").strip()
+    out = (out_b or b"").decode("utf-8", "replace").strip()
+    err = (err_b or b"").decode("utf-8", "replace").strip()
     if p.returncode == 0:
         return True, out or "ok"
     # bzcli documents non-zero as failure with detail on stderr. Passed through
@@ -82,14 +120,19 @@ def report_value(query):
         return None
     env = dict(os.environ, WINEPREFIX=PREFIX, WINEDEBUG="-all")
     try:
-        p = subprocess.run(["wine", BZCLI, "report", "-v", query], env=env,
-                           timeout=TIMEOUT, stdout=subprocess.PIPE,
-                           stderr=subprocess.DEVNULL)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+        p = subprocess.Popen(["wine", BZCLI, "report", "-v", query], env=env,
+                             stdin=subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+    except OSError:
+        # FileNotFoundError for a missing wine, and anything else the fork
+        # itself refuses. This one has no message to hand back, so None covers
+        # both the way it always did.
         return None
-    if p.returncode != 0:
+    timed_out, out_b, _ = _finish(p, TIMEOUT)
+    if timed_out or p.returncode != 0:
         return None
-    return p.stdout.decode("utf-8", "replace").strip() or None
+    return (out_b or b"").decode("utf-8", "replace").strip() or None
 
 
 def available():

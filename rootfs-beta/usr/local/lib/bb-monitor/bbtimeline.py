@@ -11,8 +11,11 @@
 # Files and bytes are counted from the completed transfers the monitor already
 # tracks. Rows present when the spell starts belong to an earlier one and are
 # not counted; a multi-part file's bytes are taken as they stand at the end, not
-# at first sight; and a small file the datacenter already held is counted as
-# checked, not as uploaded. Rate, threads, memory and swap are means over the
+# at first sight; and a small file the datacentre already held is counted as
+# checked, not as uploaded. A multi-part row is keyed by name alone: its time
+# stamp moves on with every part and its byte count is cumulative, so keying it
+# by (name, time) made every part a new file carrying the whole running total,
+# and a day of large files summed to ten times what was sent. Rate, threads, memory and swap are means over the
 # samples taken while uploading. A long spell gets a line every hour so a day of
 # uploading is not one line at the end of it.
 
@@ -21,7 +24,10 @@ import time
 KEEP = 24 * 3600
 GAP = 60             # seconds without Transmitting before a spell is over
 REPORT_EVERY = 3600  # seconds between "so far" lines inside a spell
-_TX = ("Transmitting",)
+# Both spellings, matching bbdata's own list: the state is whatever the client
+# wrote in cur_state, capitalised, and a client reporting "uploading" would
+# otherwise leave every spell unopened and the panel with no summary line.
+_TX = ("Transmitting", "Uploading")
 
 
 def human(n):
@@ -66,13 +72,20 @@ class Timeline:
     def _rows(api):
         return ((api.get("files") or {}).get("recent") or [])
 
+    @staticmethod
+    def _key(r):
+        # One row per multi-part file, whatever its time stamp says this poll.
+        if r.get("chunked"):
+            return (r.get("name"), None)
+        return (r.get("name"), r.get("time"))
+
     def _track(self, api, state, now):
         p = self.period
         if state in _TX:
             if p is None:
                 # Rows already in the list finished before this spell: remember
                 # them so they are not counted as this spell's work.
-                before = {(r.get("name"), r.get("time")) for r in self._rows(api)}
+                before = {self._key(r): (r.get("bytes") or 0) for r in self._rows(api)}
                 p = self.period = {"start": now, "last": now, "reported": now,
                                    "n": 0, "rate": 0.0, "threads": 0,
                                    "mem": 0.0, "mem_n": 0, "swap": 0.0, "swap_n": 0,
@@ -90,14 +103,20 @@ class Timeline:
                 p["swap"] += sw.get("used_bytes") or 0
                 p["swap_n"] += 1
             for r in self._rows(api):
-                key = (r.get("name"), r.get("time"))
+                key = self._key(r)
+                nbytes = r.get("bytes") or 0
                 if key in p["before"]:
-                    continue
+                    # A bundle still landing parts when the spell began: only
+                    # what it has gained since is this spell's work. Anything
+                    # else that was already listed finished before the spell.
+                    if not r.get("chunked") or nbytes <= p["before"][key]:
+                        continue
+                    nbytes -= p["before"][key]
                 if r.get("dedup"):
                     p["held"].add(key)
                     continue
                 # Latest figure wins: a multi-part row's bytes grow as parts land.
-                p["rows"][key] = r.get("bytes") or 0
+                p["rows"][key] = nbytes
             if now - p["reported"] >= REPORT_EVERY:
                 p["reported"] = now
                 return [self._summary(p, now, so_far=True)]

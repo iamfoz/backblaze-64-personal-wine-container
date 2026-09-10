@@ -386,13 +386,14 @@ a stable release.
   `progress_history`.
 - The Status tab shows more. Milestones, each once for a week: a quarter, half, three
   quarters of the way, and the first terabyte. The last 24 hours as a list in a box that
+- The timeline summary line counted a multi-part file once per part, each time at its running total, so a day of large files reported around ten times the bytes sent (11.5 TB for about 1 TB on a live container). A bundle is now one file at its final size, and one already landing parts when a spell starts counts only what it gains during the spell.
   scrolls, newest first: every change of state, and after each spell of uploading one line
   with what it amounted to, for example "Uploaded 28 files (1.4 GB) in 9m, 40 already backed
   up: average 40.0 Mbit/s, 8.0 threads, mem 1.9 GB, swap 95 MB". A spell that runs for hours
   gets a line every hour with the totals so far. A spell allows gaps of up to a minute, so
   the client's flicker between Transmitting and Preparing on small files does not split it.
   Files that finished before the spell began are not counted in it; a multi-part file counts
-  its final size; a small file the datacenter already held counts as already backed up, not
+  its final size; a small file the datacentre already held counts as already backed up, not
   as uploaded, so the line after a restart says what the restart did. The safety-freeze
   notice links to the Backblaze page on resolving one and says what the uninstall step means
   in this container: delete the client's program
@@ -444,6 +445,55 @@ a stable release.
   announced to a screen reader when they change. Animations stop when the browser asks for
   reduced motion.
 - `bb-health`'s description on the Tools tab reads "with diagnostic information".
+- The container asks the client about itself. Backblaze ship `bzcli` with the client, and
+  its report command answers a query path with that part of its own account of itself. The
+  container now reads five of those paths on a slow cycle. It never reads the whole
+  document and never asks for `/backup/account`: both carry the account email and the
+  login, and querying by path keeps them out of this container altogether.
+- A warning when the licence lapses or a renewal fails. Backblaze report both, and until now
+  the container had no way of knowing. A card that expires stops the backup quietly, with
+  nothing on the dashboard to say why. It now appears in both monitors, in the API, in the
+  Prometheus gauges and as a notification event, the same as a safety freeze.
+- Per drive, whether the client is set to back it up. The client keeps a filter list with one
+  root entry per drive, and that entry decides whether the drive backs up at all. A drive
+  whose root reads "none" shows as ticked in the client's own settings window and backs up
+  nothing, which is the state behind "No files are selected". A user hit exactly this after
+  moving containers and it took several rounds to work out. It now appears on the Status tab,
+  in the terminal monitor and in `bb-doctor`, named for what it is.
+- Whether a private encryption key is set, on the Status tab and in the terminal monitor.
+  Backblaze cannot recover a forgotten one, which changes what recovery advice is safe.
+- The assigned datacentre cluster, read from the client rather than inferred. The monitor
+  worked it out by matching sockets on the owning process, which cannot answer while nothing
+  is uploading. The client states it. The socket reading stays as the fallback.
+- `bb-doctor` checks the client's own settings. The licence, the safety freeze, the
+  encryption key, whether each mapped drive is set to be backed up, and whether the
+  container's own config directory sits inside a backed-up drive without being excluded,
+  which is the loop where the client backs up its own bookkeeping for ever.
+- The Settings tab can change some of the client's settings: the thread count, the automatic
+  and manual throttle, the largest file to back up, the staleness threshold, the name shown
+  in your Backblaze account, network tests and backing up on battery. The description under
+  each is the client's own wording, so it says what the Backblaze settings window says.
+  The manual throttle is megabits per second per thread rather than for the backup as a
+  whole, which is easy to misread, so the page multiplies it out by your thread count. The
+  thread count is shown next to the per-thread ceiling the round trip imposes, since raising
+  it only helps while that ceiling is not already what is holding the rate down.
+
+  What cannot be changed from here: anything deciding what is backed up. The file selection,
+  the exclusions and the schedule are absent by design, because a wrong edit there stops a
+  backup rather than slowing one, and the private encryption key verbs are unreachable as
+  they always were. Backblaze cannot recover a forgotten key.
+
+  Changing a setting is written to the client's configuration at once. Whether a running
+  client honours it without the container being restarted has not been established, and the
+  page says so rather than claiming either way.
+- `GET /api/v1/client` gives the same reading under `read`. `POST /api/v1/client` changes a
+  setting under a new `configure` permission, which no existing key holds. The drive list
+  and the exclusions name directories on your own share, so a key without `read:files` does
+  not get them, the same rule the skipped list follows.
+- The diagnostic bundle carries the client's settings. "What are your threads set to" is a
+  question that gets asked every time. The name shown in your Backblaze account is removed
+  from the capture first: the bundle hashes file and directory names, but a bare value is
+  not a path and would have reached the bundle whole, and a machine name is often a person's.
 - The backup total is shown to two decimal places. At one place a TB reading only moves
   every 102.4 GB, which on an 87 TB backup is most of a day of uploading, and a whole
   percent is several days; the terminal monitor showed a whole percent, which is worse. A
@@ -580,6 +630,78 @@ a stable release.
 - A long file path made the whole page scroll sideways at any window width. Flex items default
   to `min-width:auto` and so refuse to shrink below their content, which let one path in the
   in-flight list widen everything around it.
+- The HTTP API's tools routes returned `bb-doctor`'s full output to any key holding
+  `diagnose`, although that output can name drives and directories the way `read:files`
+  gates everywhere else in the API. A key without `read:files` now gets the job back with
+  `lines` set to `null` and `withheld` naming the permission it is missing, instead of the
+  tool's output.
+- `per_volume` reached a key without `read:files` with the mount path and a stable
+  identifier for the machine, although every other field naming a directory is withheld
+  from that key. `per_volume` now drops the identifier and reduces the path to a bare drive
+  letter, or `null` when the client's own mount path is longer than that.
+- A notification endpoint could point at the container's own loopback address, a link-local
+  address, or anything else reachable on the Docker network, and testing it echoed back the
+  remote's own status code or connection error. The container now resolves the host first
+  and refuses loopback, link-local and the unspecified address; a test now only ever reports
+  "delivered" or "not delivered", and the endpoint's actual reply goes to the container log
+  instead.
+- The web routes carried no `X-Frame-Options`, `X-Content-Type-Options` or
+  `Referrer-Policy` header, and nothing capped the size of a request body. Both are set on
+  `/monitor/` now, and a body over 1 MB is rejected before it is read, at nginx and inside
+  the service.
+- `GET /api/v1/report/download/<token>` answered before the API's own "no key means no
+  surface" check, so a container with no key configured still gave a real 404 with a schema
+  field, unlike every other unconfigured path. The route now sits behind that same check.
+- The three routes that read a request body had no socket timeout and no check on
+  `Content-Length` before reading it, so a slow or oversized POST could hold a handler open
+  indefinitely. The socket now times out after 30 seconds, and a body outside 0 to 1 MB is
+  rejected with 413 before it is read.
+- An unwritable notification state file meant a state change could not be remembered, so the
+  same event could fire on every poll instead of once; the file was also rewritten on every
+  poll regardless of whether anything had changed. The state is now kept in memory as well,
+  so a write failure does not lose it, one line goes to the container log the first time a
+  write fails, and a write happens only when the state has actually changed.
+- Pausing or resuming for a quiet hours window ran `bzcli` directly on the thread that also
+  collects the monitor's own data, so the whole monitor stalled for as long as a slow or
+  wedged client took to answer. The action now runs on its own thread.
+- `quiet.state()` published `window_end` even outside the window it describes, which read as
+  though a window not yet reached had already ended. `window_end` is now `null` outside a
+  window.
+- Quiet hours boundaries were computed by adding a wall-clock duration in seconds to the
+  day's start, which is wrong on a clock-change day: a window computed this way could open
+  or close an hour early or late in spring and autumn. Each boundary is now built from its
+  own date and wall time instead.
+- Chunks completed in the last minute was measured against the newest line in the log tail
+  rather than against the current time, so the figure froze at whatever the last burst
+  reached and stayed there for hours after uploads had actually stopped. It is now measured
+  against now.
+- A file the datacentre already held, and so did not need sending again, was matched by
+  splitting its log line on its last " - ", so a file whose own name contained that sequence
+  ("Artist - Track.mp3") lost everything before it and was never recognised as already
+  backed up. The match is now taken from the line's fixed prefix instead.
+- The first-terabyte milestone fired at a decimal terabyte while the gauge beside it renders
+  in binary units, so the banner could appear well before the gauge itself read 1 TB. The
+  milestone now uses the same tebibyte threshold the gauge does.
+- The improving/worsening ETA trend shown on the Status tab and in the terminal monitor did
+  not appear in the plain-text summary used for support threads. `summary_text` now includes
+  it, worded the way the page already is ("better"/"slower" rather than bbdata's own
+  "improving"/"worsening").
+- Several callers arriving on a stale client-settings cache each started their own sweep of
+  Wine, so four callers used to run twenty separate `bzcli` calls at once on a container
+  with little memory to spare. A caller arriving while a sweep is already running now waits
+  for it and shares its result.
+- A `bzcli` call that hung left its Wine process running for the life of the container,
+  because a timed-out call killed only the direct child and nothing that child had started.
+  A timeout now kills the whole process group instead.
+- An unexpected shape in one log line or one XML file could take the whole terminal monitor
+  down with an unhandled traceback. It now keeps the last good screen, names the fault in
+  the footer, and tries again on the next tick.
+- The diagnostic bundle's client-settings capture redacted `online_hostname` by replacing
+  the whole matching line, which is only correct for pretty-printed output; against the
+  compact single-line JSON `bzcli` can also produce, it erased every other setting on the
+  line along with it. The redaction is now by value, and the same by-value redaction now
+  also covers every name in `bb-report`'s own list of secret keys, which that capture's JSON
+  shape had been passing straight through.
 
 
 ## [10.2.1] - 2026-08-07
@@ -656,7 +778,7 @@ a stable release.
 - Documentation for the optional Wine upload-speed patch, an opt-in self-built image
   carrying the fix for [WineHQ bug 59893](https://bugs.winehq.org/show_bug.cgi?id=59893)
   while it is under review upstream.
-- Guidance to keep the Backblaze thread count manual and modest (4–8); the automatic
+- Guidance to keep the Backblaze thread count manual and modest (4 to 8 threads); the automatic
   setting can spin up enough threads to deadlock Wine's pipe handling and stall
   transmits.
 

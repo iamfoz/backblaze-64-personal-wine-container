@@ -11,7 +11,7 @@
 # until the window ends. The two are told apart by the deadline the client
 # recorded: past it, the client resumed itself; before it, someone did.
 
-import json, os, sys, tempfile, threading, time
+import datetime, json, os, sys, tempfile, threading, time
 
 import bbapi
 
@@ -93,34 +93,43 @@ def save(conf):
     return rec
 
 
+def _at(day, minutes):
+    """Local epoch for `minutes` past midnight on `day`, a datetime.date.
+
+    Every boundary is built this way rather than by adding seconds to a
+    midnight, because the two days a year the local day is 23 or 25 hours long
+    are exactly the days seconds arithmetic lands an hour off the wall clock the
+    user typed. tm_isdst=-1 lets the C library pick the offset in force then.
+    """
+    return time.mktime((day.year, day.month, day.day,
+                        minutes // 60, minutes % 60, 0, 0, 0, -1))
+
+
 def in_window(conf, now=None):
     """(window, start_epoch, end_epoch) for the window containing `now`, else
     (None, None, next_start_epoch or None). Local time, which is the container's
     TZ, which is what the user set the times in."""
     now = now if now is not None else time.time()
-    lt = time.localtime(now)
-    today_midnight = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+    today = datetime.date.fromtimestamp(now)
     best_next = None
+    day = datetime.timedelta(days=1)
     for w in conf.get("windows") or []:
         s, e = _hm(w["start"]), _hm(w["end"])
-        dur = (e - s) if e > s else (e - s + 1440)
         # The occurrence that started most recently on each listed weekday,
         # looking back a week, plus the next one ahead for the "next change".
         for back in range(0, 8):
-            day_mid = today_midnight - back * 86400
-            wd = time.localtime(day_mid).tm_wday
-            if wd not in w["days"]:
+            d = today - back * day
+            if d.weekday() not in w["days"]:
                 continue
-            start = day_mid + s * 60
-            end = start + dur * 60
+            start = _at(d, s)
+            end = _at(d if e > s else d + day, e)
             if start <= now < end:
                 return w, start, end
         for ahead in range(0, 8):
-            day_mid = today_midnight + ahead * 86400
-            wd = time.localtime(day_mid).tm_wday
-            if wd not in w["days"]:
+            d = today + ahead * day
+            if d.weekday() not in w["days"]:
                 continue
-            start = day_mid + s * 60
+            start = _at(d, s)
             if start > now and (best_next is None or start < best_next):
                 best_next = start
     return None, None, best_next
@@ -188,18 +197,38 @@ class Scheduler:
         return "repaused"
 
     def _act(self, name, why, now):
-        ok, msg = self.runner(name)
+        """Hand the action to a thread of its own.
+
+        The caller is the poll loop. `runner` is bzcli, which starts Wine cold
+        and can take the better part of a minute, and a window boundary that
+        stopped the clock on the page for that long looked like a wedge. The
+        record is filled in with ok=None until the answer comes back.
+        """
         self.acted_at = now
-        self.last = {"action": name, "ok": ok, "at": int(now), "why": why}
+        with _lock:
+            self.last = {"action": name, "ok": None, "at": int(now), "why": why}
+        threading.Thread(target=self._run, args=(name, why, now), daemon=True).start()
+
+    def _run(self, name, why, now):
+        try:
+            ok, msg = self.runner(name)
+        except Exception as exc:      # the thread is on its own; nothing catches it
+            ok, msg = False, str(exc)
+        with _lock:
+            self.last = {"action": name, "ok": ok, "at": int(now), "why": why}
         self.log("%s: %s -> %s" % (why, name, msg if ok else "FAILED: " + msg))
 
     def state(self, conf=None, now=None):
         conf = conf or load()
         now = now if now is not None else time.time()
         w, start, end = in_window(conf, now)
+        with _lock:
+            last = self.last
+        # Outside a window in_window returns the next start in the third slot,
+        # so only publish it as an end when there is a window to end.
         return {"enabled": conf.get("enabled", False), "in_window": w is not None,
-                "window_end": int(end) if end else None,
+                "window_end": int(end) if w else None,
                 "next_start": None if w else (int(end) if end else None),
                 "active": self.active,
                 "override_until": int(self.override_until) if self.override_until else None,
-                "last": self.last}
+                "last": last}

@@ -14,7 +14,7 @@ Shows the transfer rate, the files being sent, and recently completed files.
 Needs a terminal:  docker exec -it <container> bb-monitor
 """
 import locale; locale.setlocale(locale.LC_ALL, "")
-import curses, os, sys, time, unicodedata
+import curses, os, sys, threading, time, unicodedata
 from collections import deque
 
 # ---- shared data layer ----------------------------------------------------
@@ -24,8 +24,32 @@ from collections import deque
 # round-trip time while this one kept the original narrower view. A feature
 # added to bbdata now shows up in both. This file owns curses and nothing else.
 sys.path.insert(0, "/usr/local/lib/bb-monitor")
+import bbconfig
 from bbdata import (BUILD_INFO, BUILD_LABEL, INT, eta_date, eta_str, gather,
                      human, rec_cols, uptime_str, _upload_host, _upload_rtt)
+
+# ---- what the client says about itself, via bzcli --------------------------
+# bbconfig.read() starts a Wine process when its own cache goes stale, which can
+# take the better part of a minute. Calling it from draw() or the key loop would
+# freeze the whole screen for that long, so it is refreshed from a daemon thread
+# on a slow cycle instead; main() reads whatever bbconfig.cached() already has.
+# The lock is acquired by the caller and released by the thread, so a refresh
+# still running when the next slow tick comes round is skipped rather than
+# piled on top of.
+BBCONFIG_INT = 60
+_bbconfig_lock = threading.Lock()
+
+def _refresh_bbconfig():
+    try:
+        bbconfig.read()
+    finally:
+        _bbconfig_lock.release()
+
+def maybe_refresh_bbconfig():
+    if not bbconfig.available():
+        return
+    if _bbconfig_lock.acquire(blocking=False):
+        threading.Thread(target=_refresh_bbconfig, daemon=True).start()
 
 
 # ---- themes -------------------------------------------------------------------
@@ -110,10 +134,12 @@ def save_pref(key, value):
 STAT_ITEMS = [
     ("Now", [("state", "State"), ("rate", "Upload rate"), ("threads", "Threads"),
              ("chunks", "Chunks a minute"), ("rtt", "Round-trip time"),
-             ("session", "This session"), ("scan", "Scan progress")]),
+             ("session", "This session"), ("scan", "Scan progress"),
+             ("cluster", "Datacentre cluster")]),
     ("Progress", [("backup", "Backup total"), ("drives", "Per drive"),
                   ("remaining", "Files remaining"), ("first", "First backup"),
-                  ("composition", "What it is made of")]),
+                  ("composition", "What it is made of"),
+                  ("encrypted", "Encryption"), ("selection", "Drive selection")]),
     ("Today", [("uploads", "Uploads today"), ("week", "Last seven days"),
                ("compression", "Compression saved"), ("clientest", "Client estimate")]),
     ("System", [("mem", "Memory"), ("swap", "Swap"), ("uptime", "Uptime"),
@@ -124,8 +150,13 @@ STAT_ALL = [k for _, items in STAT_ITEMS for k, _ in items]
 # them free to change, so anything in between needs no further concept.
 STAT_PRESETS = {
     "Minimal": ["state", "rate", "backup"],
+    # "selection" earns a place here even though most of its siblings from
+    # bbconfig do not: it is the reading that catches "No files are selected",
+    # a drive ticked in the client's own settings window that backs up nothing.
+    # "cluster" and "encrypted" are informational in the way "server" already
+    # is, so they stay out of Normal for the same reason that does.
     "Normal": ["state", "rate", "threads", "rtt", "session", "scan", "backup",
-               "remaining", "first", "uploads", "mem", "swap", "uptime"],
+               "remaining", "first", "selection", "uploads", "mem", "swap", "uptime"],
     "Everything": None,
 }
 PRESET_NAMES = ["Minimal", "Normal", "Everything"]
@@ -242,7 +273,14 @@ def draw(scr,d,st):
     BORD=curses.color_pair(6)|curses.A_BOLD; TIT=curses.color_pair(2)|curses.A_BOLD
     GOOD=curses.color_pair(4)|curses.A_BOLD; WARN=curses.color_pair(3)|curses.A_BOLD; BAD=curses.color_pair(5)|curses.A_BOLD
     # Warnings ride in the title bar, where they cannot be scrolled past.
-    warn=d.get("health") or []
+    warn=list(d.get("health") or [])
+    # bbconfig reads its own subset of client state (licence, safety freeze) by
+    # a different route than bbdata, and the two overlap on "frozen": both would
+    # otherwise say the same thing about the same freeze in the same title bar.
+    seen_kinds={k for k,_ in warn}
+    for kind,text in bbconfig.health():
+        if kind not in seen_kinds:
+            warn.append((kind,text)); seen_kinds.add(kind)
     hdr="Backblaze 64 • Upload Monitor"
     if warn: hdr += "  •  " + "; ".join(t for _,t in warn)
     clk=time.strftime("%H:%M:%S")
@@ -394,6 +432,30 @@ def draw(scr,d,st):
                               ("%.1f Mbit/s"%(pf["large_kbit"]/1000.0),NORM)]))
     pod=_upload_host()
     if pod: add("SYSTEM","server",txt([("Server: ",NORM),(pod,NORM)]))
+    # The datacentre cluster the account is assigned to, from bbconfig. Server
+    # above is inferred from which socket a -threadpush process owns, so it
+    # goes blank whenever nothing happens to be uploading at that instant;
+    # cluster comes straight from the client's own configuration and is there
+    # whether or not a transfer is running, so it is preferred when bbconfig
+    # has an answer and the inferred host is kept only as a fallback.
+    cfg=bbconfig.cached() if bbconfig.available() else None
+    cluster=(cfg or {}).get("cluster") or pod
+    if cluster: add("NOW","cluster",txt([("Cluster: ",NORM),(cluster,NORM)]))
+    if cfg and cfg.get("encrypted") is not None:
+        enc="private key set" if cfg["encrypted"] else "none"
+        add("PROGRESS","encrypted",txt([("Encryption: ",NORM),(enc,NORM)]))
+    sel=bbconfig.drive_selection() if bbconfig.available() else None
+    if sel:
+        parts=[]
+        for drive in sorted(sel):
+            label=drive.rstrip("\\")
+            # A drive whose root filter reads "none" shows ticked in the
+            # client's own settings window and backs up nothing: the state
+            # behind the user-reported fault "No files are selected". Worth
+            # the BAD colour, since nothing else on this screen would catch it.
+            if sel[drive].get("backed_up"): parts.append((label+" ",GOOD))
+            else: parts.append((label+" (not selected!) ",BAD))
+        add("PROGRESS","selection",txt([("Selected: ",NORM)]+parts))
     # A label column, then that row's items wrapped into whatever is left. The
     # label repeats on a wrapped line only as blanks, so the eye keeps the column.
     LBL=9; SEP=3; inner=max(1,w-4-LBL); placements=[]; line=0
@@ -513,6 +575,12 @@ def draw(scr,d,st):
     # produced it. Dropped rather than overlapped when the terminal is too narrow.
     if BUILD_LABEL and w >= len(ft)+len(BUILD_LABEL)+5:
         aw(scr,foot,w-len(BUILD_LABEL)-2,BUILD_LABEL,HI)
+    # A reading that failed leaves the screen that was already up and says so
+    # here, over the key hints, since a dashboard nobody can tell is stale is
+    # worse than one that has lost a row of hints for a moment.
+    if st.get("err"):
+        aw(scr,foot,0," "*w,WARN)
+        aw(scr,foot,1,wclip("stale reading • %s"%st["err"],w-2),WARN)
     if st.get("ui"): draw_overlay(scr,st)      # over the dashboard, drawn last
     scr.refresh()
 
@@ -548,6 +616,22 @@ def _about_lines():
             out.append(("  Backing up since %s" % since, False))
         except ValueError:
             pass       # malformed date from bbdata: skip the row rather than show garbage
+    # What the client itself reports, via bzcli. cached() is None on a stable
+    # image with no bzcli, and on a cold start before the first read has
+    # happened, so this whole block is skipped rather than showing blank or
+    # "None" rows. Headed "Backblaze client" rather than "Licence" so it is not
+    # mistaken for this project's own AGPL licence just below.
+    cfg = bbconfig.cached() if bbconfig.available() else None
+    if cfg:
+        out.append(("", False)); out.append(("Backblaze client", True))
+        lic = cfg.get("license") or {}
+        bits = [x for x in (lic.get("status"), lic.get("type")) if x]
+        if bits:
+            out.append(("  Licence:   %s" % " / ".join(bits), False))
+        if cfg.get("client_version"):
+            out.append(("  Version:   %s" % cfg["client_version"], False))
+        if cfg.get("cluster"):
+            out.append(("  Cluster:   %s" % cfg["cluster"], False))
     out += [("", False), ("Licence", True),
             ("  " + APP_COPYRIGHT, False), ("  " + APP_LICENSE, False),
             ("  " + APP_URL, False)]
@@ -765,6 +849,7 @@ def main(scr):
     scr.keypad(True); scr.timeout(50)
     cells=load_pref("compact_parts","0")=="1"
     st={"soff":0,"cap":1,"ui":None,"cells":cells,"hidden":load_hidden()}; prev=None; d=None; last=0
+    last_cfg=0
     while True:
         ch=scr.getch()
         if st["ui"] is not None:
@@ -785,9 +870,28 @@ def main(scr):
             elif ch==curses.KEY_NPAGE: st["soff"]+=st["cap"]
             if ch!=-1 and d is not None: draw(scr,d,st)
         if d is None or time.time()-last>=INT:
-            d=gather(prev); prev=d["_tx"]; last=time.time()
-            _rate_hist.append(d["rate"])
-            draw(scr,d,st)
+            last=time.time()
+            # An unexpected shape in one log line or one XML must not take the
+            # whole dashboard down with a curses traceback. The web monitor
+            # already recovers on its next poll; this keeps the last good screen,
+            # names the fault in the footer and tries again on the next tick.
+            try:
+                nd=gather(prev); prev=nd["_tx"]; d=nd
+                _rate_hist.append(d["rate"]); st["err"]=None
+            except Exception as exc:
+                st["err"]="%s: %s"%(type(exc).__name__,exc)
+            try:
+                if d is not None:
+                    draw(scr,d,st)
+                else:
+                    # Nothing has ever been gathered, so there is no screen to
+                    # keep. Say what went wrong rather than sitting blank.
+                    scr.erase(); aw(scr,0,0,"bb-monitor: %s"%st["err"]); scr.refresh()
+            except Exception as exc:
+                st["err"]="%s: %s"%(type(exc).__name__,exc)
+        if time.time()-last_cfg>=BBCONFIG_INT:
+            last_cfg=time.time()
+            maybe_refresh_bbconfig()
 
 def _print_version():
     """Which image build this came from - the identifier worth having in a bug report."""
@@ -805,10 +909,10 @@ if __name__=="__main__":
     if os.environ.get("TERM") in (None,"","dumb","unknown"):
         os.environ["TERM"]="xterm-256color"   # sane default for `docker exec` consoles
     # curses needs a real terminal, and the way to not have one is docker exec
-# without -it, which otherwise dies in a two-deep curses traceback ("cbreak()
-# returned ERR") that names neither the cause nor the fix.
-if not (sys.stdin.isatty() and sys.stdout.isatty()):
-    sys.exit("bb-monitor needs a terminal.\n"
-             "Run it with:  docker exec -it <container> bb-monitor\n"
-             "(or use the container's Console on the Unraid Docker page)")
-curses.wrapper(main)
+    # without -it, which otherwise dies in a two-deep curses traceback ("cbreak()
+    # returned ERR") that names neither the cause nor the fix.
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        sys.exit("bb-monitor needs a terminal.\n"
+                 "Run it with:  docker exec -it <container> bb-monitor\n"
+                 "(or use the container's Console on the Unraid Docker page)")
+    curses.wrapper(main)

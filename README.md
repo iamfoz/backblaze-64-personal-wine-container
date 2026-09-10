@@ -54,17 +54,17 @@ Still please be attentive during the install process: The docker by design has r
 
 ## Known Limitations
 
-Backblaze 10.x (64-bit, Windows 10-only) installs, signs in, and backs up reliably under Wine. Two caveats are worth knowing — neither corrupts or blocks your backups:
+Backblaze 10.x (64-bit, Windows 10-only) installs, signs in, and backs up reliably under Wine. Two caveats are worth knowing: neither corrupts or blocks your backups.
 
-- **Upload speed is throttled by a bug in Wine, not by the container or your network.** An `iperf3` test from inside the container reaches full line speed. The cause has since been traced: Wine reports a socket as "not writable" while its send buffer still has room, so the client's sending loop waits out a full one-second timeout instead of sending, capping a single stream at roughly 140 KB/s. This is filed as [WineHQ bug 59893](https://bugs.winehq.org/show_bug.cgi?id=59893) with a fix submitted upstream, and the standard images will pick it up automatically once it ships in a Wine release — see [Optional: Wine Upload-Speed Patch](#optional-wine-upload-speed-patch) if you would rather have it now.
+- **Upload speed is throttled by a bug in Wine, not by the container or your network.** An `iperf3` test from inside the container reaches full line speed. The cause has since been traced: Wine reports a socket as "not writable" while its send buffer still has room, so the client's sending loop waits out a full one-second timeout instead of sending, capping a single stream at roughly 140 KB/s. This is filed as [WineHQ bug 59893](https://bugs.winehq.org/show_bug.cgi?id=59893) with a fix submitted upstream, and the standard images will pick it up automatically once it ships in a Wine release. See [Optional: Wine Upload-Speed Patch](#optional-wine-upload-speed-patch) if you would rather have it now.
 
-  In the meantime, set the thread count under Settings → Performance to **Manual, 4–8 threads**. More threads is the obvious workaround, and it does raise throughput, but leave it on Automatic and Backblaze can spin up dozens: enough concurrent uploads to deadlock Wine's pipe handling and stall the transfer completely. Throughput is also far lower while grinding through many small files than on large ones, so expect it to climb as the backup progresses.
+  In the meantime, set the thread count under Settings → Performance to **Manual, 4 to 8 threads**. More threads is the obvious workaround, and it does raise throughput, but leave it on Automatic and Backblaze can spin up dozens: enough concurrent uploads to deadlock Wine's pipe handling and stall the transfer completely. Throughput is also far lower while grinding through many small files than on large ones, so expect it to climb as the backup progresses.
 
 - **"Permission Issue … `bzdata\bzreports`" warning.** A false positive: Backblaze's permission self-check misbehaves under Wine, but it writes to that directory fine and backups run normally. Safe to ignore.
 
 > The control panel previously rendered unstyled (black background, blank dialog text). That turned out **not** to be an unfixable GDI+ incompatibility: `bzbui.exe` references its hi-DPI skin assets with hyphenated names (`*-4x.gif`) while the bypass install ships them underscored (`*_4x.gif`), so the skin failed to load and the main window couldn't build. The container now creates the hyphen-named aliases at startup, so the panel renders correctly on first launch.
 
-> Backblaze's installer — and, more importantly, its in-app **self-update** — runs a .NET MSI custom action (`CheckVersions`) inside `rundll32.exe`. Under Wine's Windows 8.1+ "version lie", an *unmanifested* process is told it is running Windows 8 (6.2) regardless of what the registry reports, so that check aborts with `MajorVerTooOld` / "unsupported OS" even though the prefix is forced to Windows 10. The first install sidesteps this by bypassing the MSI (it drives `bzdoinstall.exe` directly), but a self-update runs the MSI itself. The container therefore writes an external `rundll32.exe.manifest` declaring a Windows 10/11 `supportedOS` into `system32` and `syswow64` at startup and enables `PreferExternalManifest`, so `GetVersionEx` reports the real version and self-updates do not break on the OS gate.
+> Backblaze's installer, and more importantly its in-app **self-update**, runs a .NET MSI custom action (`CheckVersions`) inside `rundll32.exe`. Under Wine's Windows 8.1+ "version lie", an *unmanifested* process is told it is running Windows 8 (6.2) regardless of what the registry reports, so that check aborts with `MajorVerTooOld` / "unsupported OS" even though the prefix is forced to Windows 10. The first install sidesteps this by bypassing the MSI (it drives `bzdoinstall.exe` directly), but a self-update runs the MSI itself. The container therefore writes an external `rundll32.exe.manifest` declaring a Windows 10/11 `supportedOS` into `system32` and `syswow64` at startup and enables `PreferExternalManifest`, so `GetVersionEx` reports the real version and self-updates do not break on the OS gate.
 
 ## Docker Images
 ### Content
@@ -79,11 +79,11 @@ Here are the main components of this image:
   * [WINE], a compatibility layer for windows applications on Linux
   * [Winetricks] is a helper script to download and install various redistributable runtime libraries needed to run some programs in Wine
   * [Backblaze Personal Backup]
-  * `bb-monitor`, a built-in terminal dashboard for watching uploads live — see [Upload Monitor](#upload-monitor).
-  * `bb-health`, which reports the state of the backup as the container's health status, with optional automatic recovery — see [Health and Auto-Recovery](#health-and-auto-recovery).
-  * `bb-version`, which reports installed and available client versions — see [Checking Versions](#checking-versions).
-  * `bb-doctor`, which checks the installation for known problems and can repair many of them — see [Fixing Problems](#fixing-problems).
-  * `bb-report`, which builds a sanitised diagnostic bundle for a bug report — see [Reporting a Problem](#reporting-a-problem).
+  * `bb-monitor`, a built-in terminal dashboard for watching uploads live: see [Upload Monitor](#upload-monitor).
+  * `bb-health`, which reports the state of the backup as the container's health status, with optional automatic recovery: see [Health and Auto-Recovery](#health-and-auto-recovery).
+  * `bb-version`, which reports installed and available client versions: see [Checking Versions](#checking-versions).
+  * `bb-doctor`, which checks the installation for known problems and can repair many of them: see [Fixing Problems](#fixing-problems).
+  * `bb-report`, which builds a sanitised diagnostic bundle for a bug report: see [Reporting a Problem](#reporting-a-problem).
 
 [S6-overlay]: https://github.com/just-containers/s6-overlay
 [x11vnc]: http://www.karlrunge.com/x11vnc/
@@ -100,9 +100,9 @@ Here are the main components of this image:
 
 | Tag | Description |
 |-----|-------------|
-| latest | Recommended stable image — the current default LTS (Ubuntu 24.04) |
+| latest | Recommended stable image: the current default LTS (Ubuntu 24.04) |
 | ubuntu24 | Ubuntu 24.04 LTS build (same image as `latest`) |
-| ubuntu26 | Ubuntu 26.04 LTS build — early-access, for hardening before it becomes the default |
+| ubuntu26 | Ubuntu 26.04 LTS build, early-access, for hardening before it becomes the default |
 | main | Automatic build of the `main` branch (may be unstable) |
 | beta | Ubuntu 26.04 with the Wine upload-speed fix built in.  Not the supported path; see below |
 | vX.Y.Z | A specific release (Ubuntu 24.04); `vX.Y.Z-ubuntu26` for the 26.04 variant |
@@ -112,7 +112,7 @@ time. The **older** of the two is the default (`latest`), chosen for stability;
 the **newer** ships alongside (currently `ubuntu26`) so problems can be found and
 fixed before it ever becomes the default. Interim bugfixes and base/runtime
 uplifts are released against both as they land. When an LTS reaches end of
-support it is retired — the newer LTS becomes the new default and the next LTS is
+support it is retired: the newer LTS becomes the new default and the next LTS is
 added as the early-access variant. So `latest` always points at a mature,
 well-supported LTS, while the newer-LTS tag lets you opt in early if you want it.
 
@@ -133,7 +133,7 @@ The older `ubuntu22` / `ubuntu20` / `ubuntu18` variants are no longer published.
 
 Only `linux/amd64` is realistic. Backblaze Personal Backup ships as an x86-64 Windows
 binary, so a non-x86 host would have to emulate the instruction set underneath Wine as
-well as translating the Windows API — slow enough to be useless for a backup client that
+well as translating the Windows API, slow enough to be useless for a backup client that
 is already working hard to keep uploads saturated. `linux/386` is out for a different
 reason: Backblaze 10.x dropped 32-bit entirely. Neither is a packaging gap that a future
 release will close.
@@ -157,6 +157,7 @@ Environment variables can be set by adding one or more arguments `-e "<VAR>=<VAL
 |`CLEAN_TMP_DIR`| When set to `1`, all files in the `/tmp` directory are deleted during the container startup. | `1` |
 |`DISPLAY_WIDTH`| Width (in pixels) of the virtual screen's window. (Has to be divisible by 4) | `900` |
 |`DISPLAY_HEIGHT`| Height (in pixels) of the virtual screen's window. (Has to be divisible by 4) | `700` |
+|`WEB_AUTHENTICATION`| When set to `1`, the web interface asks for a login before it lets anyone in; this requires `SECURE_CONNECTION=1` as well. Off by default, which means anything on the LAN that can reach the container can reach the monitor's controls. | `0` |
 |`SECURE_CONNECTION`| When set to `1`, an encrypted connection is used to access the application's GUI (either via a web browser or VNC client).  See the [Security](#security) section for more details. | `0` |
 |`VNC_PASSWORD`| Password needed to connect to the application's GUI.  See the [VNC Password](#vnc-password) section for more details. | (unset) |
 |`X11VNC_EXTRA_OPTS`| Extra options to pass to the x11vnc server running in the Docker container.  **WARNING**: For advanced users. Do not use unless you know what you are doing. | (unset) |
@@ -225,25 +226,25 @@ http://<HOST IP ADDR>:5800
 
 Backblaze's memory use scales with the **number of files** you back up, not their total
 size, and the peak comes from `bztransmit` building its index of everything already
-backed up. At roughly 2.6 million files that peak has been measured at **4–5 GB**, most of
+backed up. At roughly 2.6 million files that peak has been measured at **4 to 5 GB**, most of
 it a single large allocation. Rough guidance:
 
 | Files backed up | Peak `bztransmit` memory | Comfortable host RAM |
 |---|---|---|
-| Up to ~500,000 | ~1–2 GB | 4 GB |
-| ~1 million | ~2–3 GB | 8 GB |
-| ~2.5 million and up | ~4–5 GB | 12 GB, or 8 GB plus swap |
+| Up to ~500,000 | ~1 to 2 GB | 4 GB |
+| ~1 million | ~2 to 3 GB | 8 GB |
+| ~2.5 million and up | ~4 to 5 GB | 12 GB, or 8 GB plus swap |
 
 Two things matter more than the raw numbers:
 
 - **Have swap, or headroom.** The failure mode on a tight host is the kernel's
   out-of-memory killer terminating `bztransmit` mid-pass. That leaves a stale lock behind
-  and every following pass fails to start, so the backup silently stops making progress —
+  and every following pass fails to start, so the backup silently stops making progress:
   see [Health and Auto-Recovery](#health-and-auto-recovery). A modest swap file absorbs
   the peak and avoids this entirely.
 - **Watch file count, not bytes.** A few large media files cost almost nothing. Hundreds
-  of thousands of small ones — bundled downloads, package caches, generated thumbnails —
-  are what pushes memory up. Excluding directories of regenerable junk is the cheapest fix
+  of thousands of small ones, such as bundled downloads, package caches and generated
+  thumbnails, are what pushes memory up. Excluding directories of regenerable junk is the cheapest fix
   available, though note that excluding a path that was previously backed up starts its
   retention clock, so only exclude things you would not want to restore.
 
@@ -260,22 +261,22 @@ docker exec <container> bb-health
 
 It reports one of:
 
-- `OK` — nothing is wrong. An idle container, a fresh install, or one that is signed out
+- `OK`: nothing is wrong. An idle container, a fresh install, or one that is signed out
   is healthy: a backup tool with nothing to do right now is not broken.
-- `HANG` — an upload thread is alive but the transmit log has not advanced for 20 minutes.
+- `HANG`: an upload thread is alive but the transmit log has not advanced for 20 minutes.
   Backblaze's automatic thread setting can spin up enough upload threads to deadlock
   Wine's pipe handling, which leaves the transfer stuck forever.
-- `WEDGE` — a stale four-hour lock is blocking every pass. This is what an out-of-memory
+- `WEDGE`: a stale four-hour lock is blocking every pass. This is what an out-of-memory
   kill or a container restart mid-pass leaves behind: the lock file outlives the process
   that owned it, and every subsequent pass fails to acquire it. It usually shows as a
-  respawn loop — `bztransmit` is relaunched every few seconds and each attempt exits
+  respawn loop: `bztransmit` is relaunched every few seconds and each attempt exits
   with "Failed to grab fourHourLock", which keeps every log fresh and hides the fault
   from any simple staleness test.
 
-Both states are reported only on corroborated evidence — for `WEDGE`, the lock must be
+Both states are reported only on corroborated evidence. For `WEDGE`, the lock must be
 present *and* accompanied by repeated failures in the log *and* too old to belong to any
 `bztransmit` still inside its start-up grace window; a pass that has been running longer
-than that window is always assumed to own the lock — so a healthy backup is never
+than that window is always assumed to own the lock. A healthy backup is never
 flagged.
 
 ### Automatic recovery
@@ -309,7 +310,7 @@ still tells you when something is wrong.
 
 ## Upload Monitor
 
-The GUI shows little while a large file uploads — no percentage, no live speed. The
+The GUI shows little while a large file uploads: no percentage, no live speed. The
 container therefore ships `bb-monitor`, a terminal dashboard that reads Backblaze's own
 transmit state directly.
 
@@ -354,7 +355,7 @@ curl -H "Authorization: Bearer <key>" https://<host>:<port>/api/v1/status
 ```
 
 Permissions are granted per operation, so a display that shows progress can be given
-`read` alone and nothing else — not the names of your files, and no ability to touch the
+`read` alone and nothing else: not the names of your files, and no ability to touch the
 backup. Pausing uses the backup client's own mechanism rather than killing anything.
 
 Keys never expire unless you give them a lifetime, which suits something long-running; put a
@@ -362,7 +363,7 @@ date on one you are handing to someone for a one-off. A consumer running in a br
 its origin naming in `API_CORS_ORIGINS` before it can call the API cross-origin, and there is
 no wildcard.
 
-**Full reference: [docs/api-v1.md](docs/api-v1.md)** — endpoints, permissions, every field
+**Full reference: [docs/api-v1.md](docs/api-v1.md)**: endpoints, permissions, every field
 with its units, and the schema-versioning promise. Build against that rather than against
 the monitor's own web feed, which is an internal shape and can change without notice.
 
@@ -373,14 +374,14 @@ docker exec <container> bb-version
 ```
 
 Reports the container image and Wine versions, the Backblaze client version you have
-installed, and the version Backblaze is currently serving — plus whether an update is
+installed, and the version Backblaze is currently serving, plus whether an update is
 pending and, if one is being held back, which setting is holding it.
 
 Backblaze publishes release notes **ahead of** actually serving a build, so a version
 number you read about there is often not yet installable. `bb-version` queries the same
 API the updater polls, so it answers the question that actually matters: what will happen
 on the next container restart. With the default `FORCE_LATEST_UPDATE=true`, a newer client
-is picked up automatically once Backblaze serves it — there is nothing to do by hand.
+is picked up automatically once Backblaze serves it. There is nothing to do by hand.
 
 Every `bb-*` tool also accepts `--version`, which reports the image version, git
 revision, LTS variant and build date it was built from:
@@ -389,8 +390,8 @@ revision, LTS variant and build date it was built from:
 docker exec <container> bb-monitor --version
 ```
 
-The tools always ship together inside an image, so that build stamp — rather than a
-separate version per tool — is what identifies exactly what you are running.
+The tools always ship together inside an image, so that build stamp, rather than a
+separate version per tool, is what identifies exactly what you are running.
 
 This output is also the most useful thing to include when reporting a problem.
 
@@ -401,7 +402,7 @@ docker exec <container> bb-doctor
 docker exec <container> bb-doctor --fix
 ```
 
-Checks the installation against the problems this project has actually run into — the
+Checks the installation against the problems this project has actually run into: the
 Wine prefix and reported Windows version, the manifest that lets client self-updates
 past the OS check, drive mappings and their readability, control panel skin files,
 permissions and free space, RAM and swap against your file count, zombie processes,
@@ -410,7 +411,7 @@ thread count, stalls, and whether Backblaze is reachable.
 With `--fix` it repairs what can be repaired safely: the reported Windows version,
 missing drive links, missing skin aliases, and a stale lock left behind by an
 out-of-memory kill. Repairs are idempotent, never touch backup state, and are skipped
-whenever the diagnosis is ambiguous — a tool that "fixes" a misdiagnosis is worse than
+whenever the diagnosis is ambiguous: a tool that "fixes" a misdiagnosis is worse than
 one that just reports. Anything it will not fix on its own (too little RAM, no swap,
 a full disk, a wedged transfer) is reported with what to do about it.
 
@@ -422,8 +423,15 @@ with the reason for a pause and what to do about a safety freeze, and has a Copy
 summary button that gives the five lines a maintainer asks for first.
 
 The beta `bb-doctor` also checks each mapped drive: that the container user can read its
-root and its first-level folders, and that the client still recognises the drive's
-identity, which is the fault behind "No files are selected" after an inherit.
+root and its first-level folders, that the client still recognises the drive's identity, and
+that the client is actually set to back the drive up. That last one is the fault behind
+"No files are selected": the client keeps a filter list with one entry per drive, and a drive
+whose entry reads "none" appears ticked in the settings window and backs up nothing.
+
+It also reads what Backblaze report about the account: whether the licence is active, whether
+a renewal has failed, whether the backup is safety-frozen, whether a private encryption key is
+set, and whether the container's own config directory is sitting inside a backed-up drive
+without being excluded.
 
 A note on the console. `docker exec` enters the container as root, and root passes every
 permission test, so a `bb-doctor` run from the console could not tell you that the
@@ -455,7 +463,7 @@ with a download and a delete button for each.
 posted publicly: the per-thread XMLs carry a live authentication token, the AES key and
 IV, and the wrapped file encryption key; the `bz_done` files are a complete listing of
 everything on your machine. None of these are collected, ever. The bundle is built from
-an explicit list of safe sources rather than by scrubbing whatever is lying around — a
+an explicit list of safe sources rather than by scrubbing whatever is lying around: a
 list of what to exclude only has to be wrong once.
 
 **How file names are handled.** Names are replaced with keyed hashes, one per path
@@ -479,7 +487,7 @@ salt that is generated once, stored in your config folder readable only by you, 
 **never included in a bundle**.
 
 **Linking bundles, and unlinking them.** The same name always produces the same hash, so
-if you send two bundles while chasing one problem, they can be compared — the same
+if you send two bundles while chasing one problem, they can be compared: the same
 folder or file is recognisable across both. That also means the two bundles are
 identifiable as coming from the same machine. When you would rather they were not:
 
@@ -489,7 +497,7 @@ docker exec <container> bb-report --regenerate-hashes
 
 This rotates the salt, so future bundles share nothing with earlier ones. It asks for
 confirmation first, because it permanently breaks the connection with anything you have
-already sent — including bundles attached to an issue that is still open. Each bundle
+already sent, including bundles attached to an issue that is still open. Each bundle
 notes a short *hash epoch* identifier so it is clear which bundles can be compared with
 each other; the identifier reveals nothing about your files.
 
@@ -520,7 +528,11 @@ It differs from the stable images in four ways:
   Discord, Slack, Gotify, a JSON webhook or a custom JSON body, on a safety freeze, skipped
   files, a stall, a pause the client chose, and more) and Quiet hours (pause windows on a
   weekly schedule). These are described in the changelog and in
-  [`docs/api-v1.md`](docs/api-v1.md).
+  [`docs/api-v1.md`](docs/api-v1.md). A notification endpoint cannot point at the
+  container's own loopback address or a link-local one; sending a test only ever reports
+  "delivered" or "not delivered", from a small fixed vocabulary, and the endpoint's actual
+  reply is written to the container log instead. While a quiet hours action is still in
+  flight, its last-result state briefly reads as unknown rather than success or failure.
 
 Use the stable tags unless upload speed is the reason you are here. When the fix
 reaches a Wine release the stable images pick it up on their own and the beta stops
@@ -713,7 +725,7 @@ container.
 
     ![Bildschirmfoto von 2022-01-16 15-01-00](https://user-images.githubusercontent.com/28999431/149663289-d53c7241-5856-4032-af41-66a3fa513b36.png)
 
-1. If your [config folder] is somewehere inside the [backup folder] on the docker host side (which is the case for the Unraid template) in order to prevent an infinite loop of config file uploads, because those uploads change bz_done* files in [config folder]/wine/drive_c/ProgramData/Backblaze/bzdata/bzbackup/bzdatacenter open the web interface, open the Backblaze settings, open the "Exclusions" tab, click on "Add Folder" and in the popup navigate to My Computer -> (D:) and naviagate to the config folder inside. For unraid template installs this is My Computer -> (D:) -> appdata -> Backblaze64. Click on OK and close the Backblaze Settings.
+1. If your [config folder] is somewhere inside the [backup folder] on the docker host side (which is the case for the Unraid template) in order to prevent an infinite loop of config file uploads, because those uploads change bz_done* files in [config folder]/wine/drive_c/ProgramData/Backblaze/bzdata/bzbackup/bzdatacenter open the web interface, open the Backblaze settings, open the "Exclusions" tab, click on "Add Folder" and in the popup navigate to My Computer -> (D:) and navigate to the config folder inside. For unraid template installs this is My Computer -> (D:) -> appdata -> Backblaze64. Click on OK and close the Backblaze Settings.
 
 1. The Installation is done 🎉
 
@@ -816,7 +828,7 @@ The `--init` flag installs a tiny process that can actually do a few init things
 
 **Backblaze 64** is a 64-bit / Windows 10 fork maintained by [@iamfoz](https://github.com/iamfoz/backblaze-64-personal-wine-container), re-engineered to install and run Backblaze Personal Backup 10.x (which dropped 32-bit and pre-Windows 10 support).
 
-It builds directly on [@JonathanTreffler](https://github.com/JonathanTreffler/backblaze-personal-wine-container)'s Backblaze Personal Wine Community Container — huge thanks to Jonathan, whose project this is forked from. That project was originally developed by [@Atemu](https://github.com/Atemu/backblaze-personal-wine-container) and is built on [@jlesage](https://github.com/jlesage/docker-baseimage-gui)'s excellent GUI base image.
+It builds directly on [@JonathanTreffler](https://github.com/JonathanTreffler/backblaze-personal-wine-container)'s Backblaze Personal Wine Community Container. Huge thanks to Jonathan, whose project this is forked from. That project was originally developed by [@Atemu](https://github.com/Atemu/backblaze-personal-wine-container) and is built on [@jlesage](https://github.com/jlesage/docker-baseimage-gui)'s excellent GUI base image.
 
 The Backblaze name, logo and application are the property of Backblaze, Inc. This image does not redistribute the Backblaze application; it is downloaded from the official Backblaze servers during installation.
 
