@@ -17,9 +17,12 @@ echo "Source drives"
 _drives=0
 for _link in "${PREFIX}dosdevices"/[d-z]:; do
     [ -L "$_link" ] || continue
+    _root="$(readlink -f "$_link" 2>/dev/null)"
+    # Wine's own z: -> / is the container, not a drive the user mapped, and a
+    # note that the client has not taken ownership of it reads as a fault.
+    [ "$_root" = "/" ] && continue
     _drives=$((_drives+1))
     _letter="$(basename "$_link" | cut -c1 | tr 'a-z' 'A-Z')"
-    _root="$(readlink -f "$_link" 2>/dev/null)"
     if [ -z "$_root" ] || [ ! -d "$_root" ]; then
         BAD "${_letter}: is mapped but its target is missing"
         continue

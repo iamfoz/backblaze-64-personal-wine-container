@@ -272,6 +272,13 @@ if [ -n "${mt:-}" ]; then
     else WARN "${mt} GB host RAM and no swap - large file counts can peak at 4-5 GB in one process"; fi
 fi
 '''),
+    ("swap line folded into the RAM line",
+     '''if [ "${st:-0}" -gt 0 ]; then OK "${st} GB swap available - absorbs memory peaks"
+''',
+     '''# Beta: the RAM line above already names the swap when RAM is short, so this
+# line only repeats it when RAM is not.
+if [ "${st:-0}" -gt 0 ]; then [ "${mt:-12}" -ge 12 ] && OK "${st} GB swap available - absorbs memory peaks"
+'''),
 ]
 for name, old, new in replacements:
     if new in src:

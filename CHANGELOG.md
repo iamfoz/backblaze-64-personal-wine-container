@@ -387,6 +387,7 @@ a stable release.
 - The Status tab shows more. Milestones, each once for a week: a quarter, half, three
   quarters of the way, and the first terabyte. The last 24 hours as a list in a box that
 - The timeline summary line counted a multi-part file once per part, each time at its running total, so a day of large files reported around ten times the bytes sent (11.5 TB for about 1 TB on a live container). A bundle is now one file at its final size, and one already landing parts when a spell starts counts only what it gains during the spell.
+- bb-doctor no longer lists Wine's own `Z:` mapping of the container root as a source drive, or warns that the client has no selection entry for it: that is the right state for a drive that must never be backed up. The swap line no longer repeats what the RAM line already said.
   scrolls, newest first: every change of state, and after each spell of uploading one line
   with what it amounted to, for example "Uploaded 28 files (1.4 GB) in 9m, 40 already backed
   up: average 40.0 Mbit/s, 8.0 threads, mem 1.9 GB, swap 95 MB". A spell that runs for hours

@@ -138,10 +138,15 @@ else
     _cfg_drives=0
     for _cfg_link in "${PREFIX}dosdevices"/[d-z]:; do
         [ -L "$_cfg_link" ] || continue
+        _cfg_root="$(readlink -f "$_cfg_link" 2>/dev/null)"
+        # Wine maps z: to / on its own. That is the container, not a source
+        # drive, and the client having no entry for it is the right state, so
+        # warning about it would send someone to add a selection that must not
+        # exist.
+        [ "$_cfg_root" = "/" ] && continue
         _cfg_drives=$((_cfg_drives+1))
         _cfg_letter="$(basename "$_cfg_link" | cut -c1)"
         _cfg_disp="$(printf '%s' "$_cfg_letter" | tr 'a-z' 'A-Z')"
-        _cfg_root="$(readlink -f "$_cfg_link" 2>/dev/null)"
 
         # tolower() on both sides: bzcli's JSON is not guaranteed to give the
         # drive letter back in the same case the dosdevices symlink uses (the
