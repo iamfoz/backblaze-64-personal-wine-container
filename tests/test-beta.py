@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tests for the beta overlay: key store, file-name gate, settings whitelist,
-log parsing, quiet hours and notifications.
+log parsing, quiet hours, notifications and dismissed warnings.
 
 Nothing in rootfs-beta was covered before this. The cases below are the ones
 where a silent regression costs something real. A scope check that stops
@@ -779,6 +779,95 @@ msg = bbnotify._message("skipped", {"skipped_total": 120},
                                            "sample": "C:\\Jane\\payslip.pdf"}})
 ok("payslip" not in msg and "120 files skipped" in msg,
    "the skipped message carries a count and a reason, never a path")
+
+
+# ---- dismissed warnings ---------------------------------------------------------------
+# A key is the only thing this store holds, and it is written to a file in the
+# same directory as the key store, so a key that could carry a path separator or
+# a dot segment would be a way of naming a file through a route that looks like a
+# warning. The pattern is the whole of that defence, so it is tested directly.
+import bbdismiss
+
+bbdismiss.STORE = os.path.join(FIX, "bb-api", "dismissed.json")
+bbdismiss.reset()
+
+ok(bbdismiss.keys() == frozenset(), "nothing is dismissed to begin with")
+ok(bbdismiss.listing() == [], "and the listing is empty")
+bbdismiss.dismiss("licence", "Backblaze reports the licence as trial_expired")
+ok(bbdismiss.keys() == frozenset({"licence"}), "a dismissed kind is in the key set")
+bbdismiss.dismiss("selection:D:\\", "D:\\ is set to back up nothing")
+ok(bbdismiss.keys() == frozenset({"licence", "selection:D:\\"}),
+   "and so is a dismissed drive")
+_listing = bbdismiss.listing()
+ok([r["key"] for r in _listing] == ["licence", "selection:D:\\"],
+   "the listing is oldest first, which is the order they were accepted in")
+ok(_listing[0]["text"] == "Backblaze reports the licence as trial_expired",
+   "the wording travels with the key, so Settings can say what was dismissed")
+ok(all(isinstance(r["at"], int) and r["at"] > 0 for r in _listing),
+   "every entry records when it was dismissed")
+ok(oct(os.stat(bbdismiss.STORE).st_mode & 0o777) == "0o600",
+   "the store is owner-only, like the key file beside it")
+bbdismiss.reset()
+ok(bbdismiss.keys() == frozenset() and bbdismiss.listing() == [], "reset forgets all of it")
+ok(not os.path.exists(bbdismiss.STORE), "and takes the file with it")
+ok(bbdismiss.reset() is True, "resetting a store that was never written is not an error")
+
+for bad in ("../x", "selection:/etc", "", "selection:d:\\", "selection:D:",
+            "Licence", "licence:", "selection:D:\\..\\x", "a b"):
+    ok(raises(bbdismiss.dismiss, bad), "dismiss() refuses %r" % bad)
+ok(bbdismiss.keys() == frozenset(), "and none of them reached the store")
+ok(bbdismiss.key_for("selection", "D:\\") == "selection:D:\\",
+   "key_for builds the drive key the page is handed")
+ok(bbdismiss.key_for("licence") == "licence", "and a bare kind is its own key")
+
+# A dismissal is a line the container wrote about a warning whose wording came
+# from Backblaze, so it is bounded and on one line for the same reason a key
+# label is: it is read back into the Settings tab.
+bbdismiss.dismiss("frozen", "x" * 400 + "\nsecond line")
+ok(len(bbdismiss.listing()[0]["text"]) == 200
+   and "\n" not in bbdismiss.listing()[0]["text"],
+   "the recorded wording is one bounded line")
+bbdismiss.reset()
+
+# C: is the Wine prefix and Z: is Wine's mapping of the container root. Neither
+# is the user's data, so neither is the fault behind "No files are selected".
+# Z: is found by following the link rather than by being named, so the test
+# builds the link the same way a prefix does.
+bbconfig.PREFIX = os.path.join(FIX, "wine")
+os.makedirs(os.path.join(bbconfig.PREFIX, "dosdevices"), exist_ok=True)
+os.makedirs(os.path.join(FIX, "share"), exist_ok=True)
+os.symlink("/", os.path.join(bbconfig.PREFIX, "dosdevices", "z:"))
+os.symlink(os.path.join(FIX, "share"), os.path.join(bbconfig.PREFIX, "dosdevices", "d:"))
+sysd = bbconfig.drive_selection({"drive_filters": [
+    {"dir": "c:\\", "whichfiles": "none"},
+    {"dir": "z:\\", "whichfiles": "none"},
+    {"dir": "d:\\", "whichfiles": "none"},
+]})
+ok(sysd["C:\\"]["system"] is True, "C: is the container's own drive")
+ok(sysd["Z:\\"]["system"] is True, "so is the letter the prefix maps to /")
+ok(sysd["D:\\"]["system"] is False, "a mounted share is not")
+ok(all(r["backed_up"] is False for r in sysd.values()),
+   "and marking a drive as the container's own does not change what it backs up")
+
+# The alerting gauge is the one that has to go quiet, because an alert on a
+# state somebody has accepted fires for as long as that state lasts.
+_metrics = bbweb.metrics_text({
+    "ok": True,
+    "health": [{"kind": "licence", "text": "Backblaze reports the licence as trial_expired",
+                "key": "licence", "dismissed": True},
+               {"kind": "frozen", "text": "Backblaze has safety-frozen this backup",
+                "key": "frozen", "dismissed": False}],
+})
+ok('bb64_health_warning{kind="licence"} 0' in _metrics,
+   'a dismissed warning reads 0 on health_warning')
+ok('bb64_health_dismissed{kind="licence"} 1' in _metrics,
+   'and 1 on health_dismissed, so a dashboard can still show it')
+ok('bb64_health_warning{kind="frozen"} 1' in _metrics,
+   'a warning nobody dismissed still reads 1')
+ok('bb64_health_dismissed{kind="frozen"} 0' in _metrics,
+   'and 0 on the other gauge')
+ok('bb64_health_dismissed{kind="stale"} 0' in _metrics,
+   'every kind gets both gauges, so neither series appears and disappears')
 
 print()
 if XPASS:

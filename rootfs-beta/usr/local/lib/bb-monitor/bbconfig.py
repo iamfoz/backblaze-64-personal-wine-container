@@ -397,7 +397,9 @@ def drive_selection(data=None):
     The filter list carries a root entry per drive, and that entry decides it:
     a drive whose root reads "none" shows as ticked in the settings window and
     backs up nothing, which is the state behind "No files are selected".
-    Returns {"D:\\\\": {"whichfiles": "all", "backed_up": True}, ...} or None.
+    Returns {"D:\\\\": {"whichfiles": "all", "backed_up": True, "system": False},
+    ...} or None. "system" says the drive is the container rather than the
+    user's data; see _is_system_drive().
     """
     d = data if data is not None else cached()
     filters = (d or {}).get("drive_filters")
@@ -412,8 +414,30 @@ def drive_selection(data=None):
         # exception within a drive rather than a statement about the drive.
         if re.match(r'^[A-Za-z]:\\$', path):
             out[path.upper()] = {"whichfiles": f.get("whichfiles"),
-                                 "backed_up": f.get("whichfiles") == "all"}
+                                 "backed_up": f.get("whichfiles") == "all",
+                                 "system": _is_system_drive(path[0])}
     return out or None
+
+
+def _is_system_drive(letter):
+    """Whether this drive letter is the container rather than the user's data.
+
+    Two of them are, on every container. C: is the Wine prefix: the client's own
+    install and the Windows layer it runs on, which nobody should be backing up
+    and which the client is right not to be selecting. Z: is Wine's own mapping
+    of the container root, and is the same story by a different route, so it is
+    found rather than named: the letter Wine maps to "/" is a convention and not
+    a promise, and a prefix that maps a different one should be read the same
+    way. Anything else is a mounted share, where a root set to "none" really is
+    the fault the warning describes.
+    """
+    if letter.upper() == "C":
+        return True
+    link = os.path.join(PREFIX, "dosdevices", letter.lower() + ":")
+    try:
+        return os.path.realpath(link) == "/"
+    except OSError:
+        return False
 
 
 def excluded_dirs(data=None):

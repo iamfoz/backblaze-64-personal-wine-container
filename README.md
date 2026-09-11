@@ -422,6 +422,15 @@ no second copy. The Status tab lists everything the client says needs attention,
 with the reason for a pause and what to do about a safety freeze, and has a Copy status
 summary button that gives the five lines a maintainer asks for first.
 
+Each of those warnings carries a Dismiss link, for the case where you have looked at it and
+know the state is fine. A dismissed warning stays off the Status tab, off the terminal
+monitor's title bar and out of the `bb64_health_warning` metric, so an alert cannot keep
+firing on something you have already decided about; the API still reports it, marked
+dismissed. The Warnings panel on the Settings tab lists what has been dismissed and when,
+with a Reset that puts all of it back. Two drives never raise the "set to back up nothing"
+warning in the first place: `C:` is the Wine prefix and whichever letter Wine maps to the
+container root is the container itself, so neither holds anything that wants backing up.
+
 The beta `bb-doctor` also checks each mapped drive: that the container user can read its
 root and its first-level folders, that the client still recognises the drive's identity, and
 that the client is actually set to back the drive up. That last one is the fault behind

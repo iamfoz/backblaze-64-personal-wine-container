@@ -29,6 +29,7 @@ import bbapi
 import bbconfig
 import bbctl
 import bbdata
+import bbdismiss
 import bbreport
 import bbtools
 import bbnotify
@@ -105,6 +106,7 @@ def client_reading():
         return None
     lic = d.get("license") or {}
     failure = lic.get("renewal_failure")
+    sel = bbconfig.drive_selection(d)
     return {
         # When the reading was taken, so a page can say how old it is rather
         # than presenting a five-minute-old value as the state of things now.
@@ -138,9 +140,34 @@ def client_reading():
         "schedule": d.get("schedule") or {},
         # Both of these name directories on the user's own share, so both are
         # dropped for a key without read:files. See strip_file_names().
-        "drive_selection": bbconfig.drive_selection(d),
+        "drive_selection": sel,
         "excluded_dirs": bbconfig.excluded_dirs(d),
+        # One entry per drive that warrants the "set to back up nothing" notice,
+        # with the key that dismisses it worked out here. The page draws the
+        # notice, but it has no business building a key out of a drive letter:
+        # the key is a stored identifier and its shape belongs to bbdismiss.
+        "selection_notices": selection_notices(sel),
     }
+
+
+def selection_notices(sel):
+    """The drives worth warning about, and whether the warning was dismissed.
+
+    A system drive is left out entirely rather than dismissed: the prefix drive
+    and Wine's root mapping are the container itself, so there was never
+    anything there to accept.
+    """
+    if not sel:
+        return []
+    done = bbdismiss.keys()
+    out = []
+    for drive in sorted(sel):
+        row = sel[drive] or {}
+        if row.get("system") or row.get("backed_up"):
+            continue
+        key = bbdismiss.key_for("selection", drive)
+        out.append({"key": key, "drive": drive, "dismissed": key in done})
+    return out
 
 
 def client_health(pairs):
@@ -165,6 +192,19 @@ def client_health(pairs):
     return out
 
 
+def health_entries(pairs):
+    """The health list as both the page and the API carry it.
+
+    The key is the kind, because a health warning is raised once for the whole
+    container: there is one freeze, one licence. The selection warnings are the
+    ones that need a subject in the key, and they travel separately, under the
+    client reading, because that is where the drive they name already is.
+    """
+    done = bbdismiss.keys()
+    return [{"kind": k, "text": t, "key": k, "dismissed": k in done}
+            for k, t in client_health(pairs)]
+
+
 def strip_client_dirs(client):
     """The client reading with nothing left in it that names a directory on the
     user's share. The licence, the cluster and the container's own settings stay:
@@ -174,6 +214,10 @@ def strip_client_dirs(client):
     out = dict(client)
     out["drive_selection"] = None
     out["excluded_dirs"] = None
+    # A selection notice names a drive and nothing else, but a drive letter is
+    # what drive_selection is withheld for, so it goes the same way rather than
+    # being argued about separately.
+    out["selection_notices"] = None
     return out
 
 
@@ -239,7 +283,7 @@ def snapshot_to_json(d):
                    "size_str": human(d["scan"]["bytes"]) if d["scan"]["bytes"] else None}
                   if d.get("scan") else None),
         "perf": d.get("perf"),
-        "health": [{"kind": k, "text": t} for k, t in client_health(d.get("health"))],
+        "health": health_entries(d.get("health")),
         "upload_success": d.get("upload_success"),
         # Raw counts rather than a pre-drawn chart: the page scales the bars to
         # its own tallest day, and the day strings are already display-ready.
@@ -856,6 +900,15 @@ SETTINGS_HTML = """<!doctype html>
   <button id="to-monitor">Open the Monitor's settings</button>
 </div>
 
+<h2>Warnings</h2>
+<div class="panel" id="notices">
+  <p class="dim">A dismissed warning stays off the Status tab, the terminal monitor and the
+  metrics until it is reset here. The API still reports it, marked dismissed.</p>
+  <div id="dismissed"></div>
+  <div class="row" style="margin-top:12px"><button id="notices-reset">Reset warnings</button><span class="dim" id="notices-msg"></span></div>
+  <div id="notices-err" class="err" hidden></div>
+</div>
+
 <h2>Quiet hours</h2>
 <div class="panel" id="quiet">
   <p class="dim">Pause the backup on a schedule. At the start of a window the container asks the client
@@ -1166,6 +1219,33 @@ document.getElementById('to-monitor').addEventListener('click', function(){
   if(window.parent !== window) window.parent.postMessage({bb64: 'monitor-settings'}, location.origin);
   else window.location = '/monitor/?settings=status';
 });
+// ---- dismissed warnings ----
+// The list is what was turned off and when, so the reset button is not a blind
+// one: somebody coming back to a container weeks later can see what a previous
+// self accepted before deciding to put it all back.
+function renderNotices(d){
+  var list = d.dismissed || [];
+  document.getElementById('dismissed').innerHTML = list.length
+    ? '<table><thead><tr><th>Warning</th><th>Key</th><th>Dismissed</th></tr></thead><tbody>' +
+      list.map(function(n){
+        var when = '';
+        try { when = new Date(n.at*1000).toLocaleString(); } catch(e){}
+        return '<tr><td class="label">' + esc(n.text || '(no wording recorded)') +
+               '</td><td><code>' + esc(n.key) + '</code></td><td>' + esc(when) + '</td></tr>';
+      }).join('') + '</tbody></table>'
+    : '<p class="dim">Nothing dismissed.</p>';
+}
+function loadNotices(){
+  return fetch('manage/notices', {cache:'no-store'}).then(function(r){ return r.json(); }).then(renderNotices);
+}
+document.getElementById('notices-reset').addEventListener('click', function(){
+  var err = document.getElementById('notices-err'), msg = document.getElementById('notices-msg');
+  err.hidden = true; msg.textContent = '';
+  post('manage/notices/reset', {}).then(function(res){
+    if(!res.ok){ err.textContent = res.body.error || 'Could not reset.'; err.hidden = false; return; }
+    renderNotices(res.body); msg.textContent = 'Reset.'; setTimeout(function(){ msg.textContent = ''; }, 1500);
+  });
+});
 document.getElementById('quiet-save').addEventListener('click', function(){
   var err = document.getElementById('quiet-err'), msg = document.getElementById('quiet-msg');
   err.hidden = true; msg.textContent = '';
@@ -1187,6 +1267,7 @@ try {
 loadClient();
 loadNotify();
 loadQuiet();
+loadNotices();
 setInterval(loadQuiet, 30000);
 </script>
 </body></html>
@@ -1240,14 +1321,19 @@ STATUS_HTML = """<!doctype html>
   a{color:var(--title);}
   h2{font-size:15px;margin:18px 0 4px;color:var(--title);}
   /* One notice per thing that needs attention, with a coloured edge that says
-     how urgently. Text, not icons, so a screen reader gets the same message. */
-  .notice{border-left:4px solid var(--dim);background:var(--panel);border-radius:4px;
-    padding:10px 12px;margin-bottom:8px;max-width:100ch;}
+     how urgently. Text, not icons, so a screen reader gets the same message.
+     On the page background rather than the panel colour: the drive notice sits
+     inside a panel, where a panel-coloured box has no edge at all. */
+  .notice{border:1px solid var(--dim);border-left:4px solid var(--dim);background:var(--bg);
+    border-radius:4px;padding:10px 12px;margin-bottom:8px;max-width:100ch;}
   .notice.n-bad{border-left-color:var(--bad);}
   .notice.n-warn{border-left-color:var(--warn);}
   .notice.n-good{border-left-color:var(--good);}
   .notice.n-info{border-left-color:var(--title);}
   .notice a{color:var(--title);}
+  /* Deliberately quiet. Turning a warning off is a thing to reach for once you
+     have read it, not the first thing the eye lands on. */
+  .notice a.dismiss{color:var(--dim);white-space:nowrap;}
   /* State transitions, newest last, as a plain list with the time in a fixed
      column so the eye can run down it. */
   .tl{list-style:none;margin:0 0 6px;padding:8px 10px;font-size:13px;max-height:220px;overflow:auto;
@@ -1396,6 +1482,15 @@ function render(){
   document.getElementById('empty').hidden = shown.length > 0;
 }
 
+// The link that turns one notice off. The key comes from the payload rather
+// than being built here out of a kind and a drive letter: the key is what gets
+// stored, and its shape is bbdismiss's business, not the page's. The text
+// travels with it so the Settings list can say what was dismissed rather than
+// showing a bare identifier.
+function dismissLink(key, text){
+  return ' <a href="#" class="dismiss" data-key="' + esc(key) +
+         '" data-text="' + esc(text) + '">Dismiss</a>';
+}
 // Everything above the skipped list. Each notice is one thing the client's own
 // records say needs attention, and the ones bb-doctor can diagnose point at the
 // Tools tab. When there is nothing, the page says so rather than showing an
@@ -1408,6 +1503,10 @@ function renderNotices(j){
              esc(j.error || 'the monitor is starting') + '</span></div>');
   }
   (j.health || []).forEach(function(h){
+    // Dismissed means the person has looked at this and accepted it, so the
+    // Status tab says nothing. The API still reports the entry, marked
+    // dismissed, and Settings lists it with a Reset.
+    if(h.dismissed) return;
     var extra = '';
     if(h.kind === 'skipped') extra = ' They are listed below.';
     else if(h.kind === 'frozen') extra = ' Backblaze has stopped the client because something ' +
@@ -1429,7 +1528,8 @@ function renderNotices(j){
       'update the payment details on the account; the client picks it up on its own afterwards.';
     else if(h.kind === 'filecheck') extra = ' Run bb-doctor from the ' + tools + '.';
     else if(h.kind === 'stale') extra = ' The client has not finished a pass within the limit set in its own settings.';
-    out.push('<div class="notice n-bad"><strong>' + esc(h.text) + '.</strong>' + extra + '</div>');
+    out.push('<div class="notice n-bad"><strong>' + esc(h.text) + '.</strong>' + extra +
+             dismissLink(h.key || h.kind, h.text) + '</div>');
   });
   if(j.paused){
     var pausing = j.state === 'Pausing', pl = j.pause_label || {}, q = j.quiet || {};
@@ -1482,15 +1582,20 @@ function renderClient(c){
   var out = [];
   var sel = c.drive_selection || {};
   var drives = Object.keys(sel).sort();
-  var off = drives.filter(function(k){ return !sel[k].backed_up; });
-  if(off.length){
-    out.push('<div class="notice n-bad" style="margin-bottom:12px"><strong>' + esc(off.join(', ')) +
-      (off.length === 1 ? ' is' : ' are') + ' set to back up nothing.</strong> The client is set to ' +
-      'skip everything on ' + (off.length === 1 ? 'that drive' : 'those drives') + '. It still shows ' +
+  // One notice per drive rather than one for all of them, because each carries
+  // its own Dismiss and a person may well know about one drive and not another.
+  // The list comes from the payload, which has already left out the container's
+  // own drives: see selection_notices().
+  (c.selection_notices || []).forEach(function(n){
+    if(n.dismissed) return;
+    var text = n.drive + ' is set to back up nothing';
+    out.push('<div class="notice n-bad" style="margin-bottom:12px"><strong>' + esc(text) +
+      '.</strong> The client is set to skip everything on that drive. It still shows ' +
       'as ticked in the Backblaze settings window, which is what makes this one hard to find, and it ' +
       'is the state behind the message "No files are selected". Fix it in the Backblaze settings ' +
-      'window, under Settings and then Exclusions, by removing the exclusion on the drive itself.</div>');
-  }
+      'window, under Settings and then Exclusions, by removing the exclusion on the drive itself.' +
+      dismissLink(n.key, text) + '</div>');
+  });
   out.push('<p style="margin:0 0 8px"><strong>Private encryption key:</strong> ' +
     (c.encrypted === true
       ? 'set. Backblaze cannot recover a forgotten private encryption key and cannot restore your ' +
@@ -1513,10 +1618,17 @@ function renderClient(c){
     out.push('<table><thead><tr><th>Drive</th><th>Set to back up</th></tr></thead><tbody>' +
       drives.map(function(k){
         var s = sel[k] || {};
-        return '<tr><td>' + esc(k) + '</td><td>' + (s.backed_up
+        // A system drive that backs up nothing is the right answer, not a
+        // fault, so it is stated plainly in the dim colour rather than in the
+        // one the page uses for something that needs fixing.
+        var answer = s.backed_up
           ? 'Yes, all files'
+          : s.system
+          ? '<span class="dim">No, nothing (the container' +
+            "'s own drive; nothing here needs backing up)</span>"
           : '<strong style="color:var(--bad)">No, nothing</strong> <span class="dim">(' +
-            esc(s.whichfiles == null ? 'not set' : s.whichfiles) + ')</span>') + '</td></tr>';
+            esc(s.whichfiles == null ? 'not set' : s.whichfiles) + ')</span>';
+        return '<tr><td>' + esc(k) + '</td><td>' + answer + '</td></tr>';
       }).join('') + '</tbody></table>');
   }
   if(c.at){
@@ -1569,6 +1681,32 @@ function load(){
 document.getElementById('refresh').addEventListener('click', load);
 document.getElementById('summary').addEventListener('click', copySummary);
 document.getElementById('filter').addEventListener('input', render);
+// Every Dismiss link on the page, caught once on the document, because the
+// notices are rebuilt from scratch on each poll and a listener bound to one of
+// them would be thrown away with it. The header is the same one the other
+// /manage/ posts send: it is what forces a preflight on anything cross-origin,
+// which is what stops another site borrowing this browser session.
+document.addEventListener('click', function(e){
+  var a = e.target;
+  if(!a || !a.classList || !a.classList.contains('dismiss')) return;
+  e.preventDefault();
+  var key = a.getAttribute('data-key');
+  if(!key) return;
+  fetch('manage/notices/dismiss', {method:'POST', cache:'no-store',
+    headers:{'Content-Type':'application/json','X-Requested-With':'bb64'},
+    body: JSON.stringify({key: key, text: a.getAttribute('data-text') || ''})
+  }).then(function(r){
+    // Hidden straight away rather than waiting for the next poll, which is up
+    // to fifteen seconds away and long enough to look as though the click did
+    // nothing. The poll then redraws without it anyway.
+    if(r.ok){ var n = a.parentNode; if(n) n.hidden = true; load(); }
+    else { var err = document.getElementById('err');
+           err.textContent = 'Could not dismiss that warning.'; err.hidden = false; }
+  }).catch(function(){
+    var err = document.getElementById('err');
+    err.textContent = 'Could not dismiss that warning.'; err.hidden = false;
+  });
+});
 document.getElementById('chips').addEventListener('click', function(e){
   var r = e.target.getAttribute && e.target.getAttribute('data-reason');
   if(r === null || r === undefined) return;
@@ -2042,7 +2180,7 @@ def api_v1_payload(d):
         "scan": {"dirs_done": sc.get("dirs_done"), "dirs_total": sc.get("dirs_total"),
                  "pct": round(sc["pct"], 2) if sc.get("pct") is not None else None,
                  "files": sc.get("files"), "bytes": sc.get("bytes")} if sc else None,
-        "health": [{"kind": k, "text": t} for k, t in client_health(d.get("health"))],
+        "health": health_entries(d.get("health")),
         "skipped_files": d.get("skipped"),
         # The counts above say how many were given up on; this names them. It is
         # kept at the top level rather than under "files" because it is a
@@ -2345,12 +2483,22 @@ def metrics_text(api):
     sk = api.get("skipped_files") or {}
     g("skipped_files", sk.get("total", 0) if sk else 0, "Files the client has given up on")
     kinds = {h["kind"] for h in (api.get("health") or [])}
+    gone = {h["kind"] for h in (api.get("health") or []) if h.get("dismissed")}
     # licence and renewal come from the client's own report through bbconfig.
     # They reached the JSON payload and the event stream but not this gauge,
     # which would have left a Grafana alert silent for the one failure that
     # stops backups without anything else going wrong.
+    #
+    # health_warning is the alerting gauge, so a dismissed warning reads 0: an
+    # alert on a state the person has looked at and accepted would fire for as
+    # long as that state lasts, which is how a pager gets ignored. What was
+    # dismissed is not hidden, though. health_dismissed says so alongside, so a
+    # dashboard can still show the state and a rule can still be written on it.
     for k in ("frozen", "filecheck", "stale", "skipped", "licence", "renewal"):
-        g("health_warning", 1 if k in kinds else 0, "1 while this warning is raised", '{kind="%s"}' % k)
+        g("health_warning", 1 if (k in kinds and k not in gone) else 0,
+          "1 while this warning is raised and has not been dismissed", '{kind="%s"}' % k)
+        g("health_dismissed", 1 if k in gone else 0,
+          "1 while this warning is raised and has been dismissed", '{kind="%s"}' % k)
     up = api.get("uploads_today") or {}
     g("uploads_today", up.get("success"), "Successful uploads recorded today")
     g("upload_retries_today", up.get("retried_attempts"), "Attempts a vault turned away today")
@@ -3921,6 +4069,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"schema": bbapi.SCHEMA, "config": conf,
                              "state": _quiet.state(conf), "days": list(bbquiet.DAYS)})
             return True
+        if path == "/manage/notices":
+            # What has been dismissed, for the Settings tab's list. The Status
+            # tab does not need this route: every notice it draws already
+            # carries its own dismissed flag in the status payload.
+            self._json(200, {"schema": bbapi.SCHEMA, "dismissed": bbdismiss.listing()})
+            return True
         if path == "/manage/client":
             # The reading and the writable settings in one answer, because the
             # settings section needs both to draw a single row, and the live
@@ -4176,6 +4330,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": str(exc)})
                 return
             self._json(200, {"schema": bbapi.SCHEMA, "config": conf, "state": _quiet.state(conf)})
+            return
+        if path == "/manage/notices/dismiss":
+            # The key is checked in bbdismiss against a pattern that admits a
+            # bare kind or one drive and nothing else, so nothing from the
+            # request reaches a file name however it is spelt. The text is
+            # stored only so the Settings list can say what was dismissed.
+            try:
+                bbdismiss.dismiss(str(body.get("key") or ""), str(body.get("text") or ""))
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(200, {"schema": bbapi.SCHEMA, "ok": True,
+                             "dismissed": bbdismiss.listing()})
+            return
+        if path == "/manage/notices/reset":
+            bbdismiss.reset()
+            self._json(200, {"schema": bbapi.SCHEMA, "ok": True,
+                             "dismissed": bbdismiss.listing()})
             return
         if path == "/manage/keys":
             label = (body.get("label") or "").strip()

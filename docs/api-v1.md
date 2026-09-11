@@ -215,6 +215,12 @@ with a `bb64_` prefix: rate, threads, pause, progress, ETA, scan, memory, swap, 
 skipped files, each health warning as `bb64_health_warning{kind="..."}`, today's uploads
 and retries, compression saved, days since a completed pass.
 
+`bb64_health_warning` reads 1 only while the warning is raised and has not been dismissed:
+an alert on a state somebody has already looked at and accepted would fire for as long as
+that state lasts, which is how a pager stops being read. A dismissed warning reads 1 on
+`bb64_health_dismissed{kind="..."}` instead, so a dashboard can still show it and a rule
+can still be written on it.
+
 ### `GET /api/v1/events`
 
 Requires `read`. A server-sent event stream. One `state` event when the state, the pause,
@@ -334,12 +340,19 @@ slow cycle:
 | `transmit` | The state of the transmit process |
 | `settings` | The current value of each setting the container can change |
 | `schedule` | The client's backup schedule. Read only: the container never writes it |
-| `drive_selection` | Per drive, `whichfiles` and `backed_up`. A drive reading `none` backs up nothing while still appearing ticked in the client's settings window |
+| `drive_selection` | Per drive, `whichfiles`, `backed_up` and `system`. A drive reading `none` backs up nothing while still appearing ticked in the client's settings window |
+| `selection_notices` | One entry per drive that warrants that warning: `key`, `drive`, `dismissed` |
 | `excluded_dirs` | Directories the client is set to skip |
 | `at`, `ok`, `error` | When the reading was taken and whether it succeeded |
 
-`drive_selection` and `excluded_dirs` name directories on the user's own share, so a key
-without `read:files` receives `null` for both.
+`system` is true for the container's own drives rather than the user's data: `C:` is the
+Wine prefix, which holds the client's own install and the Windows layer, and whichever
+letter the prefix maps to `/` is Wine's view of the container root. Neither should ever be
+backed up, so neither raises the "set to back up nothing" warning, and neither appears in
+`selection_notices`.
+
+`drive_selection`, `selection_notices` and `excluded_dirs` name directories or drives on
+the user's own share, so a key without `read:files` receives `null` for all three.
 
 The account email, the login and the host guid are never read. The container queries five
 subtrees by path and `/backup/account` is not one of them.
@@ -478,8 +491,23 @@ An array, empty when nothing is wrong. Each entry:
 |---|---|---|
 | `kind` | string | Machine-readable category. |
 | `text` | string | Human-readable description. |
+| `key` | string | The key that dismisses this warning. The same as `kind` for a health entry. |
+| `dismissed` | boolean | True when somebody has dismissed it in the web interface. |
 
-Alert when this array is not empty.
+Alert when this array holds an entry with `dismissed` false. A dismissed entry is
+still reported here, because a consumer asking what is wrong should be told, and told
+that somebody has looked at it and accepted it. What it stops is the Status tab, the
+terminal monitor and the `bb64_health_warning` gauge.
+
+Dismissing is done from the web interface and not from this API. The Status tab puts a
+Dismiss link on each warning and the Settings tab lists what has been dismissed with a
+Reset, over three routes under `/manage/`: `GET /manage/notices` for the list,
+`POST /manage/notices/dismiss` with `{"key", "text"}`, and `POST /manage/notices/reset`.
+Those are browser-session routes, behind the same `auth_request` and the same
+`X-Requested-With: bb64` header as the rest of `/manage/`, and no API key reaches them.
+They are recorded here because they change what this API reports, not because a consumer
+can call them. A key is a credential handed to a dashboard, and deciding that a warning
+has been accepted is a judgement a person makes.
 
 ### `first_backup`
 

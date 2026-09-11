@@ -547,6 +547,18 @@ a stable release.
   read those rows and say so. The API row carries `dedup: true`. Confirmed on a live
   container: the report row for a file appeared three seconds before the monitor saw the
   client move on from it.
+- A warning can be dismissed. Every notice on the Status tab now carries a Dismiss link,
+  for the case where you have read it and know the state is fine. A dismissed warning stays
+  off the Status tab, off the terminal monitor's title bar and out of the
+  `bb64_health_warning` metric, so a Grafana alert cannot keep firing on a state you have
+  already decided about. The API still reports the entry, now with `key` and `dismissed`
+  alongside `kind` and `text`, and `bb64_health_dismissed{kind}` reads 1 while it is off, so
+  a dashboard can still show it. A new Warnings panel on the Settings tab lists what was
+  dismissed, with the wording and the date, and a Reset that puts all of it back. The
+  dismissals are kept in `/config/bb-api/dismissed.json`, owner-readable only like the rest
+  of that directory. Notifications are unaffected: they fire on a transition rather than on
+  a steady state, so a warning that has stood long enough to be dismissed has already sent
+  its message.
 
 ### Changed
 - The tabs in the web interface are Desktop, Monitor, Status, Tools, API and Settings.
@@ -572,6 +584,15 @@ a stable release.
   `/usr/local/lib/bb-monitor/bbdata.py`, so a feature appears in both or in neither.
 
 ### Fixed
+- The Status tab warned that `C:` was set to back up nothing. `C:` is the Wine prefix, which
+  holds the client's own install and the Windows layer it runs on, so the client is right not
+  to be selecting it and the warning was wrong on every container. Whichever letter the prefix
+  maps to `/`, usually `Z:`, is Wine's view of the container root and is the same story. Both
+  are now marked as the container's own drives. They raise no warning, they are stated as
+  "No, nothing (the container's own drive; nothing here needs backing up)" in the per-drive
+  table rather than in the colour used for a fault, and the terminal monitor writes them as
+  "(container)" in its ordinary colour. A mounted share set to back up nothing is unchanged:
+  that one really is the fault behind "No files are selected".
 - `bb-doctor` reported a share with the wrong owner as readable, when it was run from the
   console. The readability test is `[ -r ]`, and the console is root, so the test could not
   fail. A user with the most common fault this container has ran the tool as the README

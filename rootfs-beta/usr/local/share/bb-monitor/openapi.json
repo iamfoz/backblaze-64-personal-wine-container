@@ -124,6 +124,14 @@
             },
             "text": {
               "type": "string"
+            },
+            "key": {
+              "type": "string",
+              "description": "The key that dismisses this warning. The same as kind for a health entry."
+            },
+            "dismissed": {
+              "type": "boolean",
+              "description": "True when somebody has dismissed it in the web interface. The entry is still reported; what a dismissal stops is the Status tab, the terminal monitor and the bb64_health_warning gauge."
             }
           }
         },
@@ -931,7 +939,29 @@
               "object",
               "null"
             ],
-            "description": "Per drive, whichfiles and backed_up. A drive reading none backs up nothing while still appearing ticked in the client's settings window. Withheld from a key without read:files."
+            "description": "Per drive, whichfiles, backed_up and system. A drive reading none backs up nothing while still appearing ticked in the client's settings window. system is true for the container's own drives rather than the user's data: C: is the Wine prefix, and whichever letter the prefix maps to / is Wine's view of the container root. Withheld from a key without read:files."
+          },
+          "selection_notices": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "The key that dismisses this warning, for example selection:D:\\"
+                },
+                "drive": {
+                  "type": "string"
+                },
+                "dismissed": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "description": "One entry per drive set to back up nothing. A system drive never appears here: there was never anything on it to back up. Withheld from a key without read:files."
           },
           "excluded_dirs": {
             "type": [
@@ -1042,7 +1072,7 @@
     "/metrics": {
       "get": {
         "summary": "Prometheus text exposition",
-        "description": "Requires read. Gauges prefixed bb64_ for rate, progress, memory, RTT, skipped files and health warnings.",
+        "description": "Requires read. Gauges prefixed bb64_ for rate, progress, memory, RTT, skipped files and health warnings. bb64_health_warning{kind} reads 1 only while the warning is raised and has not been dismissed, so an alert cannot fire forever on a state somebody has accepted; bb64_health_dismissed{kind} reads 1 while it has been.",
         "responses": {
           "200": {
             "description": "Metrics",

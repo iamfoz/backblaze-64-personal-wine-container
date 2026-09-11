@@ -25,6 +25,7 @@ from collections import deque
 # added to bbdata now shows up in both. This file owns curses and nothing else.
 sys.path.insert(0, "/usr/local/lib/bb-monitor")
 import bbconfig
+import bbdismiss
 from bbdata import (BUILD_INFO, BUILD_LABEL, INT, eta_date, eta_str, gather,
                      human, rec_cols, uptime_str, _upload_host, _upload_rtt)
 
@@ -281,6 +282,11 @@ def draw(scr,d,st):
     for kind,text in bbconfig.health():
         if kind not in seen_kinds:
             warn.append((kind,text)); seen_kinds.add(kind)
+    # A warning somebody has dismissed on the Settings tab is off here too. The
+    # title bar is the one place on this screen that cannot be scrolled past,
+    # which is exactly why it must not carry a state that has been accepted.
+    dismissed=bbdismiss.keys()
+    warn=[(k,t) for k,t in warn if k not in dismissed]
     hdr="Backblaze 64 • Upload Monitor"
     if warn: hdr += "  •  " + "; ".join(t for _,t in warn)
     clk=time.strftime("%H:%M:%S")
@@ -453,7 +459,17 @@ def draw(scr,d,st):
             # client's own settings window and backs up nothing: the state
             # behind the user-reported fault "No files are selected". Worth
             # the BAD colour, since nothing else on this screen would catch it.
+            #
+            # Two drives are exempt. C: is the Wine prefix and Z: is Wine's
+            # mapping of the container root, so both are the container rather
+            # than the user's data and neither should ever be backed up: they
+            # are stated in NORM, not shouted about in BAD. So is a drive whose
+            # warning somebody has dismissed, which is the same judgement made
+            # by hand rather than worked out from the prefix.
             if sel[drive].get("backed_up"): parts.append((label+" ",GOOD))
+            elif sel[drive].get("system"): parts.append((label+" (container) ",NORM))
+            elif bbdismiss.key_for("selection",drive) in dismissed:
+                parts.append((label+" (dismissed) ",NORM))
             else: parts.append((label+" (not selected!) ",BAD))
         add("PROGRESS","selection",txt([("Selected: ",NORM)]+parts))
     # A label column, then that row's items wrapped into whatever is left. The
