@@ -11,7 +11,13 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Changed
 
-- Wine moved from 11.14 to 11.18. All four patches in `patches/` apply to it unchanged.
+- Wine moved from 11.14 to 11.17. All four patches in `patches/` apply to it unchanged. 11.18 was
+  published for a few hours on 19 September and withdrawn: its new process start-up can place
+  Wine's own data at the address bztransmit.exe must load at, and the executable has no relocations,
+  so about one chunk-upload child in several hundred dies before it runs and the pass then waits
+  for it forever. Symptom: "Some sub_threads busy" repeating in the transmit log for hours, one
+  thread, no upload sockets, and `wine: failed to create main module ... status c0000018` in the
+  container log.
 - The jlesage GUI base image moved from `v4.12.6` to `v4.14.0` for the beta. The base now defines
   the `app` user and group the same way as every other account, updates nginx to 1.30.4 and fixes
   supplementary groups from `SUP_GROUP_IDS_INTERNAL_*` not reaching the `app` user. The stable images

@@ -25,8 +25,17 @@
 # WINE_REF pins the Wine source. git apply fails loudly if the source has
 # moved, which is the signal to re-verify rather than ship a mispatched Wine.
 # The patch is the same artifact submitted upstream, applied verbatim.
+#
+# Not wine-11.18. Its process-startup rework (ntdll, 10 to 16 Sep 2026) places
+# the initial TEB and process parameters at randomised high addresses before
+# the main image is mapped. bztransmit.exe has no relocations, so it must load
+# at 0x140000000, and when that address is taken the child dies with "failed
+# to create main module, status c0000018". Backblaze launches one child per
+# 10 MB chunk, so a long pass hits it and then waits forever for the missing
+# chunk (seen on 19 Sep 2026, first day on 11.18). Move past 11.17 only after
+# a pass on a large file completes on the newer Wine.
 # ============================================================================
-ARG WINE_REF=wine-11.18
+ARG WINE_REF=wine-11.17
 
 FROM ubuntu:26.04 AS wine-builder
 ARG WINE_REF
