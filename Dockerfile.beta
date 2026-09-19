@@ -260,7 +260,6 @@ inserts = [
 # to be folded in at the next stable release.
 [ -r /usr/local/lib/bb-doctor-passes.sh ] && . /usr/local/lib/bb-doctor-passes.sh
 
-echo "Connectivity"
 '''),
     ("bb-doctor-asuser.sh",
      'echo "Backblaze container check"',
