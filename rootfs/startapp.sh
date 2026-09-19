@@ -267,16 +267,13 @@ if [ -f "${WINEPREFIX}drive_c/Program Files/Backblaze/bzbui.exe" ]; then
 
 
 
-    # Check if auto-updates are disabled
-    if [ "$DISABLE_AUTOUPDATE" = "true" ]; then
-        log_message "UPDATER: DISABLE_AUTOUPDATE=true, Auto-updates are disabled. Starting Backblaze without updating."
-        start_app
-    fi
-
-    # a pinned client version wins over the update check, and is installed
-    # on every start that finds a different one, downwards included: 10.0.3.1075
-    # loses its four-hour lock under Wine, and the way back is 10.0.1.1069 over
-    # it. Direction does not matter to fetch_and_install: bzdoinstall.exe never
+    # A pinned client version comes first: it wins over DISABLE_AUTOUPDATE, which
+    # then means only "do not look for a newer client", and over the update
+    # check below. Installed on every start that finds a different version,
+    # downwards included: 10.0.3.1075 loses its four-hour lock under Wine, and
+    # the way back is 10.0.1.1069 over it. Putting it after the DISABLE check
+    # made the pin silently inert for everyone who had followed the advice to
+    # disable updates, which is exactly who needed it. Direction does not matter to fetch_and_install: bzdoinstall.exe never
     # copies the program files (the MSI does, on Windows), the cp above it does,
     # and cp has no opinion about versions.
     if [ -n "${BACKBLAZE_VERSION:-}" ]; then
@@ -287,6 +284,12 @@ if [ -f "${WINEPREFIX}drive_c/Program Files/Backblaze/bzbui.exe" ]; then
             log_message "UPDATER: BACKBLAZE_VERSION=${BACKBLAZE_VERSION} pinned, installed ${local_version:-unknown} - installing the pinned version"
             fetch_and_install
         fi
+        start_app
+    fi
+
+    # Check if auto-updates are disabled
+    if [ "$DISABLE_AUTOUPDATE" = "true" ]; then
+        log_message "UPDATER: DISABLE_AUTOUPDATE=true, Auto-updates are disabled. Starting Backblaze without updating."
         start_app
     fi
 
