@@ -26,7 +26,7 @@
 # moved, which is the signal to re-verify rather than ship a mispatched Wine.
 # The patch is the same artifact submitted upstream, applied verbatim.
 # ============================================================================
-ARG WINE_REF=wine-11.14
+ARG WINE_REF=wine-11.18
 
 FROM ubuntu:26.04 AS wine-builder
 ARG WINE_REF
@@ -98,7 +98,7 @@ RUN set -eu; \
 # ============================================================================
 # Stage 2 - the runtime image: jlesage GUI base running Backblaze under our Wine.
 # ============================================================================
-FROM jlesage/baseimage-gui:ubuntu-26.04-v4.12.6@sha256:8e7e36393474e63c4ff2cc61c0ea776cbd9b4e3066af8e14cf547a67c55c08a6
+FROM jlesage/baseimage-gui:ubuntu-26.04-v4.14.0@sha256:ba4b93918b17f74c21ab2a0ae7c44c0821efef4f7fd17455b754cf812add84af
 
 ENV WINEPREFIX=/config/wine/
 # Backblaze 10.x is a native 64-bit app, so the prefix must be win64.

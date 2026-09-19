@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This release is for the beta channel only (the `:beta` tag). It has everything in 10.2.1, plus
 the additions below. The `:beta` tag is mutable, so each published build has its own number.
+
+### Changed
+
+- Wine moved from 11.14 to 11.18. All four patches in `patches/` apply to it unchanged.
+- The jlesage GUI base image moved from `v4.12.6` to `v4.14.0` for the beta. The base now defines
+  the `app` user and group the same way as every other account, updates nginx to 1.30.4 and fixes
+  supplementary groups from `SUP_GROUP_IDS_INTERNAL_*` not reaching the `app` user. The stable images
+  stay on `v4.12.6` until the next stable release.
 `bb-version` reports that number, and the monitors show it as `beta+<n>`. Give that number in a
 bug report.
 
