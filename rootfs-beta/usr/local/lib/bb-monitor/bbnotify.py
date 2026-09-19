@@ -112,6 +112,8 @@ EVENTS = (
      "The client has given up on files. Fires when the count reaches the threshold.", True),
     ("stale",         "No completed backup",
      "No pass has completed within the limit set in the client's own settings.", True),
+    ("lostlock",      "Passes losing the four-hour lock",
+     "Every backup pass aborts at the transmit step. Seen with client 10.0.3.1075 under Wine.", True),
     ("stalled",       "Backup stalled",
      "bb-health reports a HANG or a WEDGE.", True),
     ("client_paused", "Paused by the client",

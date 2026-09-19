@@ -15,7 +15,7 @@
 # The client does validate on apply, but a control that offers a bad value and
 # lets the client reject it is a worse control than one that knows the answer.
 
-import json, os, re, signal, subprocess, threading, time
+import calendar, json, os, re, signal, subprocess, threading, time
 
 BZCLI = "/config/wine/drive_c/Program Files/Backblaze/bzcli.exe"
 PREFIX = os.environ.get("WINEPREFIX", "/config/wine")
@@ -141,6 +141,44 @@ _cache = {"at": 0, "data": None, "error": None, "started": 0}
 
 def available():
     return os.path.exists(BZCLI)
+
+
+def ready():
+    """available(), and the client that startapp.sh launches is running.
+
+    Starting bzcli boots the Wine prefix when nothing else has, and the boot
+    starts bzserv, which starts a backup pass, under this service's environment
+    and before startapp.sh has installed or updated the client. On a live
+    container that put a pass and the installer on the same files at the same
+    time. bzbui.exe is what startapp.sh launches last, so nothing automatic runs
+    bzcli until it is up.
+    """
+    return available() and _client_launched()
+
+
+_launched = {"at": 0.0, "up": False}
+
+
+def _client_launched():
+    now = time.time()
+    if now - _launched["at"] < 10:
+        return _launched["up"]
+    up = False
+    try:
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                with open("/proc/%s/cmdline" % pid, "rb") as fh:
+                    if b"bzbui.exe" in fh.read():
+                        up = True
+                        break
+            except OSError:
+                continue
+    except OSError:
+        pass
+    _launched.update(at=now, up=up)
+    return up
 
 
 def _env():
@@ -378,17 +416,61 @@ def health(data=None):
     out = []
     lic = d.get("license") or {}
     status = (lic.get("status") or "").lower()
-    # billing_active is the healthy reading seen on a live container. Anything
-    # else is reported rather than interpreted: the set of values is not
-    # established, and a wrong guess about someone's billing is worse than a
-    # plain statement of what the client said.
-    if status and status not in ("billing_active", "active", "trial"):
+    words = licence_words(lic)
+    # billing_active is the healthy reading seen on a live container, and
+    # expires_<stamp> is a licence with a date on it, seen after a reinstall.
+    # Anything else is reported rather than interpreted: the set of values is
+    # not established, and a wrong guess about someone's billing is worse than
+    # a plain statement of what the client said.
+    if words["days_left"] is not None:
+        if words["days_left"] < 0:
+            out.append(("licence", "The licence expired on %s" % words["expires_on"]))
+        elif words["days_left"] <= LICENCE_WARN_DAYS:
+            out.append(("licence", "The licence expires in %d day%s, on %s"
+                                   % (words["days_left"], "" if words["days_left"] == 1 else "s",
+                                      words["expires_on"])))
+    elif status and status not in ("billing_active", "active", "trial"):
         out.append(("licence", "Backblaze reports the licence as %s" % lic["status"]))
     if lic.get("renewal_failure") and lic["renewal_failure"] != "none":
         out.append(("renewal", "The last licence renewal failed (%s)" % lic["renewal_failure"]))
     if d.get("safety_freeze") not in (None, "not_frozen"):
         out.append(("frozen", "Backblaze has safety-frozen this backup"))
     return out
+
+
+LICENCE_WARN_DAYS = 14
+
+
+def licence_words(lic):
+    """The licence status as a person reads it.
+
+    The client's status is a token: billing_active, or expires_20261004001046,
+    a GMT stamp glued to a word. {"label", "expires_at", "expires_on",
+    "days_left"}: expires_at is epoch seconds and days_left is whole days, both
+    None when the status carries no date.
+    """
+    status = (lic or {}).get("status") or ""
+    m = re.match(r'^(?:trial_)?expires_(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)$', status.lower())
+    if not m:
+        label = {"billing_active": "active, billing in order", "active": "active",
+                 "trial": "trial"}.get(status.lower(), status or "not reported")
+        return {"label": label, "expires_at": None, "expires_on": None, "days_left": None}
+    y, mo, d, h, mi, s = (int(x) for x in m.groups())
+    try:
+        at = calendar.timegm((y, mo, d, h, mi, s, 0, 0, 0))
+    except (ValueError, OverflowError):
+        return {"label": status, "expires_at": None, "expires_on": None, "days_left": None}
+    on = "%d %s %d" % (d, calendar.month_name[mo], y)
+    # Whole days, rounded towards the date: "expires in 3 days" for anything
+    # between two and three days out, and negative once it is behind.
+    secs = at - time.time()
+    days = -int((-secs) // 86400) if secs >= 0 else int(secs // 86400)
+    head = "trial" if status.lower().startswith("trial_") else "licence"
+    if days < 0:
+        label = "%s expired on %s" % (head, on)
+    else:
+        label = "%s valid until %s" % (head, on)
+    return {"label": label, "expires_at": at, "expires_on": on, "days_left": days}
 
 
 def drive_selection(data=None):

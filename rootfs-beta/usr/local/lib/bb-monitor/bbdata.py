@@ -440,7 +440,79 @@ def health(data=None):
     if sk and sk["total"]:
         out.append(("skipped", "%d files skipped and not backed up (%s)"
                                 % (sk["total"], sk["top_reason"].replace("_", " ").lower())))
+    lost = lost_lock()
+    if lost:
+        out.append(("lostlock", "The client lost its four-hour lock %d times in the current log, "
+                                "so no backup pass completes" % lost))
     return out
+
+
+# A pass that loses the client's four-hour lock aborts at the transmit step, and
+# bzserv starts another a few minutes later that loses it the same way. Large
+# files keep uploading through the chunk path meanwhile, so the rate, the
+# state and bb-health all look right: the log's own error line is the one
+# place it shows. Seen with client 10.0.3.1075 under Wine, where the lock file
+# is on disk and the client's own check says it is not.
+LOST_LOCK_MIN = 2         # one loss can follow a restart that cut a pass short
+
+
+# An inherit pulls the backup state of another machine identity into this one,
+# and while it runs nothing else happens: no pass, no upload, and the counters
+# read zero because the client has not rebuilt them yet. The client writes its
+# progress to one small file for the whole of it. A reinstall that lost
+# bzinstall.xml is what starts one; see the CHANGELOG.
+IBS = BZ + "/bzinherit/bz_ibs_progress.xml"
+
+_IBS_STAGES = {"tbs_downloading": "downloading the backup state",
+               "tbs_unpacking": "unpacking the backup state",
+               "tbs_merging": "merging the backup state"}
+# The progress file outlives the inherit: on a live container it read
+# tbs_done_success, 1000 out of 1000, an hour after the client had moved on.
+# A finished inherit is not a reading, and a failed one is the client's own
+# word for it, so only "done, success" is dropped.
+_IBS_DONE_OK = "tbs_done_success"
+
+
+def inherit(text=None):
+    """{stage, stage_label, pct, downloaded, total, clump, clumps, kbit, at,
+    result} while an inherit is in progress, else None."""
+    t = text if text is not None else read(IBS)
+    if "inherit_stage" not in t:
+        return None
+    def attr(name, cast=str):
+        m = re.search(r'\b%s="([^"]*)"' % name, t)
+        if not m:
+            return None
+        try:
+            return cast(m.group(1))
+        except ValueError:
+            return None
+    stage = attr("inherit_stage") or "unknown"
+    if stage == _IBS_DONE_OK:
+        return None
+    per_mille = attr("prog_out_of_thousand", int)
+    label = _IBS_STAGES.get(stage, stage.replace("tbs_", "").replace("_", " "))
+    if stage.startswith("tbs_done"):
+        label = "finished: " + label.replace("done ", "")
+    return {"stage": stage,
+            "stage_label": label,
+            "failed": stage.startswith("tbs_done"),
+            "pct": round(per_mille / 10.0, 1) if per_mille is not None else None,
+            "downloaded": attr("num_bytes_downloaded", int),
+            "total": attr("tot_num_bytes_in_ibs_file", int),
+            "clump": attr("current_clump_number", int),
+            "clumps": attr("num_clumps_total", int),
+            "kbit": attr("download_kbits_per_sec", int),
+            "at": (attr("gmt_millis_this_file_written", int) or 0) // 1000 or None,
+            "result": attr("ibs_final_result", int)}
+
+
+def lost_lock(text=None):
+    """How many passes lost the four-hour lock in the current transmit log, or
+    0 below LOST_LOCK_MIN."""
+    t = text if text is not None else tail_log(4000)
+    n = t.count("Lost four hour lock")
+    return n if n >= LOST_LOCK_MIN else 0
 
 
 # Below this share of the set still to send, the backup counts as caught up and a
@@ -1526,6 +1598,7 @@ def gather(prev):
     o["skipped"] = skipped_files()
     o["skipped_list"] = skipped_list()
     o["pause_label"] = pause_label(o["pause"])
+    o["inherit"] = inherit()
     o["milestones"] = milestones(bt)
     o["progress_history"] = progress_history(data=bt)
     o["files"] = files

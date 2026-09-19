@@ -119,8 +119,12 @@
                 "frozen",
                 "filecheck",
                 "stale",
-                "skipped"
-              ]
+                "skipped",
+                "licence",
+                "renewal",
+                "lostlock"
+              ],
+              "description": "What the warning is about. lostlock: every backup pass aborts at the transmit step because the client cannot see its own four-hour lock, seen with client 10.0.3.1075 under Wine."
             },
             "text": {
               "type": "string"
@@ -656,6 +660,81 @@
                 "description": "observed against modelled."
               }
             }
+          },
+          "inherit": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "An inherit of another machine identity's backup state, in progress. Nothing is backed up until it finishes. null when none is running.",
+            "properties": {
+              "stage": {
+                "type": "string",
+                "description": "The client's own stage token, such as tbs_downloading."
+              },
+              "stage_label": {
+                "type": "string",
+                "description": "The stage in words."
+              },
+              "failed": {
+                "type": "boolean",
+                "description": "True when the client reports the inherit finished badly. A finished, successful inherit is reported as null."
+              },
+              "pct": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "downloaded": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Bytes"
+              },
+              "total": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Bytes"
+              },
+              "clump": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Part being fetched"
+              },
+              "clumps": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Parts in all"
+              },
+              "kbit": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Download rate, kbit/s"
+              },
+              "at": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Epoch seconds the client last wrote its progress"
+              },
+              "result": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            }
           }
         }
       },
@@ -879,7 +958,7 @@
         "properties": {
           "licence": {
             "type": "object",
-            "description": "status and type as Backblaze report them, plus renewal_failure and renewal_failed"
+            "description": "status and type as Backblaze report them, plus label (the status in words), expires_at (epoch seconds), expires_on (a date in words) and days_left when the status carries a date, and renewal_failure and renewal_failed."
           },
           "encrypted": {
             "type": [

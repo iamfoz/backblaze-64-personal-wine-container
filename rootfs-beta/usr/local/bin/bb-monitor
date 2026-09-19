@@ -47,7 +47,7 @@ def _refresh_bbconfig():
         _bbconfig_lock.release()
 
 def maybe_refresh_bbconfig():
-    if not bbconfig.available():
+    if not bbconfig.ready():
         return
     if _bbconfig_lock.acquire(blocking=False):
         threading.Thread(target=_refresh_bbconfig, daemon=True).start()
@@ -136,7 +136,7 @@ STAT_ITEMS = [
     ("Now", [("state", "State"), ("rate", "Upload rate"), ("threads", "Threads"),
              ("chunks", "Chunks a minute"), ("rtt", "Round-trip time"),
              ("session", "This session"), ("scan", "Scan progress"),
-             ("cluster", "Datacentre cluster")]),
+             ("cluster", "Datacentre cluster"), ("inherit", "Inherit progress")]),
     ("Progress", [("backup", "Backup total"), ("drives", "Per drive"),
                   ("remaining", "Files remaining"), ("first", "First backup"),
                   ("composition", "What it is made of"),
@@ -150,13 +150,13 @@ STAT_ALL = [k for _, items in STAT_ITEMS for k, _ in items]
 # A preset is a starting point rather than a mode: it sets the boxes and leaves
 # them free to change, so anything in between needs no further concept.
 STAT_PRESETS = {
-    "Minimal": ["state", "rate", "backup"],
+    "Minimal": ["state", "rate", "backup", "inherit"],
     # "selection" earns a place here even though most of its siblings from
     # bbconfig do not: it is the reading that catches "No files are selected",
     # a drive ticked in the client's own settings window that backs up nothing.
     # "cluster" and "encrypted" are informational in the way "server" already
     # is, so they stay out of Normal for the same reason that does.
-    "Normal": ["state", "rate", "threads", "rtt", "session", "scan", "backup",
+    "Normal": ["state", "rate", "threads", "rtt", "session", "scan", "inherit", "backup",
                "remaining", "first", "selection", "uploads", "mem", "swap", "uptime"],
     "Everything": None,
 }
@@ -447,6 +447,14 @@ def draw(scr,d,st):
     cfg=bbconfig.cached() if bbconfig.available() else None
     cluster=(cfg or {}).get("cluster") or pod
     if cluster: add("NOW","cluster",txt([("Cluster: ",NORM),(cluster,NORM)]))
+    ih=d.get("inherit")
+    if ih:
+        # Another identity's backup state coming in; nothing is backed up
+        # until it is done, so it belongs on the first line rather than in a
+        # panel someone may have trimmed.
+        add("NOW","inherit",txt([("Inheriting: ",NORM),
+            ("%s %s%%"%(ih["stage_label"], ih["pct"] if ih["pct"] is not None else "?"),WARN),
+            ((" (part %s of %s)"%(ih["clump"],ih["clumps"])) if (ih.get("clumps") or 0)>1 else "",NORM)]))
     if cfg and cfg.get("encrypted") is not None:
         enc="private key set" if cfg["encrypted"] else "none"
         add("PROGRESS","encrypted",txt([("Encryption: ",NORM),(enc,NORM)]))
@@ -641,7 +649,7 @@ def _about_lines():
     if cfg:
         out.append(("", False)); out.append(("Backblaze client", True))
         lic = cfg.get("license") or {}
-        bits = [x for x in (lic.get("status"), lic.get("type")) if x]
+        bits = [x for x in (bbconfig.licence_words(lic)["label"], lic.get("type")) if x]
         if bits:
             out.append(("  Licence:   %s" % " / ".join(bits), False))
         if cfg.get("client_version"):

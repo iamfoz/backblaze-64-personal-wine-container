@@ -105,6 +105,7 @@ def client_reading():
     if not d:
         return None
     lic = d.get("license") or {}
+    words = bbconfig.licence_words(lic)
     failure = lic.get("renewal_failure")
     sel = bbconfig.drive_selection(d)
     return {
@@ -117,6 +118,12 @@ def client_reading():
         "licence": {
             "status": lic.get("status"),
             "type": lic.get("type"),
+            # The status as a person reads it: the client's token is a word
+            # with a GMT stamp glued on, expires_20261004001046.
+            "label": words["label"],
+            "expires_at": words["expires_at"],
+            "expires_on": words["expires_on"],
+            "days_left": words["days_left"],
             # Two fields for one question: whether the last renewal failed, and
             # what the client called the failure. A failed renewal stops the
             # backup, and nothing else in this container can see it happen.
@@ -313,6 +320,9 @@ def snapshot_to_json(d):
         # raised the question this answers.
         "pause": d.get("pause"),
         "pause_label": d.get("pause_label"),
+        # An inherit pulls another identity's backup state into this one and
+        # nothing else happens until it is done; see bbdata.inherit().
+        "inherit": d.get("inherit"),
         "milestones": d.get("milestones"),
         "progress_history": d.get("progress_history"),
         "compress_saved": human(d["compress_saved"]) if d.get("compress_saved") else None,
@@ -1528,9 +1538,24 @@ function renderNotices(j){
       'update the payment details on the account; the client picks it up on its own afterwards.';
     else if(h.kind === 'filecheck') extra = ' Run bb-doctor from the ' + tools + '.';
     else if(h.kind === 'stale') extra = ' The client has not finished a pass within the limit set in its own settings.';
+    else if(h.kind === 'lostlock') extra = ' Every pass aborts at the transmit step once its file list is built, ' +
+      'and the next one a few minutes later does the same, while large files keep uploading through the other ' +
+      'path so nothing else here looks wrong. Seen with Backblaze client 10.0.3.1075 under Wine: the lock file ' +
+      'is on disk and the client says it is not. Set <code>BACKBLAZE_VERSION=10.0.1.1069</code> on the ' +
+      'container and restart; the pinned version is installed over the newer one.';
     out.push('<div class="notice n-bad"><strong>' + esc(h.text) + '.</strong>' + extra +
              dismissLink(h.key || h.kind, h.text) + '</div>');
   });
+  if(j.inherit){
+    var ih = j.inherit;
+    out.push('<div class="notice ' + (ih.failed ? 'n-bad' : 'n-info') + '"><strong>' +
+      (ih.failed ? 'Inheriting the backup state failed.' : 'Inheriting backup state.') + '</strong> The client reports ' +
+      esc(ih.stage_label) + (ih.pct != null ? ', ' + ih.pct.toFixed(1) + '%' : '') +
+      (ih.clumps > 1 ? ' (part ' + ih.clump + ' of ' + ih.clumps + ')' : '') +
+      (ih.kbit ? ', at ' + Math.round(ih.kbit / 1000) + ' Mbit/s' : '') +
+      '. Nothing is backed up until it finishes, and the counters read zero because the client has not ' +
+      'rebuilt them yet. The files already in the datacentre are matched rather than sent again.</div>');
+  }
   if(j.paused){
     var pausing = j.state === 'Pausing', pl = j.pause_label || {}, q = j.quiet || {};
     var title = pausing ? 'Backup pausing.' : (q.active ? 'Paused for quiet hours.' : (pl.title || 'Backup paused') + '.');
@@ -1596,6 +1621,10 @@ function renderClient(c){
       'window, under Settings and then Exclusions, by removing the exclusion on the drive itself.' +
       dismissLink(n.key, text) + '</div>');
   });
+  var lic = c.licence || {};
+  out.push('<p style="margin:0 0 8px"><strong>Licence:</strong> ' + esc(lic.label || 'not reported') +
+    (lic.type ? ' <span class="dim">(' + esc(lic.type) + ')</span>' : '') +
+    (lic.renewal_failed ? ' <strong style="color:var(--bad)">The last renewal failed.</strong>' : '') + '</p>');
   out.push('<p style="margin:0 0 8px"><strong>Private encryption key:</strong> ' +
     (c.encrypted === true
       ? 'set. Backblaze cannot recover a forgotten private encryption key and cannot restore your ' +
@@ -2157,6 +2186,9 @@ def api_v1_payload(d):
         # The same pause as words, so a consumer can show a reason without
         # keeping its own table of the client's codes.
         "pause_label": d.get("pause_label"),
+        # An inherit pulls another identity's backup state into this one and
+        # nothing else happens until it is done; see bbdata.inherit().
+        "inherit": d.get("inherit"),
         "activity": {"phase": act.get("phase"), "file": act.get("file"),
                      "part": act.get("part"), "internal": act.get("internal")} if act else None,
         "threads": d.get("threads"),
@@ -2352,7 +2384,7 @@ def _refresh_client():
     returns what it holds and starts nothing, so calling this every poll costs a
     lock check and a dictionary lookup on all but one poll in TTL seconds.
     """
-    if not bbconfig.available():
+    if not bbconfig.ready():
         return
     if not _client_refresh.acquire(False):
         return                       # one already running; its result covers this poll
@@ -2473,6 +2505,8 @@ def metrics_text(api):
     g("backup_eta_seconds", b.get("eta_seconds"), "Estimated seconds to catch up")
     sc = api.get("scan") or {}
     g("scan_pct", sc.get("pct"), "Percent of directories indexed in the current scan")
+    ih = api.get("inherit") or {}
+    g("inherit_pct", ih.get("pct"), "Percent of an inherit of the backup state done; absent when none is running")
     m = api.get("memory") or {}
     g("memory_used_bytes", m.get("used_bytes"), "Container memory in use")
     g("memory_total_bytes", m.get("total_bytes"), "Container memory limit or host total")
@@ -2494,7 +2528,7 @@ def metrics_text(api):
     # long as that state lasts, which is how a pager gets ignored. What was
     # dismissed is not hidden, though. health_dismissed says so alongside, so a
     # dashboard can still show the state and a rule can still be written on it.
-    for k in ("frozen", "filecheck", "stale", "skipped", "licence", "renewal"):
+    for k in ("frozen", "filecheck", "stale", "skipped", "licence", "renewal", "lostlock"):
         g("health_warning", 1 if (k in kinds and k not in gone) else 0,
           "1 while this warning is raised and has not been dismissed", '{kind="%s"}' % k)
         g("health_dismissed", 1 if k in gone else 0,
@@ -2854,6 +2888,14 @@ function perVolumeHtml(vols){
 // that reading is preferred over the pod the monitor infers from the sockets the
 // push threads own: the inferred one is right when it answers, and answers
 // nothing at all while nothing is uploading, which is most of a quiet day.
+function inheritHtml(d){
+  var ih = d.inherit;
+  if(!ih) return '';
+  return '<span class="stat" title="The backup state of another machine identity is being pulled into ' +
+    'this one. Nothing is backed up until it finishes.">Inheriting: ' + esc(ih.stage_label) +
+    (ih.pct != null ? ' ' + ih.pct.toFixed(1) + '%' : '') +
+    (ih.clumps > 1 ? ' (part ' + ih.clump + ' of ' + ih.clumps + ')' : '') + '</span>';
+}
 function clusterHtml(d){
   var said = (d.client && d.client.cluster) || '';
   var name = said || d.upload_pod || '';
@@ -2883,7 +2925,7 @@ function encryptionHtml(d){
 var STAT_ITEMS = [
   ['Now', [['state','State'],['rate','Upload rate'],['threads','Threads'],['chunks','Chunks a minute'],
            ['rtt','Round-trip time'],['session','This session'],['scan','Scan progress'],
-           ['cluster','Upload cluster']]],
+           ['cluster','Upload cluster'],['inherit','Inherit progress']]],
   ['Progress', [['backup','Backup total'],['drives','Per drive'],['remaining','Files remaining'],
                 ['first','First backup'],['since','Backing up since'],['composition','What it is made of'],
                 ['encrypted','Encryption']]],
@@ -2892,8 +2934,8 @@ var STAT_ITEMS = [
   ['System', [['mem','Memory'],['swap','Swap']]]
 ];
 var STAT_PRESETS = {
-  minimal: ['state','rate','backup'],
-  normal: ['state','rate','threads','rtt','session','scan','backup','remaining','first','uploads','today','mem','swap'],
+  minimal: ['state','rate','inherit','backup'],
+  normal: ['state','rate','threads','rtt','session','scan','inherit','backup','remaining','first','uploads','today','mem','swap'],
   everything: null      // null means every item there is
 };
 var STAT_ALL = STAT_ITEMS.reduce(function(a, g){ return a.concat(g[1].map(function(i){ return i[0]; })); }, []);
@@ -3308,7 +3350,8 @@ async function tick(){
         ['scan', d.scan ? '<span class="stat">Scanning: '+d.scan.dirs+' dirs \u2022 ' +
                   esc((d.scan.files||0).toLocaleString())+' files' +
                   (d.scan.size_str ? ' \u2022 '+esc(d.scan.size_str) : '') + '</span>' : ''],
-        ['cluster', clusterHtml(d)]
+        ['cluster', clusterHtml(d)],
+        ['inherit', inheritHtml(d)]
       ]],
       ['Progress', [
         ['backup', gaugeHtml('Backup', d.backup, true,
@@ -3742,12 +3785,14 @@ class Handler(BaseHTTPRequestHandler):
                            tuple(sorted(h["kind"] for h in api.get("health") or [])),
                            (api.get("skipped_files") or {}).get("total"),
                            bool(api.get("completion")),
+                           bool(api.get("inherit")),
                            tuple(m["key"] for m in api.get("milestones") or []))
                 now = time.time()
                 if sig != last_sig:
                     last_sig = sig
                     data = {"time": int(now), "state": api.get("state"),
                             "paused": api.get("paused"), "pause_label": api.get("pause_label"),
+                            "inherit": api.get("inherit"),
                             "health": api.get("health"), "skipped_files": api.get("skipped_files"),
                             "completion": api.get("completion"), "milestones": api.get("milestones")}
                     self.wfile.write(("event: state\ndata: %s\n\n" % json.dumps(data)).encode("utf-8"))
@@ -4157,6 +4202,7 @@ class Handler(BaseHTTPRequestHandler):
                              "skipped": snap.get("skipped"),
                              "list": snap.get("skipped_list"),
                              "pause_label": snap.get("pause_label"),
+                             "inherit": snap.get("inherit"),
                              "milestones": snap.get("milestones"),
                              "quiet": _quiet.state(),
                              "timeline": timeline()})

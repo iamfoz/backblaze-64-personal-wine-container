@@ -594,6 +594,62 @@ ok(sch.observe({"ok": False}, CONF, IN) is None, "a payload that is not ok is no
 ok(sch.observe(None, CONF, IN) is None, "nor is no payload at all")
 
 
+# ---- passes that lose the four-hour lock ---------------------------------------------
+# Client 10.0.3.1075 loses its four-hour lock under Wine on every pass while large
+# files keep uploading, so nothing else the monitor reads looks wrong. The log's
+# own error line is the signal, and one loss is not enough: a restart mid-pass
+# leaves one behind.
+ok(bbdata.lost_lock("x\nLost four hour lock\ny\n") == 0, "one loss is not a warning")
+ok(bbdata.lost_lock("Lost four hour lock\n" * 3) == 3, "three losses are")
+_tail = bbdata.tail_log
+bbdata.tail_log = lambda n=800: "ERROR:\tLost four hour lock\n" * 2
+try:
+    kinds = [k for k, _ in bbdata.health()]
+finally:
+    bbdata.tail_log = _tail
+ok("lostlock" in kinds, "health() raises lostlock from the transmit log: %r" % kinds)
+
+# Nothing automatic runs bzcli before startapp.sh has launched the client:
+# starting bzcli first boots Wine, and the boot starts a backup pass under the
+# monitor's environment while the installer may still be running.
+_launched = bbconfig._client_launched
+bbconfig._client_launched = lambda: False
+try:
+    ok(bbconfig.ready() is False, "ready() is false until the client is launched")
+    bbconfig._client_launched = lambda: True
+    ok(bbconfig.ready() == bbconfig.available(), "and follows available() once it is")
+finally:
+    bbconfig._client_launched = _launched
+bbconfig._launched.update(at=0.0, up=False)
+ok(bbconfig._client_launched() is False, "no bzbui.exe on this machine, so the scan says not launched")
+
+# ---- the licence in words, and an inherit in progress ----------------------------------
+# The client's licence status is a token with a GMT stamp glued on. A date ahead
+# is not a warning; a date within two weeks or behind is.
+_w = bbconfig.licence_words({"status": "expires_20261004001046"})
+ok(_w["expires_on"] == "4 October 2026" and _w["label"].endswith("4 October 2026"),
+   "expires_<stamp> reads as a date: %r" % _w["label"])
+ok(bbconfig.licence_words({"status": "billing_active"})["days_left"] is None, "billing_active carries no date")
+_far = time.strftime("expires_%Y%m%d%H%M%S", time.gmtime(time.time() + 40 * 86400))
+_near = time.strftime("expires_%Y%m%d%H%M%S", time.gmtime(time.time() + 3 * 86400))
+ok(bbconfig.health({"license": {"status": _far}}) == [], "a licence 40 days out is not a warning")
+_k = bbconfig.health({"license": {"status": _near}})
+ok(_k and _k[0][0] == "licence" and "3 days" in _k[0][1], "three days out is: %r" % _k)
+_k = bbconfig.health({"license": {"status": "expires_20200101000000"}})
+ok(_k and "expired on 1 January 2020" in _k[0][1], "and a date behind says expired")
+_ibs = ('<status inherit_stage="tbs_downloading" prog_out_of_thousand="101" ibs_final_result="0" '
+        'num_bytes_downloaded="230570094" tot_num_bytes_in_ibs_file="1024000000" '
+        'current_clump_number="1" num_clumps_total="2" download_kbits_per_sec="57094" />')
+_ih = bbdata.inherit(_ibs)
+ok(_ih and _ih["pct"] == 10.1 and _ih["clumps"] == 2 and _ih["stage_label"] == "downloading the backup state",
+   "the inherit progress file reads back: %r" % _ih)
+ok(bbdata.inherit("") is None, "no progress file means no inherit")
+# The file outlives the inherit, reading done_success at 1000 an hour later.
+ok(bbdata.inherit('<status inherit_stage="tbs_done_success" prog_out_of_thousand="1000" ibs_final_result="1" />') is None,
+   "a finished inherit is not a reading")
+_ih = bbdata.inherit('<status inherit_stage="tbs_done_failure" prog_out_of_thousand="600" ibs_final_result="2" />')
+ok(_ih and _ih["failed"] and _ih["stage_label"].startswith("finished"), "a failed one stays visible: %r" % _ih["stage_label"])
+
 # ---- the timeline summary line --------------------------------------------------------
 # A multi-part row's time stamp moves with every part and its bytes accumulate, so a
 # summary that keyed rows on (name, time) counted each part as a new file carrying the

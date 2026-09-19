@@ -273,13 +273,15 @@ jobs:
             set -eu
             command -v setpriv >/dev/null
             sh -n /usr/local/bin/bb-doctor
-            for part in asuser skipped drives config; do
+            for part in asuser skipped drives config passes; do
               grep -q "bb-doctor-$part.sh" /usr/local/bin/bb-doctor
               sh -n "/usr/local/lib/bb-doctor-$part.sh"
             done
             grep -q "swap to absorb the peaks" /usr/local/bin/bb-doctor
             sh -n /usr/local/bin/bb-health
             grep -q FROZEN /usr/local/bin/bb-health
+            bash -n /startapp.sh
+            grep -q BACKBLAZE_VERSION /startapp.sh
           '
 
       - name: Push the beta image

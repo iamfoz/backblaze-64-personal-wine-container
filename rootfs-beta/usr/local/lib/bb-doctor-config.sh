@@ -63,8 +63,21 @@ if [ -z "$_cfg_license" ]; then
 else
     _cfg_lstatus="$(_cfg_str "$_cfg_license" status)"
     _cfg_lrenew="$(_cfg_str "$_cfg_license" renewal_failure)"
+    # expires_<stamp> is a licence with a date on it, seen after a reinstall:
+    # fine while the date is ahead, a warning inside two weeks of it.
+    _cfg_lstamp="$(printf '%s' "$_cfg_lstatus" | sed -n 's/^\(trial_\)\{0,1\}expires_\([0-9]\{8\}\)[0-9]*$/\2/p')"
     if [ "$_cfg_lstatus" = "billing_active" ]; then
         OK "the licence is active"
+    elif [ -n "$_cfg_lstamp" ]; then
+        _cfg_ldays="$(( ( $(date -u -d "$_cfg_lstamp" +%s 2>/dev/null || echo 0) - $(date +%s) ) / 86400 ))"
+        _cfg_lwhen="$(date -u -d "$_cfg_lstamp" "+%-d %B %Y" 2>/dev/null || echo "$_cfg_lstamp")"
+        if [ "$_cfg_ldays" -lt 0 ]; then
+            BAD "the licence expired on ${_cfg_lwhen}"
+        elif [ "$_cfg_ldays" -le 14 ]; then
+            WARN "the licence expires in ${_cfg_ldays} days, on ${_cfg_lwhen}"
+        else
+            OK "the licence is valid until ${_cfg_lwhen}"
+        fi
     else
         BAD "Backblaze reports the licence as ${_cfg_lstatus:-unknown}"
         NOTE "a lapsed licence stops backups."

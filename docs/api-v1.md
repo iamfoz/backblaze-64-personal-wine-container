@@ -212,7 +212,7 @@ support thread. No file names.
 
 Requires `read`. The numbers in the status payload in Prometheus text format, as gauges
 with a `bb64_` prefix: rate, threads, pause, progress, ETA, scan, memory, swap, RTT,
-skipped files, each health warning as `bb64_health_warning{kind="..."}`, today's uploads
+skipped files, each health warning as `bb64_health_warning{kind="..."}` (the kinds are `frozen`, `filecheck`, `stale`, `skipped`, `licence`, `renewal` and `lostlock`, the last raised when the client loses its four-hour lock on every pass, seen with client 10.0.3.1075 under Wine), today's uploads
 and retries, compression saved, days since a completed pass.
 
 `bb64_health_warning` reads 1 only while the warning is raised and has not been dismissed:
@@ -317,6 +317,13 @@ What the client is working on right now. `null` when it is doing nothing.
 | `part` | int, null | Which part of a multi-part file. |
 | `internal` | bool | `true` when the client is working on its own records and not on one of your files. |
 
+### `inherit`
+
+`null`, or `{stage, stage_label, pct, downloaded, total, clump, clumps, kbit, at, result}` while
+the client is pulling another machine identity's backup state into this one. Nothing is backed
+up until it finishes, and the counters read zero because the client has not rebuilt them. A
+reinstall that lost `bzinstall.xml` is what starts one.
+
 ### `pause_label`
 
 The pause as text, or `null` when not paused: `who` (`here`, `client` or `unknown`),
@@ -332,7 +339,7 @@ slow cycle:
 
 | Field | Meaning |
 |---|---|
-| `licence` | `status` and `type` as Backblaze report them, plus `renewal_failure` and `renewal_failed` |
+| `licence` | `status` and `type` as Backblaze report them, plus `label` (the status in words), `expires_at`, `expires_on` and `days_left` when the status carries a date (`expires_20261004001046` is one), and `renewal_failure` and `renewal_failed` |
 | `encrypted` | Whether a private encryption key is set. Backblaze cannot recover a forgotten one |
 | `cluster`, `cluster_url` | The datacentre cluster this account is assigned to |
 | `safety_freeze` | The client's own field, `not_frozen` or otherwise |
