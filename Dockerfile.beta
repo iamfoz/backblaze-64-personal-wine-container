@@ -49,15 +49,19 @@ WORKDIR /wine
 COPY patches/wine-writability-fix.patch /wine/patches/
 COPY patches/wine-fdwrite-rearm.patch /wine/patches/
 COPY patches/wine-token-localsystem.patch /wine/patches/
+COPY patches/wine-debug-privilege-bypass.patch /wine/patches/
 # Partial (blobless) clone keeps the checkout small while still allowing WINE_REF
 # to be any tag, branch, or exact commit; blobs are fetched on checkout.
 #
 # Order matters: wine-fdwrite-rearm.patch extends the block that
 # wine-writability-fix.patch introduces, so it must be applied second.
-# wine-token-localsystem.patch is independent of both: it adds the LocalSystem
-# group to the token every process gets, because services run with that token
-# where on Windows they are LocalSystem, and client 10.0.3.1075's bzserv cannot
-# otherwise open the backup pass it launched (the pass admits only LocalSystem). Each gets its
+# wine-token-localsystem.patch and wine-debug-privilege-bypass.patch are
+# independent of both and of each other: together they make the token every
+# process gets behave like the LocalSystem token a service holds on Windows.
+# Client 10.0.3.1075's bzserv opens the backup pass it launched by pid; the
+# pass denies everyone access to its own process object, and on Windows the
+# service gets through only because LocalSystem holds SeDebugPrivilege, which
+# bypasses the DACL. Wine had neither the privilege enabled nor the bypass. Each gets its
 # own --check first, so a context mismatch fails the build with the offending patch
 # named rather than half-applying. The patches are authored against Wine master while
 # WINE_REF pins a release, so a --check failure after a WINE_REF bump usually means
@@ -69,7 +73,9 @@ RUN git clone --filter=blob:none https://gitlab.winehq.org/wine/wine.git src \
  && git -C src apply --check /wine/patches/wine-fdwrite-rearm.patch \
  && git -C src apply /wine/patches/wine-fdwrite-rearm.patch \
  && git -C src apply --check /wine/patches/wine-token-localsystem.patch \
- && git -C src apply /wine/patches/wine-token-localsystem.patch
+ && git -C src apply /wine/patches/wine-token-localsystem.patch \
+ && git -C src apply --check /wine/patches/wine-debug-privilege-bypass.patch \
+ && git -C src apply /wine/patches/wine-debug-privilege-bypass.patch
 
 # Cap build parallelism by available RAM. Wine's parallel link steps are
 # memory-heavy, so -j<all-cores> on a high-core / modest-RAM host exhausts memory

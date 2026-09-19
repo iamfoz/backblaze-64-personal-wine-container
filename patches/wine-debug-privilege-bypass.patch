@@ -1,0 +1,96 @@
+From: Martyn Forryan <iamfoz@users.noreply.github.com>
+Subject: [PATCH] server: Let SeDebugPrivilege bypass process and thread DACLs.
+
+On Windows a caller whose token has SeDebugPrivilege enabled can open any
+process or thread whatever its security descriptor says; that is what the
+privilege is for. Wine's open_process and open_thread handlers ran the
+ordinary access check regardless.
+
+Backblaze's backup client relies on the Windows behaviour. Its backup pass,
+bztransmit, denies PROCESS_ALL_ACCESS to Everyone on its own process object;
+its service, bzserv, opens the pass by pid every ten seconds to check it is
+alive. On Windows the service runs as LocalSystem with SeDebugPrivilege
+enabled and the open succeeds. On Wine it fails with STATUS_ACCESS_DENIED,
+the service concludes the pass has died, deletes its lock file and starts
+another, and no pass completes.
+
+The handlers now skip the access check when the caller holds the privilege,
+and the token created by token_create_admin has it enabled, as the
+LocalSystem token a service would hold on Windows does. A process that
+enables it through AdjustTokenPrivileges behaves the same either way.
+
+---
+--- a/server/process.c
++++ b/server/process.c
+@@ -1460,7 +1460,15 @@
+     reply->handle = 0;
+     if (process)
+     {
+-        reply->handle = alloc_handle( current->process, process, req->access, req->attributes );
++        /* A caller holding SeDebugPrivilege opens any process whatever its
++         * DACL says, as on Windows. Backblaze's bztransmit denies everyone
++         * access to its own process object and its service opens it by pid
++         * to supervise it; on Windows the service is LocalSystem, which has
++         * the privilege enabled. */
++        if (token_has_debug_privilege())
++            reply->handle = alloc_handle_no_access_check( current->process, process, req->access, req->attributes );
++        else
++            reply->handle = alloc_handle( current->process, process, req->access, req->attributes );
+         release_object( process );
+     }
+ }
+--- a/server/thread.c
++++ b/server/thread.c
+@@ -1791,7 +1791,11 @@
+     reply->handle = 0;
+     if (thread)
+     {
+-        reply->handle = alloc_handle( current->process, thread, req->access, req->attributes );
++        /* SeDebugPrivilege bypasses the thread's DACL too; see open_process. */
++        if (token_has_debug_privilege())
++            reply->handle = alloc_handle_no_access_check( current->process, thread, req->access, req->attributes );
++        else
++            reply->handle = alloc_handle( current->process, thread, req->access, req->attributes );
+         release_object( thread );
+     }
+ }
+--- a/server/token.c
++++ b/server/token.c
+@@ -743,7 +743,9 @@
+         { SeShutdownPrivilege, 0 },
+         { SeRemoteShutdownPrivilege, 0 },
+         { SeTakeOwnershipPrivilege, 0 },
+-        { SeDebugPrivilege, 0 },
++        /* Enabled, as it is in the LocalSystem token a service holds on
++         * Windows; services run with this token here. */
++        { SeDebugPrivilege, SE_PRIVILEGE_ENABLED },
+         { SeSystemEnvironmentPrivilege, 0 },
+         { SeSystemProfilePrivilege, 0 },
+         { SeProfileSingleProcessPrivilege, 0 },
+@@ -874,6 +876,16 @@
+         return (enabled_count > 0);
+ }
+ 
++/* whether the calling thread's token has SeDebugPrivilege enabled */
++int token_has_debug_privilege( void )
++{
++    const struct luid_attr debug_priv = { SeDebugPrivilege, 0 };
++    struct token *token = current->token ? current->token : current->process->token;
++
++    if (!token) return 0;
++    return token_check_privileges( token, TRUE, &debug_priv, 1, NULL );
++}
++
+ int token_sid_present( struct token *token, const struct sid *sid, int deny )
+ {
+     struct group *group;
+--- a/server/security.h
++++ b/server/security.h
+@@ -68,6 +68,7 @@
+                                       int impersonation_level, const struct security_descriptor *sd,
+                                       const struct luid_attr *remove_privs, unsigned int remove_priv_count,
+                                       const struct sid *remove_groups, unsigned int remove_group_count );
++extern int token_has_debug_privilege( void );
+ extern int token_check_privileges( struct token *token, int all_required,
+                                    const struct luid_attr *reqprivs,
+                                    unsigned int count, struct luid_attr *usedprivs );
