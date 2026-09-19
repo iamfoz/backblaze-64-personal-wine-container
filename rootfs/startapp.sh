@@ -233,10 +233,41 @@ create_skin_aliases() {
         done
 }
 
+# Backblaze's service, bzserv, is the process that runs backup passes. Wine's
+# service manager starts it on its own when the prefix boots, but that start
+# can fail without a trace: on 2026-09-19 bzserv died 60 ms in, during the
+# prefix update that follows a Wine version change, and nothing restarted it.
+# The GUI does not start the service under Wine, so the container sat with a
+# healthy-looking GUI and no backup for half an hour. This checks once the
+# GUI has had time to settle and starts the service if it is not running.
+# One retry a minute later covers a slow boot; after that it only logs, so a
+# broken service cannot turn into a restart loop.
+bzserv_running() {
+    wine sc query bzserv 2>/dev/null | grep -q 'RUNNING'
+}
+
+ensure_bzserv() {
+    tries=0
+    while [ "$tries" -lt 2 ]; do
+        sleep 60
+        bzserv_running && { [ "$tries" -eq 0 ] || log_message "SERVICE: bzserv is running now"; return 0; }
+        tries=$((tries + 1))
+        log_message "SERVICE: bzserv is not running - starting it (attempt ${tries})"
+        wine net start bzserv >/dev/null 2>&1
+    done
+    sleep 30
+    if bzserv_running; then
+        log_message "SERVICE: bzserv is running now"
+    else
+        log_message "SERVICE: bzserv did not start - no backup passes will run; see bzlogs/bzserv"
+    fi
+}
+
 start_app() {
     create_skin_aliases
     log_message "STARTAPP: Starting Backblaze version $(cat "$local_version_file")"
     wine "${WINEPREFIX}drive_c/Program Files/Backblaze/bzbui.exe" -noquiet &
+    ensure_bzserv &
     sleep infinity
 }
 

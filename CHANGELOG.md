@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This release is for the beta channel only (the `:beta` tag). It has everything in 10.2.1, plus
 the additions below. The `:beta` tag is mutable, so each published build has its own number.
 
+### Fixed
+
+- The container now checks that Backblaze's service, bzserv, is running a minute after the GUI
+  starts, and starts it if not, with one retry. Wine's service manager normally starts it on its
+  own, but on 19 September it died 60 ms into a boot that followed a Wine version change and
+  nothing restarted it: the GUI came up, bb-health said OK, and no pass ran for half an hour.
+  Applies to the stable images too from their next release.
+
 ### Changed
 
 - Wine moved from 11.14 to 11.17. All four patches in `patches/` apply to it unchanged. 11.18 was
