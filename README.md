@@ -165,6 +165,12 @@ Environment variables can be set by adding one or more arguments `-e "<VAR>=<VAL
 |`ENABLE_CJK_FONT`| When set to `1`, open-source computer font `WenQuanYi Zen Hei` is installed.  This font contains a large range of Chinese/Japanese/Korean characters. | `0` |
 |`STARTUP_LOGFILE`| The location for writing logs of the startup script, responsible for installing and starting the Backblaze app.  The default path is also backed up to Backblaze. | `/config/wine/dosdevices/c:/backblaze-wine-startapp.log` |
 
+On Unraid, the edit window shows the template the container was installed from, not the
+current one, so a variable added since then (such as `BACKBLAZE_VERSION` or
+`FORCE_LATEST_UPDATE`) does not appear until you add it: *Add another Path, Port, Variable,
+Label or Device*, Config Type *Variable*, Key `BACKBLAZE_VERSION`, Value as needed. The
+image's own default applies until you do.
+
 ## Config Directory
 Inside the container, wine's configuration and with it Backblaze's configuration is stored in the
 `/config/wine/` directory.
