@@ -106,14 +106,12 @@ ENV WINEARCH=win64
 ENV LANG=en_US.UTF-8
 ENV APP_NAME="Backblaze 64-Bit Personal Backup (beta)"
 ENV FORCE_LATEST_UPDATE="true"
-# The client is pinned. 10.0.3.1075 loses its four-hour lock under an unpatched
-# Wine and completes no backup pass, and with FORCE_LATEST_UPDATE=true every
-# restart would install it again. Installed over a newer or older client in
-# place, so the machine identity in bzinstall.xml survives and no inherit is
-# needed. Set it empty to let the updater decide. The beta carries the Wine fix
-# (patches/wine-token-localsystem.patch) and keeps the pin until 1075 is
-# confirmed clean on it.
-ENV BACKBLAZE_VERSION="10.0.1.1069"
+# No pin: this image carries the Wine fixes 10.0.3.1075 needs, so it follows
+# Backblaze's newest client the way it always did. The stable images pin
+# 10.0.1.1069 because they run an unpatched Wine. Set a version to pin one;
+# it is installed over a newer or older client in place, so the machine
+# identity in bzinstall.xml survives and no inherit is needed.
+ENV BACKBLAZE_VERSION=""
 ENV DISABLE_AUTOUPDATE="false"
 ENV DISABLE_VIRTUAL_DESKTOP="false"
 ENV DISPLAY_WIDTH="900"

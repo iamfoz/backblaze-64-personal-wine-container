@@ -112,12 +112,12 @@ Note on the beta tag: the :beta image carries two patches to Wine's socket code 
   <Config
     Name="Backblaze Version"
     Target="BACKBLAZE_VERSION"
-    Default="10.0.1.1069"
-    Description="Pin the client to one exact version: on each start the container installs that version if a different one is installed, newer or older, and skips the update check. The image pins 10.0.1.1069 because 10.0.3.1075 completes no backup pass under Wine. Set it empty to let Force Latest Update decide."
+    Default=""
+    Description="Pin the Backblaze client to one exact version, for example 10.0.1.1069: on each start the container installs that version if a different one is installed, newer or older, and skips the update check. Leave empty to use the image's own default: the stable image pins 10.0.1.1069 because 10.0.3.1075 completes no backup pass under its Wine, and the beta, whose Wine carries the fix, follows Backblaze's newest client."
     Type="Variable"
     Display="advanced"
     Required="false"
-    Mask="false">10.0.1.1069</Config>
+    Mask="false"></Config>
 
   <Config
     Name="Enable Watchdog"
