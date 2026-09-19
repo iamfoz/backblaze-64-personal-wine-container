@@ -1,0 +1,36 @@
+From: Martyn Forryan <iamfoz@users.noreply.github.com>
+Subject: [PATCH] server: Add the LocalSystem group to the default token.
+
+Services run with the same admin token as everything else, where on Windows
+they run as LocalSystem. A process that sets a DACL on its own process
+object admitting only LocalSystem is then unreachable from the service that
+started it: OpenProcess() fails with STATUS_ACCESS_DENIED.
+
+Backblaze's backup client does exactly this from 10.0.3.1075. Its service,
+bzserv, opens the backup pass it launched by pid every ten seconds to check
+it is alive; the pass grants access to itself only to LocalSystem; the open
+is denied, bzserv concludes the pass has died, deletes the pass's lock file
+and starts another, and no backup pass ever completes.
+
+Adding NT AUTHORITY\SYSTEM as an enabled group to the token created by
+token_create_admin makes such a DACL admit the service, which matches what
+the process would see on Windows. The group is appended, so the primary
+group index passed to create_token still names domain_users.
+
+---
+--- a/server/token.c
++++ b/server/token.c
+@@ -768,6 +768,13 @@
+         { &alias_admins_sid, SE_GROUP_ENABLED|SE_GROUP_ENABLED_BY_DEFAULT|SE_GROUP_MANDATORY|SE_GROUP_OWNER },
+         { &alias_users_sid, SE_GROUP_ENABLED|SE_GROUP_ENABLED_BY_DEFAULT|SE_GROUP_MANDATORY },
+         { &logon_sid, SE_GROUP_ENABLED|SE_GROUP_ENABLED_BY_DEFAULT|SE_GROUP_MANDATORY|SE_GROUP_LOGON_ID },
++        /* Services run with this same token, where on Windows they run as
++         * LocalSystem. A process that grants access to itself only to
++         * LocalSystem (Backblaze's bztransmit does, and its bzserv opens it by
++         * pid to supervise it) is otherwise unreachable from the service that
++         * started it. The group goes last so the primary group index below
++         * still names domain_users. */
++        { &local_system_sid, SE_GROUP_ENABLED|SE_GROUP_ENABLED_BY_DEFAULT|SE_GROUP_MANDATORY },
+     };
+ 
+     token = create_token( primary, session_id, user_sid, admin_groups, ARRAY_SIZE( admin_groups ),

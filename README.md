@@ -324,7 +324,7 @@ bb-monitor
 From a shell on any Docker host:
 
 ```
-docker exec -it backblaze-personal-wine bb-monitor
+docker exec -it Backblaze64 bb-monitor
 ```
 
 It shows live upload speed, the files each thread is sending right now with estimated
@@ -346,7 +346,7 @@ It is off until you create a key, and answers `404` until then. Create one from 
 tab of the web interface, or from a terminal:
 
 ```
-docker exec backblaze-personal-wine bb-apikey create --label "status display" --scope read
+docker exec Backblaze64 bb-apikey create --label "status display" --scope read
 ```
 
 The key is shown once. Send it as a bearer token:
