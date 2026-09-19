@@ -391,7 +391,7 @@ a stable release.
 - The licence status reads as a date. The client reports `expires_20261004001046`; the Status tab, the terminal monitor and `bb-doctor` now say "valid until 4 October 2026", and it is a warning only inside two weeks of the date or past it, rather than for any status other than `billing_active`.
 - A third Wine patch, `patches/wine-token-localsystem.patch`, and with it the cause of the lost lock. Client 10.0.3.1075's bzserv supervises the backup pass it launches by opening it by pid every ten seconds; the pass grants access to its own process object only to `NT AUTHORITY\SYSTEM`, which the service is on Windows. Wine runs services with the same admin token as everything else, so the open fails with access denied, bzserv concludes the pass has died, deletes its lock and starts another. The patch adds the LocalSystem group to Wine's default token, so the open succeeds as it does on Windows. The beta keeps 10.0.1.1069 pinned until this is confirmed on a live container.
 - A warning when the client loses its four-hour lock. Client 10.0.3.1075 loses it under Wine on every pass: the lock file is on disk and the client's own check says it is not, so the pass aborts at the transmit step and bzserv starts another a few minutes later that does the same, while large files keep uploading through the chunk path so nothing else looks wrong. The Status tab, the terminal monitor, the metrics, notifications and bb-doctor now say so, from the log's own error line.
-- `BACKBLAZE_VERSION` pins the client. On each start the container installs that exact version from Backblaze's versioned installer if a different one is installed, newer or older, and skips the update check. The updater's "newest on every start" is what put 10.0.3.1075 on every container, so the beta image pins 10.0.1.1069 by default; set the variable empty to let the updater decide. The pinned client goes in over the existing install, so the machine identity in `bzinstall.xml` survives and no inherit of the backup state is needed.
+- `BACKBLAZE_VERSION` pins the client. On each start the container installs that exact version from Backblaze's versioned installer if a different one is installed, newer or older, and skips the update check. The updater's "newest on every start" is what put 10.0.3.1075 on every container, so the image pins 10.0.1.1069 by default; set the variable empty to let the updater decide. The pinned client goes in over the existing install, so the machine identity in `bzinstall.xml` survives and no inherit of the backup state is needed.
 - The monitor no longer boots Wine. Reading the client's settings through bzcli started the Wine prefix, and with it bzserv and a backup pass, before startapp.sh had installed or updated the client; on a live container that put a pass and the installer on the same files at once. Nothing automatic runs bzcli until the client startapp.sh launches is up.
 - bb-doctor no longer lists Wine's own `Z:` mapping of the container root as a source drive, or warns that the client has no selection entry for it: that is the right state for a drive that must never be backed up. The swap line no longer repeats what the RAM line already said.
   scrolls, newest first: every change of state, and after each spell of uploading one line
@@ -731,6 +731,16 @@ a stable release.
   also covers every name in `bb-report`'s own list of secret keys, which that capture's JSON
   shape had been passing straight through.
 
+
+## [10.2.2] - 2026-09-19
+
+### Fixed
+
+- Backblaze client 10.0.3.1075 completes no backup pass under Wine, and the updater's "newest on every start" installed it on every container that restarted after about 14 September. Its service supervises each backup pass by opening it by pid; the pass admits only `NT AUTHORITY\SYSTEM` to its own process object, which the service is on Windows and is not under Wine, so the open is denied, the service concludes the pass has died, deletes its four-hour lock and starts another. The symptom is "Producing file lists" forever, with large files still uploading and bb-health reporting OK.
+- `BACKBLAZE_VERSION` pins the client to one version, installed from Backblaze's versioned installer over a newer or older one in place, so the machine identity in `bzinstall.xml` survives. The image pins 10.0.1.1069 by default; set it empty to let `FORCE_LATEST_UPDATE` decide again once a client that works under Wine has shipped. Do not remove `Program Files\Backblaze` to force a reinstall: that drops the identity and forces an inherit of the backup state.
+- The docs' `docker exec` examples use the template's container name, `Backblaze64`.
+
+The beta carries the Wine fix for the client itself; see the beta section above.
 
 ## [10.2.1] - 2026-08-07
 

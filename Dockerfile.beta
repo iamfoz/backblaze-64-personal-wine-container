@@ -100,11 +100,13 @@ ENV WINEARCH=win64
 ENV LANG=en_US.UTF-8
 ENV APP_NAME="Backblaze 64-Bit Personal Backup (beta)"
 ENV FORCE_LATEST_UPDATE="true"
-# The beta pins the client. 10.0.3.1075 loses its four-hour lock under Wine and
-# completes no backup pass, and with FORCE_LATEST_UPDATE=true every restart would
-# install it again. Installed over a newer or older client in place, so the
-# machine identity in bzinstall.xml survives and no inherit is needed. Set it
-# empty to let the updater decide; see the startapp patch below.
+# The client is pinned. 10.0.3.1075 loses its four-hour lock under an unpatched
+# Wine and completes no backup pass, and with FORCE_LATEST_UPDATE=true every
+# restart would install it again. Installed over a newer or older client in
+# place, so the machine identity in bzinstall.xml survives and no inherit is
+# needed. Set it empty to let the updater decide. The beta carries the Wine fix
+# (patches/wine-token-localsystem.patch) and keeps the pin until 1075 is
+# confirmed clean on it.
 ENV BACKBLAZE_VERSION="10.0.1.1069"
 ENV DISABLE_AUTOUPDATE="false"
 ENV DISABLE_VIRTUAL_DESKTOP="false"
@@ -429,62 +431,9 @@ RUN python3 -m py_compile /usr/local/bin/bb-report \
  && grep -q "_bzcli_settings" /usr/local/bin/bb-report \
  && grep -q "backblaze/settings.txt" /usr/local/bin/bb-report
 
-# Beta-only addition to startapp.sh: a pinned client version. Backblaze's
-# 10.0.3.1075 loses its four-hour lock under Wine and no backup pass completes,
-# and the updater's "newest on every start" is what installed it everywhere.
-# With BACKBLAZE_VERSION set, that exact client is installed from Backblaze's
-# versioned URL, over a newer one as readily as an older one, and the update
-# check is skipped. Anchored on the updater's own lines, so a change to the
-# stable startapp.sh fails this build rather than silently losing the pin.
-RUN python3 - <<'PATCH'
-import sys
-path = "/startapp.sh"
-src = open(path, encoding="utf-8").read()
-edits = [
-    ("versioned installer URL",
-     '    curl -fL "https://www.backblaze.com/win32/install_backblaze.exe" --output "install_backblaze.exe" || handle_error "INSTALLER: failed to download installer"\n',
-     """    # Beta: a pinned BACKBLAZE_VERSION comes from Backblaze's versioned URL,
-    # the newest client otherwise.
-    installer_url="https://www.backblaze.com/win32/install_backblaze.exe"
-    if [ -n "${BACKBLAZE_VERSION:-}" ]; then
-        installer_url="https://secure.backblaze.com/api/install_backblaze?file=bzinstall-win32-${BACKBLAZE_VERSION}.exe"
-        log_message "INSTALLER: BACKBLAZE_VERSION=${BACKBLAZE_VERSION}, fetching that installer"
-    fi
-    curl -fL "$installer_url" --output "install_backblaze.exe" || handle_error "INSTALLER: failed to download installer"
-"""),
-    ("pinned version check",
-     '    # Update process for force_latest_update set to true or not set\n    if [ "$FORCE_LATEST_UPDATE" = "true" ]; then\n',
-     """    # Beta: a pinned client version wins over the update check, and is installed
-    # on every start that finds a different one, downwards included: 10.0.3.1075
-    # loses its four-hour lock under Wine, and the way back is 10.0.1.1069 over
-    # it. Direction does not matter to fetch_and_install: bzdoinstall.exe never
-    # copies the program files (the MSI does, on Windows), the cp above it does,
-    # and cp has no opinion about versions.
-    if [ -n "${BACKBLAZE_VERSION:-}" ]; then
-        local_version=$(cat "$local_version_file" 2>/dev/null)
-        if [ "$local_version" = "$BACKBLAZE_VERSION" ]; then
-            log_message "UPDATER: BACKBLAZE_VERSION=${BACKBLAZE_VERSION} is installed - not reinstalling"
-        else
-            log_message "UPDATER: BACKBLAZE_VERSION=${BACKBLAZE_VERSION} pinned, installed ${local_version:-unknown} - installing the pinned version"
-            fetch_and_install
-        fi
-        start_app
-    fi
-
-    # Update process for force_latest_update set to true or not set
-    if [ "$FORCE_LATEST_UPDATE" = "true" ]; then
-"""),
-]
-for name, old, new in edits:
-    if new in src:
-        print("startapp: %s already applied" % name)
-        continue
-    if src.count(old) != 1:
-        sys.exit("startapp: anchor for %s not found exactly once, refusing to guess" % name)
-    src = src.replace(old, new, 1)
-    print("startapp: %s applied" % name)
-open(path, "w", encoding="utf-8").write(src)
-PATCH
+# The client version pin lives in rootfs/startapp.sh itself since 10.2.2, so the
+# beta inherits it. The guard stays: a stable edit that lost the pin would ship a
+# beta that installs whatever Backblaze serves, which is how 10.0.3.1075 got in.
 RUN bash -n /startapp.sh && grep -q "BACKBLAZE_VERSION" /startapp.sh
 
 RUN chmod +x /startapp.sh /usr/local/bin/bb-monitor /usr/local/bin/bb-monitor-web \

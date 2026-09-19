@@ -164,7 +164,14 @@ handle_error() {
 fetch_and_install() {
     cd "$install_exe_path" || handle_error "INSTALLER: can't navigate to $install_exe_path"
     log_message "INSTALLER: downloading the latest Backblaze installer"
-    curl -fL "https://www.backblaze.com/win32/install_backblaze.exe" --output "install_backblaze.exe" || handle_error "INSTALLER: failed to download installer"
+    # a pinned BACKBLAZE_VERSION comes from Backblaze's versioned URL,
+    # the newest client otherwise.
+    installer_url="https://www.backblaze.com/win32/install_backblaze.exe"
+    if [ -n "${BACKBLAZE_VERSION:-}" ]; then
+        installer_url="https://secure.backblaze.com/api/install_backblaze?file=bzinstall-win32-${BACKBLAZE_VERSION}.exe"
+        log_message "INSTALLER: BACKBLAZE_VERSION=${BACKBLAZE_VERSION}, fetching that installer"
+    fi
+    curl -fL "$installer_url" --output "install_backblaze.exe" || handle_error "INSTALLER: failed to download installer"
     # Backblaze 10.x ships an MSI whose WiX OS-version action rejects Wine
     # (GetVersionEx reports Windows 8 to unmanifested processes, and there is no
     # way to manifest the builtin msiexec). The installer is just a CAB wrapper,
@@ -263,6 +270,23 @@ if [ -f "${WINEPREFIX}drive_c/Program Files/Backblaze/bzbui.exe" ]; then
     # Check if auto-updates are disabled
     if [ "$DISABLE_AUTOUPDATE" = "true" ]; then
         log_message "UPDATER: DISABLE_AUTOUPDATE=true, Auto-updates are disabled. Starting Backblaze without updating."
+        start_app
+    fi
+
+    # a pinned client version wins over the update check, and is installed
+    # on every start that finds a different one, downwards included: 10.0.3.1075
+    # loses its four-hour lock under Wine, and the way back is 10.0.1.1069 over
+    # it. Direction does not matter to fetch_and_install: bzdoinstall.exe never
+    # copies the program files (the MSI does, on Windows), the cp above it does,
+    # and cp has no opinion about versions.
+    if [ -n "${BACKBLAZE_VERSION:-}" ]; then
+        local_version=$(cat "$local_version_file" 2>/dev/null)
+        if [ "$local_version" = "$BACKBLAZE_VERSION" ]; then
+            log_message "UPDATER: BACKBLAZE_VERSION=${BACKBLAZE_VERSION} is installed - not reinstalling"
+        else
+            log_message "UPDATER: BACKBLAZE_VERSION=${BACKBLAZE_VERSION} pinned, installed ${local_version:-unknown} - installing the pinned version"
+            fetch_and_install
+        fi
         start_app
     fi
 
