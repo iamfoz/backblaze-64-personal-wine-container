@@ -21,6 +21,12 @@
 #          timeout for a child. A long wait with young children coming and
 #          going is a slow link, not a hang, and stays OK.
 #
+#   DOWN   The client is up but its service, bzserv, is not. bzserv is what
+#          starts every pass, so nothing backs up until it is back. It died
+#          silently on 2026-09-20 (exit 1067) and bb-health said OK for six
+#          hours. The GUI is allowed SERVICE_GRACE_MIN minutes to bring the
+#          service up after a start before this is reported.
+#
 #   WEDGE  A stale four-hour lock is blocking every pass. When bztransmit dies
 #          mid-pass - an out-of-memory kill, or a container restart that takes
 #          the lock holder with it - the lock file outlives it and the log
@@ -37,7 +43,8 @@
 #          only process age can corroborate it. It is a WEDGE rather than a
 #          HANG because there is nothing to kill, only a lock to remove.
 #
-# Env: STALL_MIN (20), LOCK_AGE_MIN (245), LOCK_FAILS (5), LOCK_GRACE_MIN (2).
+# Env: STALL_MIN (20), LOCK_AGE_MIN (245), LOCK_FAILS (5), LOCK_GRACE_MIN (2),
+#      SERVICE_GRACE_MIN (3).
 set -u
 
 usage() {
@@ -49,7 +56,8 @@ BB-HEALTH [--version]
 Displays one of:
 
   OK           Nothing is wrong.  An idle or newly installed container is OK.
-  HANG         An upload thread is alive but the transmit log has stopped.
+  HANG         A backup pass is stuck on its chunk uploads.
+  DOWN         The Backblaze service, bzserv, is not running.
   WEDGE        A stale four-hour lock is blocking every pass.
 
 Exits with 0 for OK, otherwise 1.  Used by the container health check.
@@ -72,6 +80,7 @@ STALL_MIN="${STALL_MIN:-20}"
 LOCK_AGE_MIN="${LOCK_AGE_MIN:-245}"     # the lock covers 4h; past that a live holder would have renewed or finished
 LOCK_FAILS="${LOCK_FAILS:-5}"
 LOCK_GRACE_MIN="${LOCK_GRACE_MIN:-2}"   # a pass must have run this long before it is assumed to own the lock
+SERVICE_GRACE_MIN="${SERVICE_GRACE_MIN:-3}"   # the GUI gets this long to bring bzserv up
 
 # The thresholds feed arithmetic below and must be plain positive integers. A
 # suffixed value such as "20m" would otherwise fail in a way that reads as a
@@ -81,6 +90,7 @@ STALL_MIN="$(int_or "$STALL_MIN" 20)"
 LOCK_AGE_MIN="$(int_or "$LOCK_AGE_MIN" 245)"
 LOCK_FAILS="$(int_or "$LOCK_FAILS" 5)"
 LOCK_GRACE_MIN="$(int_or "$LOCK_GRACE_MIN" 2)"
+SERVICE_GRACE_MIN="$(int_or "$SERVICE_GRACE_MIN" 3)"
 
 # Match a process by command line without needing procps in the image.
 proc_match() {
@@ -135,6 +145,18 @@ age_min() {
 }
 
 log="$(newest_log)"
+
+# --- DOWN: the client is up but its service is not ---------------------------------
+# bzbui.exe is what startapp launches, so its age is how long the container has
+# been trying. An unreadable age must not read as DOWN: the verdict turns the
+# health check red and the container's own recovery starts the service.
+if proc_match bzbui.exe && ! proc_match bzserv.exe; then
+    gui_age="$(oldest_proc_min bzbui.exe "")"
+    if [ -n "$gui_age" ] && [ "$gui_age" -ge "$SERVICE_GRACE_MIN" ]; then
+        echo "DOWN the Backblaze service (bzserv) is not running, so no backup pass can start"
+        exit 1
+    fi
+fi
 
 # --- HANG: a pass is waiting on chunk uploads that will never finish -------------
 if proc_match -threadpush; then

@@ -59,7 +59,7 @@ TOOLS = {
         "argv": [BIN + "/bb-health"],
         "label": "bb-health",
         "does": "The check the container's HEALTHCHECK runs: OK, or a corroborated "
-                "HANG or WEDGE with diagnostic information.",
+                "HANG, WEDGE or DOWN with diagnostic information.",
         "timeout": 30,
         "options": {},
         "exit": {0: "healthy", 1: "fault reported"},

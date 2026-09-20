@@ -270,9 +270,12 @@ It reports one of:
 
 - `OK`: nothing is wrong. An idle container, a fresh install, or one that is signed out
   is healthy: a backup tool with nothing to do right now is not broken.
-- `HANG`: a backup pass is stuck on its chunk uploads: the transmit log has stopped with an upload child alive, an upload child has been alive for 20 minutes without finishing its 10 MB chunk, or the pass has been waiting 20 minutes for children that no longer exist.
-  Backblaze's automatic thread setting can spin up enough upload threads to deadlock
-  Wine's pipe handling, which leaves the transfer stuck forever.
+- `HANG`: a backup pass is stuck on its chunk uploads: the transmit log has stopped with an
+  upload child alive, an upload child has been alive for 20 minutes without finishing its 10 MB
+  chunk, or the pass has been waiting 20 minutes for children that no longer exist. The pass
+  has no timeout for a lost child, so it waits forever.
+- `DOWN`: the client is up but its service, bzserv, is not running, so no pass can start. The
+  container restarts the service itself; this state shows that it had to.
 - `WEDGE`: a stale four-hour lock is blocking every pass. This is what an out-of-memory
   kill or a container restart mid-pass leaves behind: the lock file outlives the process
   that owned it, and every subsequent pass fails to acquire it. It usually shows as a

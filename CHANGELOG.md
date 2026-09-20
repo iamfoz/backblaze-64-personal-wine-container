@@ -11,6 +11,12 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Fixed
 
+- bb-health reports `DOWN` when the client's GUI is up but its service, bzserv, is not. bzserv is
+  what starts every pass; it died silently on 20 September (exit code 1067) and the container
+  reported OK for six hours while nothing backed up. startapp now also watches the service every
+  five minutes and starts it again if it has stopped, logging each attempt, in addition to the
+  boot-time check. The Status tab, the terminal monitor and the "Backup stalled" notification
+  treat `DOWN` like a hang.
 - bb-health now catches the hang that client 10.0.3 produces when a chunk-upload child dies or
   never starts: the pass waits for it forever, logging "Some sub_threads busy" every six seconds,
   so the log never looks idle and the old check saw nothing. `HANG` is now also reported when an

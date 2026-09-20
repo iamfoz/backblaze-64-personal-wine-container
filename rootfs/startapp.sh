@@ -240,8 +240,11 @@ create_skin_aliases() {
 # The GUI does not start the service under Wine, so the container sat with a
 # healthy-looking GUI and no backup for half an hour. This checks once the
 # GUI has had time to settle and starts the service if it is not running.
-# One retry a minute later covers a slow boot; after that it only logs, so a
-# broken service cannot turn into a restart loop.
+# One retry a minute later covers a slow boot. After the boot check it keeps
+# watching every five minutes, because bzserv can also die later: on
+# 2026-09-20 it exited with code 1067 six hours into a run and nothing
+# brought it back. Each start is logged, and a service that will not stay up
+# produces one attempt per cycle rather than a tight loop.
 bzserv_running() {
     wine sc query bzserv 2>/dev/null | grep -q 'RUNNING'
 }
@@ -263,11 +266,27 @@ ensure_bzserv() {
     fi
 }
 
+watch_bzserv() {
+    ensure_bzserv
+    while true; do
+        sleep 300
+        bzserv_running && continue
+        log_message "SERVICE: bzserv has stopped - starting it again"
+        wine net start bzserv >/dev/null 2>&1
+        sleep 60
+        if bzserv_running; then
+            log_message "SERVICE: bzserv is running now"
+        else
+            log_message "SERVICE: bzserv did not start - will try again in five minutes; see bzlogs/bzserv"
+        fi
+    done
+}
+
 start_app() {
     create_skin_aliases
     log_message "STARTAPP: Starting Backblaze version $(cat "$local_version_file")"
     wine "${WINEPREFIX}drive_c/Program Files/Backblaze/bzbui.exe" -noquiet &
-    ensure_bzserv &
+    watch_bzserv &
     sleep infinity
 }
 

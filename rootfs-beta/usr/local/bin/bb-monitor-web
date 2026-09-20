@@ -1877,7 +1877,7 @@ function cls(line){
   if(line.indexOf('         ') === 0) return 'note';
   if(line.indexOf('-----') === 0) return 'rule';
   if(line === 'OK') return 'ok';
-  if(line.indexOf('HANG') === 0 || line.indexOf('WEDGE') === 0 || line.indexOf('FROZEN') === 0) return 'fail';
+  if(line.indexOf('HANG') === 0 || line.indexOf('WEDGE') === 0 || line.indexOf('DOWN') === 0 || line.indexOf('FROZEN') === 0) return 'fail';
   if(line.length && line.charAt(0) !== ' ') return 'heading';
   return '';
 }

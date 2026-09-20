@@ -153,6 +153,12 @@ while true; do
                 say "no bztransmit found to kill - transmit may have cleared on its own"
             fi
             ;;
+        DOWN*)
+            # startapp watches the service itself and restarts it, with the
+            # environment the client was started under. Nothing to add here
+            # beyond making the state visible in this log.
+            say "detected: ${status} - the container restarts the service on its own; see the startapp log"
+            ;;
         *)
             say "unrecognised health status: ${status}"
             ;;

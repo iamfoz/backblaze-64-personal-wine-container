@@ -169,6 +169,27 @@ mkproc "bzserv.exe" "bztransmit.exe -prepare_bzcombs"
 printf '%s\n%s\n' "... Some sub_threads busy for numMillis=1800000, waiting..." "2026-09-20 20:40:00 696 - STARTBACKUP" > "$LOGF"
 ok "OK" "$(run)" "a stale sub_threads wait above the last line is not a hang"
 
+# 22. DOWN: the GUI has been up past the grace window and bzserv is gone
+#     (bzserv exit 1067 on 2026-09-20, unnoticed for six hours)
+mkproc "bzbui.exe -noquiet"; procage 100 600; echo "line" > "$LOGF"
+ok "DOWN" "$(run)" "GUI up 10m with no bzserv = DOWN"
+
+# 23. a GUI younger than the grace window is still starting the service
+procage 100 60
+ok "OK" "$(run)" "GUI up 1m with no bzserv is still starting"
+
+# 24. no GUI at all: the client is not started (fresh install, sign-in pending)
+mkproc "bzbuitray.exe"
+ok "OK" "$(run)" "no GUI means the client is not started, not DOWN"
+
+# 25. FAIL-SAFE: an unreadable GUI age must not read as DOWN
+mkproc "bzbui.exe -noquiet"
+ok "OK" "$(run)" "unreadable GUI age fails SAFE (no DOWN verdict)"
+
+# 26. service present alongside the GUI: healthy
+mkproc "bzbui.exe -noquiet" "bzserv.exe"; procage 100 600
+ok "OK" "$(run)" "GUI and bzserv both up is healthy"
+
 echo
 echo "$FAILED failures"
 exit $(( FAILED > 0 ? 1 : 0 ))
