@@ -601,6 +601,14 @@ ok(sch.observe(None, CONF, IN) is None, "nor is no payload at all")
 # leaves one behind.
 ok(bbdata.lost_lock("x\nLost four hour lock\ny\n") == 0, "one loss is not a warning")
 ok(bbdata.lost_lock("Lost four hour lock\n" * 3) == 3, "three losses are")
+# Once a pass records its bz_done file it has cleared the step every loss
+# happens at, so losses before that line are history and the warning clears
+# the same day rather than at the next log rotation (a user's report: bb-doctor
+# still failed a working install hours after the fix).
+_recovered = "Lost four hour lock\n" * 6 + "ToDoUtils.cpp:1379 bz_done file recorded for upload: x\n" + "chunk lines\n"
+ok(bbdata.lost_lock(_recovered) == 0, "losses before a pass that got past that point no longer warn")
+ok(bbdata.lost_lock(_recovered + "Lost four hour lock\n" * 2) == 2,
+   "losses after it count from that point, not from the start of the log")
 _tail = bbdata.tail_log
 bbdata.tail_log = lambda n=800: "ERROR:\tLost four hour lock\n" * 2
 try:
@@ -791,9 +799,10 @@ NCONF = {"endpoints": [], "events": {k: True for k, _, _, _ in bbnotify.EVENTS},
          "skipped_threshold": 1}
 
 
-def _api(frozen):
+def _api(frozen, client="10.0.1.1069"):
     return {"ok": True, "health": [{"kind": "frozen"}] if frozen else [],
-            "skipped_files": {"total": 0}, "paused": False, "build": "1"}
+            "skipped_files": {"total": 0}, "paused": False, "build": "1",
+            "client": {"version": client}}
 
 
 _delivered = []
@@ -828,6 +837,18 @@ ok(bbnotify.observe(_api(False), NCONF, deliver=lambda *a: None) == [],
    "an identical poll fires nothing")
 ok(os.stat(bbnotify.STATE).st_mtime_ns == _mtime,
    "and does not rewrite the store, which was 43,000 atomic replaces a day")
+# The client version is recorded with the baseline, so a change against it
+# fires like a container build change does. A reading with no version yet is
+# unknown, not a change, and does not fire or erase what was recorded.
+_ev = bbnotify.observe(_api(False, client="10.0.3.1075"), NCONF, deliver=lambda *a: None)
+ok([e[0] for e in _ev] == ["client"] and "10.0.3.1075" in _ev[0][2] and "10.0.1.1069" in _ev[0][2],
+   "a client version change fires one event naming both versions: %r" % _ev)
+ok(bbnotify.observe(_api(False, client="10.0.3.1075"), NCONF, deliver=lambda *a: None) == [],
+   "and not again while it holds")
+ok(bbnotify.observe(_api(False, client=None), NCONF, deliver=lambda *a: None) == [],
+   "a reading without a version is not a change")
+ok(bbnotify.observe(_api(False, client="10.0.3.1075"), NCONF, deliver=lambda *a: None) == [],
+   "and the recorded version survives it")
 
 # Nothing that names a file may leave the container, whatever the payload holds.
 msg = bbnotify._message("skipped", {"skipped_total": 120},

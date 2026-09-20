@@ -442,8 +442,8 @@ def health(data=None):
                                 % (sk["total"], sk["top_reason"].replace("_", " ").lower())))
     lost = lost_lock()
     if lost:
-        out.append(("lostlock", "The client lost its four-hour lock %d times in the current log, "
-                                "so no backup pass completes" % lost))
+        out.append(("lostlock", "The client lost its four-hour lock %d times since a pass last got "
+                                "past that point, so no backup pass completes" % lost))
     return out
 
 
@@ -507,11 +507,18 @@ def inherit(text=None):
             "result": attr("ibs_final_result", int)}
 
 
+PASSED_LOCK_POINT = "bz_done file recorded for upload"
+
+
 def lost_lock(text=None):
-    """How many passes lost the four-hour lock in the current transmit log, or
-    0 below LOST_LOCK_MIN."""
+    """How many passes lost the four-hour lock since the last pass got past
+    that point, or 0 below LOST_LOCK_MIN. A pass that loses the lock aborts
+    before it records its bz_done file; one that records it has cleared the
+    step every loss happens at, so losses earlier in the log are history and
+    the warning must go once a pass succeeds, not at the next log rotation."""
     t = text if text is not None else tail_log(4000)
-    n = t.count("Lost four hour lock")
+    since = t.rfind(PASSED_LOCK_POINT)
+    n = t.count("Lost four hour lock", since if since >= 0 else 0)
     return n if n >= LOST_LOCK_MIN else 0
 
 

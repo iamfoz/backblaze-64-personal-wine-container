@@ -1540,9 +1540,12 @@ function renderNotices(j){
     else if(h.kind === 'stale') extra = ' The client has not finished a pass within the limit set in its own settings.';
     else if(h.kind === 'lostlock') extra = ' Every pass aborts at the transmit step once its file list is built, ' +
       'and the next one a few minutes later does the same, while large files keep uploading through the other ' +
-      'path so nothing else here looks wrong. Seen with Backblaze client 10.0.3.1075 under Wine: the lock file ' +
-      'is on disk and the client says it is not. Set <code>BACKBLAZE_VERSION=10.0.1.1069</code> on the ' +
-      'container and restart; the pinned version is installed over the newer one.';
+      'path so nothing else here looks wrong. Seen with Backblaze client 10.0.3.1075 under an unpatched Wine, ' +
+      'where the service takes the pass for dead and deletes the lock under it. On the stable image, set ' +
+      '<code>BACKBLAZE_VERSION=10.0.1.1069</code> on the container and restart; the pinned version is installed ' +
+      'over the newer one. The beta\'s Wine carries the fix, so on the beta this is something else: run ' +
+      'bb-report from the ' + tools + ' and open an issue with the bundle. This clears on its own once a pass ' +
+      'gets past the point where the lock was lost.';
     out.push('<div class="notice n-bad"><strong>' + esc(h.text) + '.</strong>' + extra +
              dismissLink(h.key || h.kind, h.text) + '</div>');
   });

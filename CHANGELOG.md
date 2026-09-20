@@ -9,8 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This release is for the beta channel only (the `:beta` tag). It has everything in 10.2.1, plus
 the additions below. The `:beta` tag is mutable, so each published build has its own number.
 
+### Added
+
+- A "Backblaze client updated" notification event, alongside "Container updated": it names the
+  version now running and the one before. The container's updater installs Backblaze's newest
+  client at every start, so this is the event to line up with a backup that has started
+  misbehaving. On by default like the other events; the Settings tab turns it off.
+
 ### Fixed
 
+- The "lost the four-hour lock" warning in bb-doctor, the Status tab, the terminal monitor and
+  notifications now counts only losses since the last pass that got past the point where they
+  happen. It used to count the whole day's log, so a repaired install stayed red until the log
+  rotated at midnight. bb-doctor says when passes complete again after earlier losses. The advice
+  also now depends on the image: the pin to 10.0.1.1069 is for stable, and on the beta, whose
+  Wine carries the fix, a loss means something else and asks for a bundle. The wording no longer
+  claims the lock file is on disk throughout; the service deletes it.
 - bb-health reports `DOWN` when the client's GUI is up but its service, bzserv, is not. bzserv is
   what starts every pass; it died silently on 20 September (exit code 1067) and the container
   reported OK for six hours while nothing backed up. startapp now also watches the service every

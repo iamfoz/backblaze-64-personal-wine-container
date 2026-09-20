@@ -123,6 +123,10 @@ EVENTS = (
      "A quarter, half, three quarters of the way, or the first terabyte.", False),
     ("build",         "Container updated",
      "The container is running a different build than it was.", False),
+    ("client",        "Backblaze client updated",
+     "The Backblaze client is running a different version than it was. The container's "
+     "updater installs the newest client at every start, so a change here is what to "
+     "line up with a backup that has started misbehaving.", False),
 )
 URGENT = ("frozen", "stalled")
 
@@ -340,6 +344,7 @@ def conditions(api, health=None):
         "completion": bool(api.get("completion")),
         "milestones": sorted(m["key"] for m in (api.get("milestones") or [])),
         "build": api.get("build"),
+        "client_version": (api.get("client") or {}).get("version"),
         "health_line": hv or None,
     }
 
@@ -385,7 +390,17 @@ def observe(api, conf=None, deliver=None, now=None):
                 and prev.get("build") != cur["build"]:
             fired.append(("build", "Container updated",
                           "Now running build %s (was %s)." % (cur["build"], prev["build"])))
-    now_conditions = dict(cur_flags, milestones=cur["milestones"], build=cur["build"])
+        # Same shape as the build change: a version recorded before the restart
+        # against the one running now. The reading comes from bzcli, which is
+        # not asked until the client is up, so an absent version is unknown
+        # rather than a change.
+        if conf["events"].get("client") and prev.get("client_version") and cur["client_version"] \
+                and prev.get("client_version") != cur["client_version"]:
+            fired.append(("client", "Backblaze client updated",
+                          "Now running Backblaze client %s (was %s)."
+                          % (cur["client_version"], prev["client_version"])))
+    now_conditions = dict(cur_flags, milestones=cur["milestones"], build=cur["build"],
+                          client_version=cur["client_version"])
     # Only when something moved. Written on every poll this was 43,000 atomic
     # replaces a day on the user's appdata share, each one taking the store lock
     # that key creation and use also want, for a record that had not changed.
