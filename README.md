@@ -270,7 +270,7 @@ It reports one of:
 
 - `OK`: nothing is wrong. An idle container, a fresh install, or one that is signed out
   is healthy: a backup tool with nothing to do right now is not broken.
-- `HANG`: an upload thread is alive but the transmit log has not advanced for 20 minutes.
+- `HANG`: a backup pass is stuck on its chunk uploads: the transmit log has stopped with an upload child alive, an upload child has been alive for 20 minutes without finishing its 10 MB chunk, or the pass has been waiting 20 minutes for children that no longer exist.
   Backblaze's automatic thread setting can spin up enough upload threads to deadlock
   Wine's pipe handling, which leaves the transfer stuck forever.
 - `WEDGE`: a stale four-hour lock is blocking every pass. This is what an out-of-memory
@@ -290,7 +290,7 @@ flagged.
 
 Set `ENABLE_WATCHDOG=true` to have the container fix both conditions itself. It checks
 every five minutes and takes the smallest action that clears the fault: deleting the stale
-lock for `WEDGE`, or killing the deadlocked upload threads for `HANG` so they respawn.
+lock for `WEDGE`, or killing the upload children and the pass for `HANG` so that bzserv starts a fresh pass.
 Every action is logged. After detecting a fault it waits 30 minutes before acting
 again - whether or not the recovery succeeded - so a fault it cannot fix produces one
 log line per cooldown rather than a retry storm. The cooldown always stays longer
@@ -302,7 +302,7 @@ very slow uplink where more than 20 minutes between transmit-log writes is norma
 
 | Variable | Meaning | Default |
 |---|---|---|
-|`STALL_MIN`| Minutes the transmit log may be silent (with an upload thread alive) before `HANG` is reported | `20` |
+|`STALL_MIN`| Minutes before a stuck upload is reported as `HANG`: the transmit log silent with an upload child alive, one child alive that long, or the pass waiting that long for children that no longer exist | `20` |
 |`LOCK_AGE_MIN`| Age in minutes past which the four-hour lock is stale even without the failures still being written | `245` |
 |`LOCK_FAILS`| Recent "Failed to grab fourHourLock" log lines required to corroborate a `WEDGE` | `5` |
 |`LOCK_GRACE_MIN`| Minutes a `bztransmit` must have been running before it is assumed to own the lock | `2` |

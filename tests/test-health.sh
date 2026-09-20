@@ -137,6 +137,38 @@ ok "OK" "$(run)" "fresh lock beside a young pass is not a wedge"
 old "$LOCK"
 ok "WEDGE" "$(run)" "old lock + failure spam + only seconds-old respawns = WEDGE"
 
+# 16. HANG: the pass says it is waiting for sub_threads, has been for longer
+#     than STALL_MIN, and no push child exists. The heartbeat keeps the log's
+#     mtime fresh, so only the wait it reports can show the hang. (A child that
+#     died before reporting: Wine 11.18 on 2026-09-19.)
+rm -f "$LOCK"; mkproc "bzserv.exe" "bztransmit.exe -prepare_bzcombs"; procage 101 90000
+printf '%s\n' "2026-09-20 20:34:17 696 - BzThread_WaitForAllToFinishAndProcessAllResults - Some sub_threads busy for numMillis=1800000, waiting..." > "$LOGF"
+ok "HANG" "$(run)" "pass waiting 30m for sub_threads with no push child = HANG"
+
+# 17. the same wait below the threshold is a pass finishing a batch: OK
+printf '%s\n' "2026-09-20 20:34:17 696 - Some sub_threads busy for numMillis=300000, waiting..." > "$LOGF"
+ok "OK" "$(run)" "pass waiting 5m for sub_threads is not a hang"
+
+# 18. a long wait with a young child alive is a slow link, not a hang
+mkproc "bzserv.exe" "bztransmit.exe -prepare_bzcombs" "bztransmit.exe -threadpush foo.xml"; procage 102 30
+printf '%s\n' "2026-09-20 20:34:17 696 - Some sub_threads busy for numMillis=1800000, waiting..." > "$LOGF"
+ok "OK" "$(run)" "long sub_threads wait with a 30s-old child is a slow link, not a hang"
+
+# 19. HANG: a push child alive for longer than STALL_MIN never reached its
+#     upload, whatever the log says. (Wine 11.17 on 2026-09-20: a child stuck
+#     in process start-up for four hours while the parent's heartbeat ran.)
+procage 102 1500; echo "fresh line" > "$LOGF"
+ok "HANG" "$(run)" "push child alive 25m with a fresh log = HANG"
+
+# 20. FAIL-SAFE: an unreadable child start time must not read as a hang
+rm "$FX/proc/102/stat"
+ok "OK" "$(run)" "unreadable push child start time fails SAFE (no hang verdict)"
+
+# 21. an old wait line that is no longer the last line belongs to the past
+mkproc "bzserv.exe" "bztransmit.exe -prepare_bzcombs"
+printf '%s\n%s\n' "... Some sub_threads busy for numMillis=1800000, waiting..." "2026-09-20 20:40:00 696 - STARTBACKUP" > "$LOGF"
+ok "OK" "$(run)" "a stale sub_threads wait above the last line is not a hang"
+
 echo
 echo "$FAILED failures"
 exit $(( FAILED > 0 ? 1 : 0 ))

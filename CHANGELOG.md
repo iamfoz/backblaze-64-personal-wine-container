@@ -11,6 +11,15 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Fixed
 
+- bb-health now catches the hang that client 10.0.3 produces when a chunk-upload child dies or
+  never starts: the pass waits for it forever, logging "Some sub_threads busy" every six seconds,
+  so the log never looks idle and the old check saw nothing. `HANG` is now also reported when an
+  upload child has been alive for `STALL_MIN` minutes, or when the pass has been waiting that long
+  for children that no longer exist. A long wait with young children coming and going is a slow
+  link and stays `OK`. bb-watchdog's `HANG` recovery now kills the pass as well as the children,
+  because the pass never gives up on a lost child by itself; bzserv starts a fresh pass within
+  seconds and it carries on from its bz_done files. Two such hangs on 19 and 20 September each
+  cost hours of backup time with bb-health reporting OK throughout.
 - The container now checks that Backblaze's service, bzserv, is running a minute after the GUI
   starts, and starts it if not, with one retry. Wine's service manager normally starts it on its
   own, but on 19 September it died 60 ms into a boot that followed a Wine version change and

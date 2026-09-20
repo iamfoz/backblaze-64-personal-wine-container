@@ -6,10 +6,20 @@
 # normal quiet periods would train people to ignore it. Only corroborated
 # failures are reported:
 #
-#   HANG   A push thread is alive but the transmit log has not advanced for
-#          STALL_MIN minutes. Backblaze's auto-throttle can start enough upload
-#          threads to deadlock Wine's pipe handling, leaving a thread that never
-#          logs again.
+#   HANG   A backup pass is waiting on chunk uploads that will never finish.
+#          Three shapes, any one of which is enough:
+#            - a push child is alive but the transmit log has not advanced for
+#              STALL_MIN minutes (the original deadlock in Wine's pipe handling);
+#            - a push child has itself been alive for STALL_MIN minutes. One
+#              chunk is 10 MB and takes seconds; a child that old never reached
+#              its upload, as when Wine's process start-up hangs;
+#            - the pass's last log line says it is waiting for "sub_threads"
+#              and has been for STALL_MIN minutes, and no push child exists at
+#              all. A child that died before it could report leaves the parent
+#              waiting forever, while its heartbeat keeps the log looking fresh.
+#          The pass on its own does not recover from any of these: it has no
+#          timeout for a child. A long wait with young children coming and
+#          going is a slow link, not a hang, and stays OK.
 #
 #   WEDGE  A stale four-hour lock is blocking every pass. When bztransmit dies
 #          mid-pass - an out-of-memory kill, or a container restart that takes
@@ -86,10 +96,13 @@ newest_log() { ls -t "${TLOG}"/*.log 2>/dev/null | head -1; }
 # Minutes since the oldest process matching $1 started, or empty when none
 # match. Start times come from the starttime field of /proc/PID/stat measured
 # against /proc/uptime, not from /proc/PID mtimes, which some kernels refresh.
-# A start time that cannot be read reports as very old: the caller uses this to
-# decide whether a live bztransmit could own the lock, and that question must
-# fail toward "it could".
+# A start time that cannot be read reports as $2, which defaults to very old:
+# the lock check uses this to decide whether a live bztransmit could own the
+# lock, and that question must fail toward "it could". The hang check passes
+# an empty fallback instead, because there an unreadable age must fail toward
+# "not a hang": its verdict kills a running pass.
 oldest_proc_min() {
+    unreadable="${2-99999}"
     up="$(cut -d. -f1 /proc/uptime 2>/dev/null)"
     tick="$(getconf CLK_TCK 2>/dev/null)"
     case "$up" in ''|*[!0-9]*) up="" ;; esac
@@ -102,7 +115,7 @@ oldest_proc_min() {
         # itself contain spaces, so strip through the last ")" first.
         st="$(sed 's/^.*) //' "${c%/cmdline}/stat" 2>/dev/null | awk '{print $20}')"
         case "$st" in ''|*[!0-9]*) st="" ;; esac
-        if [ -z "$up" ] || [ -z "$st" ]; then echo 99999; return; fi
+        if [ -z "$up" ] || [ -z "$st" ]; then echo "$unreadable"; return; fi
         age=$(( ( up - st / tick ) / 60 ))
         if [ -z "$oldest" ] || [ "$age" -gt "$oldest" ]; then oldest="$age"; fi
     done
@@ -123,11 +136,31 @@ age_min() {
 
 log="$(newest_log)"
 
-# --- HANG: a push is alive but the transmit log has stopped advancing -------------
-if proc_match -threadpush && [ -n "$log" ]; then
-    log_age="$(age_min "$log")"
-    if [ -n "$log_age" ] && [ "$log_age" -ge "$STALL_MIN" ]; then
-        echo "HANG transmit log idle ${log_age}m (threshold ${STALL_MIN}m) with a push thread alive"
+# --- HANG: a pass is waiting on chunk uploads that will never finish -------------
+if proc_match -threadpush; then
+    if [ -n "$log" ]; then
+        log_age="$(age_min "$log")"
+        if [ -n "$log_age" ] && [ "$log_age" -ge "$STALL_MIN" ]; then
+            echo "HANG transmit log idle ${log_age}m (threshold ${STALL_MIN}m) with a push thread alive"
+            exit 1
+        fi
+    fi
+    # A chunk is 10 MB and a healthy child is gone in seconds, a few minutes on
+    # a slow link. One alive for the stall window never got to its upload.
+    child_age="$(oldest_proc_min -threadpush "")"
+    if [ -n "$child_age" ] && [ "$child_age" -ge "$STALL_MIN" ]; then
+        echo "HANG a push child has been alive ${child_age}m (threshold ${STALL_MIN}m) without finishing its chunk"
+        exit 1
+    fi
+elif [ -n "$log" ]; then
+    # No child at all, yet the pass says it is waiting for one. Its heartbeat
+    # line carries how long it has waited, so the log's own age says nothing.
+    # Only the last line counts: an old wait further up belongs to a pass that
+    # has since moved on.
+    wait_ms="$(tail -1 "$log" 2>/dev/null | sed -n 's/.*Some sub_threads busy for numMillis=\([0-9][0-9]*\).*/\1/p')"
+    case "$wait_ms" in ''|*[!0-9]*) wait_ms="" ;; esac
+    if [ -n "$wait_ms" ] && [ $(( wait_ms / 60000 )) -ge "$STALL_MIN" ]; then
+        echo "HANG pass waiting $(( wait_ms / 60000 ))m (threshold ${STALL_MIN}m) for push children that no longer exist"
         exit 1
     fi
 fi

@@ -7,10 +7,16 @@
 #          than a container restart, and bb-health has already confirmed no
 #          bztransmit has been running long enough to own the lock.
 #
-#   HANG   Kill the deadlocked push threads. bzserv respawns them, which restarts
-#          the transfer without disturbing the rest of the container. If that does
-#          not clear the fault the health state stays unhealthy and visible; the
-#          watchdog does not escalate further on its own.
+#   HANG   Kill the push children and the backup pass that launched them.
+#          Killing the children alone used to be enough; since client 10.0.3
+#          the pass waits for a child's result file with no timeout, so a child
+#          that dies or is killed leaves the pass waiting forever (seen twice on
+#          2026-09-19 and 20). bzserv notices the pass exit within ten seconds,
+#          clears the lock and starts a fresh pass, which re-reads its bz_done
+#          files and carries on. Sidecar bztransmit runs (-updatebackupstats
+#          and the like) are killed with it; they are relaunched hourly and
+#          lose nothing. If that does not clear the fault the health state
+#          stays unhealthy and visible; the watchdog does not escalate further.
 #
 # After detecting a fault it waits COOLDOWN_MIN before acting again, whether or
 # not the action worked, so an unfixable fault produces one log line per cooldown
@@ -27,7 +33,8 @@ Recovers the backup automatically when bb-health reports a fault.
 BB-WATCHDOG [--version]
 
 Started by the container when ENABLE_WATCHDOG is true.  Clears a stale
-four-hour lock, or restarts deadlocked upload threads.  Actions are written to
+four-hour lock, or restarts a backup pass stuck on its upload children.
+Actions are written to
 the container log.
 
   ENABLE_WATCHDOG      Must be true, or the watchdog stays idle.
@@ -114,19 +121,26 @@ while true; do
             ;;
         HANG*)
             say "detected: ${status}"
-            pids="$(proc_pids -threadpush)"
-            if [ -n "$pids" ]; then
+            # Children first, then every other bztransmit, which is the pass
+            # and any sidecar. The pass must go: it never gives up waiting for
+            # a child on its own.
+            pids="$(proc_pids 'bztransmit.exe -threadpush')"
+            pass="$(proc_pids 'bztransmit.exe' | grep -v -x -F -- "$pids")"
+            if [ -n "$pids$pass" ]; then
                 # shellcheck disable=SC2086
                 kill $pids 2>/dev/null
+                sleep 2
+                # shellcheck disable=SC2086
+                kill $pass 2>/dev/null
                 sleep 10
-                # Escalate to -9 only for original pids that are still alive.
-                # Re-scanning by name would catch a healthy replacement thread
-                # bzserv had already respawned, and killing that mid-write causes
-                # the wedge this recovery is meant to clear.
+                # Escalate to -9 only for original pids that are still alive
+                # and still bztransmit. Re-scanning by name would catch the
+                # fresh pass bzserv has already started, and killing that
+                # mid-write causes the wedge this recovery is meant to clear.
                 still=""
-                for p in $pids; do
+                for p in $pids $pass; do
                     if kill -0 "$p" 2>/dev/null \
-                       && tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q -- "-threadpush"; then
+                       && tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -q -- "bztransmit.exe"; then
                         still="$still $p"
                     fi
                 done
@@ -134,9 +148,9 @@ while true; do
                     # shellcheck disable=SC2086
                     kill -9 $still 2>/dev/null
                 fi
-                say "recovered: killed deadlocked push thread(s) [${pids}]; bzserv will respawn them"
+                say "recovered: killed push children [${pids}] and the pass [${pass}]; bzserv will start a fresh pass"
             else
-                say "no push threads found to kill - transmit may have cleared on its own"
+                say "no bztransmit found to kill - transmit may have cleared on its own"
             fi
             ;;
         *)
