@@ -273,14 +273,23 @@ def _query(path):
         return out, ""
 
 
+def _tree(raw, path):
+    """A subtree that must be an object. With the service down bzcli answers
+    some paths with a bare message instead of JSON, which _query passes on as
+    a string; treating that as an empty object keeps the reading usable
+    instead of failing the whole poll (seen 2026-09-20 while bzserv was dead)."""
+    val = raw.get(path)
+    return val if isinstance(val, dict) else {}
+
+
 def _shape(raw):
     """Only the fields this container has a use for. Anything that identifies
     the account or the machine is dropped here rather than carried further."""
-    lic = raw.get("/backup/license") or {}
-    inst = raw.get("/backup/installation") or {}
-    dc = raw.get("/backup/datacenter") or {}
-    st = raw.get("/backup/status") or {}
-    settings = raw.get("/settings") or {}
+    lic = _tree(raw, "/backup/license")
+    inst = _tree(raw, "/backup/installation")
+    dc = _tree(raw, "/backup/datacenter")
+    st = _tree(raw, "/backup/status")
+    settings = _tree(raw, "/settings")
     fail = (lic.get("renewal_fail") or {}).get("gmt_time")
     return {
         "license": {"status": lic.get("status"), "type": lic.get("type"),
