@@ -902,6 +902,11 @@ SETTINGS_HTML = """<!doctype html>
   .secret code{display:block;word-break:break-all;font-size:13px;margin:8px 0;
     color:var(--good);}
   .err{color:var(--bad);margin-top:8px;}
+  /* The import result, in the same box the Status tab uses for a notice, on
+     the page background so it has an edge inside the panel. */
+  .notice{border:1px solid var(--dim);border-left:4px solid var(--dim);background:var(--bg);
+    border-radius:4px;padding:10px 12px;max-width:100ch;font-size:13px;line-height:1.5;}
+  .notice.n-good{border-left-color:var(--good);}
   @media (max-width:560px){ table,thead,tbody,tr,th,td{display:block;}
     thead{display:none;} tr{border-bottom:1px solid var(--border);padding:6px 0;}
     th,td{border:none;padding:2px 0;white-space:normal;}
@@ -1004,7 +1009,7 @@ SETTINGS_HTML = """<!doctype html>
   <div class="row"><input type="file" id="xfer-file" accept="application/json,.json"></div>
   <div class="row" style="margin-top:12px"><button id="xfer-import">Import settings</button><span class="dim" id="xfer-imsg"></span></div>
   <div id="xfer-err" class="err" hidden></div>
-  <pre id="xfer-report" class="dim" style="white-space:pre-wrap;margin:8px 0 0" hidden></pre>
+  <div id="xfer-report" class="notice n-good" style="margin:12px 0 0" hidden></div>
 </div>
 
 <script>
@@ -1432,11 +1437,15 @@ document.getElementById('xfer-import').addEventListener('click', function(){
     try { doc = JSON.parse(reader.result); } catch(e){ err.textContent = 'That file is not JSON.'; err.hidden = false; return; }
     post('manage/settings/import', {doc: doc, passphrase: document.getElementById('xfer-pass').value}).then(function(res){
       if(!res.ok){ err.textContent = res.body.error || 'Could not import.'; err.hidden = false; return; }
+      // A box rather than a line of dim text: the first person to try this
+      // read past the result and thought nothing had happened.
       var lines = [];
-      (res.body.applied || []).forEach(function(s){ lines.push('applied: ' + s); });
-      (res.body.skipped || []).forEach(function(s){ lines.push('skipped: ' + s); });
-      (res.body.notes || []).forEach(function(s){ lines.push('note: ' + s); });
-      rep.textContent = lines.join('\\n') || 'Nothing in the file to apply.'; rep.hidden = false;
+      (res.body.applied || []).forEach(function(s){ lines.push('Applied: ' + s); });
+      (res.body.skipped || []).forEach(function(s){ lines.push('Skipped: ' + s); });
+      (res.body.notes || []).forEach(function(s){ lines.push('Note: ' + s); });
+      rep.innerHTML = '<strong>' + (lines.length ? 'Imported.' : 'Nothing in the file to apply.') + '</strong>' +
+        (lines.length ? '<br>' + lines.map(esc).join('<br>') : '');
+      rep.hidden = false; rep.scrollIntoView({block: 'nearest'});
       msg.textContent = 'Imported.';
       loadNotify(); loadQuiet(); loadNotices(); loadClient();
     });
