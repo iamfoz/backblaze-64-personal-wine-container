@@ -34,6 +34,13 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Fixed
 
+- bb-doctor's drive identity check now reads the client's own id format: `v00` followed by 25
+  hex characters in `.bzvol/bzvol_id.xml`, matched against the mount point the client records
+  for that letter in `bzvolumes.xml`. It looked for a GUID shape that never occurs, so it warned
+  about a user's drive on a stray token and said "no volume id found" on drives that were fine.
+  It now tells three cases apart, with the repair for each: the id is known under another letter
+  (the mapping moved), the client has a different id for this letter (another install stamped the
+  drive, or an inherit), or the client has no record of the letter at all.
 - On a phone, the first panel's title on the Monitor no longer sits on the top bar, and the
   Warnings and events list reads as one card per warning with Show and Notify side by side
   instead of four stacked cells.

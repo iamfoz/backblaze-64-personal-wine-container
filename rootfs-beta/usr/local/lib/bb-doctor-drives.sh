@@ -66,31 +66,59 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
     fi
 
     # -- Identity: does the client still know this drive? ---------------------------
-    # The client writes its own id for a volume under <root>/.bzvol and lists the
-    # volumes it knows in bzvolumes.xml. After an inherit onto a fresh install, or
-    # a .bzvol rewritten by a different install, the two can disagree, and the
-    # client then shows the drive as selected but backs nothing up. The id is
-    # found by shape (a GUID or a 32-hex token) rather than by a file name, since
-    # the layout under .bzvol is not established from a capture; when no such
-    # token is present the check says so and claims nothing.
+    # The client stamps each drive it owns with an id in <root>/.bzvol/bzvol_id.xml
+    # ("v00" followed by 25 hex characters, captured 2026-09-21)
+    # and lists the drives it knows in bzvolumes.xml, each with the mount point
+    # as hex: 443a5c is D:\. When the stamp and the list disagree the client
+    # shows the drive as ticked and backs nothing up. Three cases, told apart
+    # by the list: the id is known under another letter (the mapping moved), the
+    # list has a different id for this letter (another install stamped the
+    # drive, or an inherit brought a different record), or the list has nothing
+    # for this letter at all (the client never owned it). Not repaired here: the
+    # id is the backup's identity, and the wrong change starts the drive over.
     _vol="${_root}/.bzvol"
+    _idf="${_vol}/bzvol_id.xml"
     _vols="${BZ}/bzvolumes.xml"
+    _hex="$(printf '%s:\\' "$_letter" | od -An -tx1 | tr -d ' \n')"
     if [ ! -d "$_vol" ]; then
         NOTE "${_letter}: no .bzvol yet; the client has not taken ownership of this drive"
     elif [ ! -r "$_vols" ]; then
         NOTE "${_letter}: .bzvol present; bzvolumes.xml not readable, identity not checked"
     else
-        _id="$(grep -rhoE '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32}' "$_vol" 2>/dev/null | head -1)"
+        _id="$(grep -oE 'v[0-9a-f]{27}' "$_idf" 2>/dev/null | head -1)"
+        _known="$(grep "mountPointPathHex=\"${_hex}\"" "$_vols" 2>/dev/null | grep -oE 'bzVolumeGuid="v[0-9a-f]{27}"' | grep -oE 'v[0-9a-f]{27}' | head -1)"
         if [ -z "$_id" ]; then
-            NOTE "${_letter}: .bzvol present but no volume id found in it; identity not checked"
-        elif grep -qi -- "$_id" "$_vols" 2>/dev/null; then
+            if [ -f "$_idf" ]; then
+                WARN "${_letter}: .bzvol/bzvol_id.xml carries no volume id, so the client cannot match this drive to its backup"
+                if [ -n "$_known" ]; then
+                    NOTE "the client's own record for ${_letter}: is ${_known}. With the container stopped, put that id back as"
+                    NOTE "the id in ${_idf}, and the existing backup of this drive carries on."
+                else
+                    NOTE "the client has no record of a drive at ${_letter}: either. Untick and re-tick it in the client's"
+                    NOTE "settings; the client stamps it afresh and its upload starts over."
+                fi
+            else
+                NOTE "${_letter}: .bzvol present but no bzvol_id.xml yet; the client has not taken ownership of this drive"
+            fi
+        elif [ "$_known" = "$_id" ]; then
             OK "${_letter}: the client recognises this drive (id ${_id})"
+        elif grep -q "bzVolumeGuid=\"${_id}\"" "$_vols" 2>/dev/null; then
+            _ohex="$(grep "bzVolumeGuid=\"${_id}\"" "$_vols" | grep -oE 'mountPointPathHex="[0-9a-f]*"' | grep -oE '[0-9a-f]{2}' | head -1)"
+            _other="$(printf "\\$(printf '%03o' $((0x${_ohex:-3f})))")"
+            WARN "${_letter}: the client knows this drive as ${_other}:, not ${_letter}: (id ${_id})"
+            NOTE "the drive letter changed. Map the folder back to drive_$(printf '%s' "$_other" | tr 'A-Z' 'a-z') so it is ${_other}: again, or the"
+            NOTE "client treats it as a new drive and starts its upload over."
         else
             WARN "${_letter}: the client does not recognise this drive's identity (${_id} is not in bzvolumes.xml)"
-            NOTE "this is the state after an inherit onto a fresh install, or when another install rewrote .bzvol."
-            NOTE "the client can show the drive as selected and back up nothing. Not repaired here: the"
-            NOTE "identity is your backup's, and the wrong change discards it. Check the drive in the client's"
-            NOTE "settings, and if you inherited, that the right computer was chosen."
+            if [ -n "$_known" ]; then
+                NOTE "the client's own record for ${_letter}: is ${_known}: another install stamped this drive, or an"
+                NOTE "inherit brought a different record. To keep the existing backup of this drive, stop the container"
+                NOTE "and replace the id in ${_idf} with ${_known}."
+            else
+                NOTE "the client has no record of a drive at ${_letter}: at all. Untick and re-tick it in the client's"
+                NOTE "settings; the client stamps it afresh and its upload starts over. If you inherited, check that"
+                NOTE "the right computer was chosen."
+            fi
         fi
     fi
 done

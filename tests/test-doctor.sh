@@ -105,6 +105,31 @@ wedge; touch "$LOCK"
 run --fix >/dev/null
 locked "--fix keeps a lock younger than the grace window"
 
+# ---- the beta's source-drive drop-in: identity by the client's own format --------
+# bzvol_id.xml carries bzVolumeGuid="v00" + 25 hex; bzvolumes.xml maps each id to
+# a mount point as hex (443a5c is D:\). Captured from a live container on
+# 2026-09-21; the earlier check looked for a GUID shape that never occurs and
+# raised a false warning on one user's drive while missing a real one.
+DROP="$HERE/../rootfs-beta/usr/local/lib/bb-doctor-drives.sh"
+VOLS="$BZ/bzvolumes.xml"
+KNOWN_D=v00121e7007550b3825692e70910; KNOWN_E=v000d1c7004550b3825692e70910
+printf '<bzvolumes>\n<bzvolume bzVolumeGuid="%s" mountPointPathHex="443a5c" typeOfVolumeTwoCharCode="gm" />\n<bzvolume bzVolumeGuid="%s" mountPointPathHex="453a5c" typeOfVolumeTwoCharCode="gm" />\n</bzvolumes>\n' "$KNOWN_D" "$KNOWN_E" > "$VOLS"
+mkdrive(){ mkdir -p "$FX/drive_$1/.bzvol"; ln -sfn "$FX/drive_$1" "${PFX}dosdevices/$1:"; [ -n "$2" ] && printf '<?xml version="1.0"?>\n<bzvol_id bzVolumeGuid="%s" />\n' "$2" > "$FX/drive_$1/.bzvol/bzvol_id.xml"; :; }
+mkdrive d "$KNOWN_D"                         # stamped with the id the client has for D:
+mkdrive e "v00aaaaaaaaaaaaaaaaaaaaaaaaa"      # stamped by another install; the client has a record for E:
+mkdrive f ""; : > "$FX/drive_f/.bzvol/bzvol_id.xml"   # stamp present but empty, and no record for F:
+mkdrive g "$KNOWN_E"                         # the id the client knows as E:, now mapped as G:
+mkdrive h ""                                 # .bzvol with no stamp yet
+DR="$(cd "$FX" && sh -c 'PREFIX="$1"; BZ="$2"; OK(){ echo "[ok] $*"; }; WARN(){ echo "[warn] $*"; }; BAD(){ echo "[FAIL] $*"; }; NOTE(){ echo "  $*"; }; . "$3"' _ "$PFX" "$BZ" "$DROP" 2>&1)"
+has "$DR" "\[ok\] D: the client recognises this drive (id $KNOWN_D)" "drives: a stamp matching the client's record for that letter is recognised"
+has "$DR" "\[warn\] E: the client does not recognise this drive's identity" "drives: a stamp from another install is a warning"
+has "$DR" "record for E: is $KNOWN_E" "drives: and the note names the id the client has for that letter"
+has "$DR" "\[warn\] F: .bzvol/bzvol_id.xml carries no volume id" "drives: an empty stamp is a warning"
+has "$DR" "no record of a drive at F:" "drives: with no record the advice is to re-tick the drive"
+has "$DR" "\[warn\] G: the client knows this drive as E:, not G:" "drives: a known id under another letter names the letter it moved from"
+has "$DR" "H: .bzvol present but no bzvol_id.xml yet" "drives: a .bzvol without a stamp is not a warning"
+for L in d e f g h; do rm -f "${PFX}dosdevices/$L:"; done
+
 echo
 echo "$FAILED failures"
 exit $(( FAILED > 0 ? 1 : 0 ))
