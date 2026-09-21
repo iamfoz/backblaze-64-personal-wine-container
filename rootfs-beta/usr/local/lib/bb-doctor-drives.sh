@@ -66,8 +66,12 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
     fi
 
     # -- Identity: does the client still know this drive? ---------------------------
-    # The client stamps each drive it owns with an id in <root>/.bzvol/bzvol_id.xml
-    # ("v00" followed by 25 hex characters, captured 2026-09-21)
+    # The client stamps each drive it owns in <root>/.bzvol/bzvol_id.xml:
+    # <bzvolume vguid="v00..." associated_hguid="..." />, the volume id being
+    # "v00" followed by 25 hex characters (captured 2026-09-22). The hguid ties
+    # the drive to the computer identity and is never printed here. Backblaze's
+    # own README in that directory says deleting it removes the drive's files
+    # from the datacenter, so no note below ever suggests removing it.
     # and lists the drives it knows in bzvolumes.xml, each with the mount point
     # as hex: 443a5c is D:\. When the stamp and the list disagree the client
     # shows the drive as ticked and backs nothing up. Three cases, told apart
@@ -85,14 +89,15 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
     elif [ ! -r "$_vols" ]; then
         NOTE "${_letter}: .bzvol present; bzvolumes.xml not readable, identity not checked"
     else
-        _id="$(grep -oE 'v[0-9a-f]{27}' "$_idf" 2>/dev/null | head -1)"
+        _id="$(grep -oE 'vguid="v[0-9a-f]{27}"' "$_idf" 2>/dev/null | grep -oE 'v[0-9a-f]{27}' | head -1)"
         _known="$(grep "mountPointPathHex=\"${_hex}\"" "$_vols" 2>/dev/null | grep -oE 'bzVolumeGuid="v[0-9a-f]{27}"' | grep -oE 'v[0-9a-f]{27}' | head -1)"
         if [ -z "$_id" ]; then
             if [ -f "$_idf" ]; then
                 WARN "${_letter}: .bzvol/bzvol_id.xml carries no volume id, so the client cannot match this drive to its backup"
                 if [ -n "$_known" ]; then
-                    NOTE "the client's own record for ${_letter}: is ${_known}. With the container stopped, put that id back as"
-                    NOTE "the id in ${_idf}, and the existing backup of this drive carries on."
+                    NOTE "the client's own record for ${_letter}: is ${_known}. With the container stopped, set vguid in"
+                    NOTE "${_idf} to that id, and the existing backup of this drive carries on. Never delete .bzvol:"
+                    NOTE "Backblaze removes the drive's backed-up files when it goes."
                 else
                     NOTE "the client has no record of a drive at ${_letter}: either. Untick and re-tick it in the client's"
                     NOTE "settings; the client stamps it afresh and its upload starts over."
@@ -113,7 +118,8 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
             if [ -n "$_known" ]; then
                 NOTE "the client's own record for ${_letter}: is ${_known}: another install stamped this drive, or an"
                 NOTE "inherit brought a different record. To keep the existing backup of this drive, stop the container"
-                NOTE "and replace the id in ${_idf} with ${_known}."
+                NOTE "and set vguid in ${_idf} to ${_known}. Never delete .bzvol: Backblaze removes the drive's"
+                NOTE "backed-up files when it goes."
             else
                 NOTE "the client has no record of a drive at ${_letter}: at all. Untick and re-tick it in the client's"
                 NOTE "settings; the client stamps it afresh and its upload starts over. If you inherited, check that"
