@@ -11,6 +11,13 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Added
 
+- Settings export and import, from a user request. The Settings tab's Backup and restore panel
+  writes one JSON file with the API keys, notification endpoints and events, quiet hours, warning
+  choices and dismissals, and the Backblaze client's own settings as values, and reads one back,
+  replacing each section the file holds and writing the client settings through bzcli. The API
+  keys and the endpoints are the secrets: with a passphrase they go in encrypted, without one they
+  are left out and the file records which sections are missing. The file carries a version, so a
+  later build can read an older file. `bb-settings export` and `bb-settings import` do the same from the console.
 - The Monitor's warning band now shows one row per warning with an X to dismiss it, and no
   longer shows warnings that were dismissed on the Status tab. Two warnings carry no X anywhere,
   because both mean nothing is being backed up: a safety freeze, and passes losing their lock.

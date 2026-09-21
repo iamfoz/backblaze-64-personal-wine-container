@@ -276,6 +276,15 @@ It reports one of:
   has no timeout for a lost child, so it waits forever.
 - `DOWN`: the client is up but its service, bzserv, is not running, so no pass can start. The
   container restarts the service itself; this state shows that it had to.
+
+The Settings tab's Backup and restore panel exports everything the container keeps for itself as
+one JSON file, and imports one: API keys, notification endpoints and events, quiet hours, warning
+choices and dismissals, and the Backblaze client's own settings as values. The API keys and the
+endpoints are the secrets. With a passphrase they go into the file encrypted, using scrypt and
+HMAC from Python's standard library, which is all the image has. Without one they are left out
+and the file records which sections are missing. The file carries a version, so a later build
+can read an older file. `bb-settings export` and
+`bb-settings import` do the same from the console.
 - `WEDGE`: a stale four-hour lock is blocking every pass. This is what an out-of-memory
   kill or a container restart mid-pass leaves behind: the lock file outlives the process
   that owned it, and every subsequent pass fails to acquire it. It usually shows as a

@@ -30,6 +30,7 @@ import bbconfig
 import bbctl
 import bbdata
 import bbdismiss
+import bbsettings
 import bbreport
 import bbtools
 import bbnotify
@@ -987,6 +988,25 @@ SETTINGS_HTML = """<!doctype html>
   <div id="quiet-err" class="err" hidden></div>
 </div>
 
+<h2>Backup and restore</h2>
+<div class="panel" id="transfer">
+  <p class="dim">One file with everything this page holds: API keys, notification endpoints and
+  events, quiet hours, warning choices and dismissals, and the Backblaze client's own settings as
+  values. The API keys and the notification endpoints are the secrets. With a passphrase they go
+  into the file encrypted; without one they are left out and the file records which sections are
+  missing. Importing replaces
+  each section the file holds and writes the client settings back through bzcli one at a time.
+  The file carries a version, so a later build can read an older file.</p>
+  <label for="xfer-pass">Passphrase <span class="dim">(for the secrets; leave empty to leave them out)</span></label>
+  <div class="row"><input type="password" id="xfer-pass" autocomplete="new-password" style="max-width:280px"></div>
+  <div class="row" style="margin-top:12px"><button id="xfer-export">Export settings</button><span class="dim" id="xfer-msg"></span></div>
+  <label for="xfer-file" style="margin-top:14px">Import a settings file <span class="dim">(uses the passphrase above if the file has secrets)</span></label>
+  <div class="row"><input type="file" id="xfer-file" accept="application/json,.json"></div>
+  <div class="row" style="margin-top:12px"><button id="xfer-import">Import settings</button><span class="dim" id="xfer-imsg"></span></div>
+  <div id="xfer-err" class="err" hidden></div>
+  <pre id="xfer-report" class="dim" style="white-space:pre-wrap;margin:8px 0 0" hidden></pre>
+</div>
+
 <script>
 function esc(s){ return String(s==null?'':s).replace(/[&<>\"']/g, function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -1384,6 +1404,45 @@ try {
   var t = localStorage.getItem('bbMonitorTheme');
   if(t) document.documentElement.setAttribute('data-theme', t);
 } catch(e){}
+// ---- backup and restore ----
+document.getElementById('xfer-export').addEventListener('click', function(){
+  var err = document.getElementById('xfer-err'), msg = document.getElementById('xfer-msg');
+  err.hidden = true; msg.textContent = '';
+  post('manage/settings/export', {passphrase: document.getElementById('xfer-pass').value}).then(function(res){
+    if(!res.ok){ err.textContent = res.body.error || 'Could not export.'; err.hidden = false; return; }
+    // Saved from the page rather than fetched as a download, so the passphrase
+    // travels in a POST body and never in a URL.
+    var d = new Date(), pad = function(n){ return (n < 10 ? '0' : '') + n; };
+    var name = 'bb64-settings-' + d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '-' + pad(d.getHours()) + pad(d.getMinutes()) + '.json';
+    var blob = new Blob([JSON.stringify(res.body, null, 2)], {type: 'application/json'});
+    var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+    msg.textContent = (res.body.omitted ? 'Exported without the secrets (no passphrase).' : 'Exported with the secrets encrypted.');
+  });
+});
+document.getElementById('xfer-import').addEventListener('click', function(){
+  var err = document.getElementById('xfer-err'), msg = document.getElementById('xfer-imsg'), rep = document.getElementById('xfer-report');
+  var f = document.getElementById('xfer-file').files[0];
+  err.hidden = true; msg.textContent = ''; rep.hidden = true;
+  if(!f){ err.textContent = 'Choose a settings file first.'; err.hidden = false; return; }
+  var reader = new FileReader();
+  reader.onload = function(){
+    var doc;
+    try { doc = JSON.parse(reader.result); } catch(e){ err.textContent = 'That file is not JSON.'; err.hidden = false; return; }
+    post('manage/settings/import', {doc: doc, passphrase: document.getElementById('xfer-pass').value}).then(function(res){
+      if(!res.ok){ err.textContent = res.body.error || 'Could not import.'; err.hidden = false; return; }
+      var lines = [];
+      (res.body.applied || []).forEach(function(s){ lines.push('applied: ' + s); });
+      (res.body.skipped || []).forEach(function(s){ lines.push('skipped: ' + s); });
+      (res.body.notes || []).forEach(function(s){ lines.push('note: ' + s); });
+      rep.textContent = lines.join('\\n') || 'Nothing in the file to apply.'; rep.hidden = false;
+      msg.textContent = 'Imported.';
+      loadNotify(); loadQuiet(); loadNotices(); loadClient();
+    });
+  };
+  reader.readAsText(f);
+});
 loadClient();
 loadNotify();
 loadQuiet();
@@ -4551,6 +4610,36 @@ class Handler(BaseHTTPRequestHandler):
             bbdismiss.reset()
             self._json(200, {"schema": bbapi.SCHEMA, "ok": True,
                              "dismissed": bbdismiss.listing(), "hidden": sorted(bbdismiss.hidden())})
+            return
+        if path == "/manage/settings/export":
+            # The passphrase comes in the body, never the URL, so it is in no
+            # access log. The page saves the answer as a file itself.
+            try:
+                doc = bbsettings.export(str(body.get("passphrase") or "") or None,
+                                        build=bbdata.BUILD_LABEL)
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(200, doc)
+            return
+        if path == "/manage/settings/import":
+            doc = body.get("doc")
+            if not isinstance(doc, dict):
+                self._json(400, {"error": "the file did not parse as a settings file"})
+                return
+            sections = body.get("sections")
+            if sections is not None and not isinstance(sections, list):
+                self._json(400, {"error": "sections must be a list"})
+                return
+            try:
+                report = bbsettings.import_(doc, str(body.get("passphrase") or "") or None,
+                                            sections=[str(s) for s in sections] if sections else None)
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            # The client reading may have changed; the poll picks it up. The
+            # notification and dismiss stores are read from disk on use.
+            self._json(200, dict(report, schema=bbapi.SCHEMA, ok=True))
             return
         if path == "/manage/notices/hidden":
             # The kinds switched off. Only kinds this container raises, and

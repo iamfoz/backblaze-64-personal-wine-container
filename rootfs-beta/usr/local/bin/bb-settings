@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Export or import the container's own settings from the console.
+
+  bb-settings export [FILE] [--passphrase-file PATH | --no-secrets]
+  bb-settings import FILE  [--passphrase-file PATH] [--only SECTION,...]
+
+The same file the Settings tab makes and reads: API keys, notification
+endpoints and events, quiet hours, warning choices and dismissals, and the
+Backblaze client's own settings. Secrets go in encrypted under a passphrase,
+asked for at the terminal unless --passphrase-file names a file holding it;
+--no-secrets exports without them. Run inside the container as the container
+user, the way the other bb-* tools are:
+
+  docker exec -u "$(docker exec Backblaze64 stat -c %u:%g /config)" Backblaze64 bb-settings export /config/bb64-settings.json
+"""
+import getpass, json, os, sys
+
+sys.path.insert(0, "/usr/local/lib/bb-monitor")
+import bbdata, bbsettings   # noqa: E402
+
+
+def passphrase(args, needed):
+    if args.get("passphrase_file"):
+        with open(args["passphrase_file"], encoding="utf-8") as fh:
+            return fh.read().strip()
+    if args.get("no_secrets"):
+        return None
+    if not sys.stdin.isatty():
+        if needed:
+            sys.exit("bb-settings: a passphrase is needed; give --passphrase-file or --no-secrets")
+        return None
+    return getpass.getpass("Passphrase (empty to leave the secrets out): ") or None
+
+
+def parse(argv):
+    args = {"cmd": None, "file": None, "passphrase_file": None, "no_secrets": False, "only": None}
+    it = iter(argv)
+    for a in it:
+        if a in ("-h", "--help"):
+            print(__doc__.strip()); sys.exit(0)
+        elif a == "--passphrase-file":
+            args["passphrase_file"] = next(it, None)
+        elif a == "--no-secrets":
+            args["no_secrets"] = True
+        elif a == "--only":
+            args["only"] = [s.strip() for s in (next(it, "") or "").split(",") if s.strip()]
+        elif args["cmd"] is None:
+            args["cmd"] = a
+        elif args["file"] is None:
+            args["file"] = a
+        else:
+            sys.exit("bb-settings: unexpected argument %r" % a)
+    if args["cmd"] not in ("export", "import"):
+        sys.exit(__doc__.strip())
+    return args
+
+
+def main():
+    args = parse(sys.argv[1:])
+    if args["cmd"] == "export":
+        doc = bbsettings.export(passphrase(args, needed=False), build=bbdata.BUILD_LABEL)
+        text = json.dumps(doc, indent=2, sort_keys=True) + "\n"
+        if args["file"]:
+            with open(args["file"], "w", encoding="utf-8") as fh:
+                fh.write(text)
+            os.chmod(args["file"], 0o600)
+            print("written %s (%s)" % (args["file"], "secrets encrypted" if "secrets" in doc
+                                       else "without the secrets"))
+        else:
+            sys.stdout.write(text)
+        return
+    if not args["file"]:
+        sys.exit("bb-settings: import needs a file")
+    with open(args["file"], encoding="utf-8") as fh:
+        doc = json.load(fh)
+    try:
+        report = bbsettings.import_(doc, passphrase(args, needed="secrets" in doc), sections=args["only"])
+    except ValueError as exc:
+        sys.exit("bb-settings: %s" % exc)
+    for s in report["applied"]:
+        print("applied: " + s)
+    for s in report["skipped"]:
+        print("skipped: " + s)
+    for s in report["notes"]:
+        print("note: " + s)
+
+
+if __name__ == "__main__":
+    main()

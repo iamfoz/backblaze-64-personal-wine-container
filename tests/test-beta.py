@@ -964,6 +964,95 @@ ok('bb64_health_dismissed{kind="stale"} 0' in _metrics,
    'every kind gets both gauges, so neither series appears and disappears')
 
 print()
+# ---- settings export and import -------------------------------------------------
+# One file for everything the container keeps for itself. Exported from one
+# store directory and imported into a fresh one, the second must hold the same
+# records; the secrets travel only under a passphrase; a newer file is refused.
+import bbsettings
+def _point(dirpath):
+    bbapi.DIR = dirpath; bbapi.KEYS = dirpath + "/keys.json"; bbapi.LOCK = dirpath + "/.lock"
+    bbapi.SETTINGS = dirpath + "/settings.json"; bbnotify.CONF = dirpath + "/notify.json"
+    bbnotify.STATE = dirpath + "/notify-state.json"; bbquiet.CONF = dirpath + "/quiet.json"
+    bbdismiss.STORE = dirpath + "/dismissed.json"; bbdismiss._cache = None
+_src = os.path.join(FIX, "xfer-src"); _dst = os.path.join(FIX, "xfer-dst")
+os.makedirs(_src); os.makedirs(_dst)
+_point(_src)
+_rec, _secret = bbapi.create("laptop", ["read"])
+bbapi.set_enabled(False)
+bbnotify.save({"endpoints": [{"kind": "ntfy", "label": "phone", "url": "https://example.invalid/topic",
+                              "auth": "bearer", "token": "tok-123", "user": "", "template": ""}],
+               "events": {"frozen": False, "milestone": True}, "skipped_threshold": 7})
+bbquiet.save({"enabled": True, "windows": [{"days": [0, 4], "start": "22:00", "end": "07:00"}]})
+bbdismiss.dismiss("licence", "Backblaze reports the licence as trial_expired")
+bbdismiss.set_hidden(["stale"])
+_cached_before = bbconfig.cached
+bbconfig.cached = lambda: {"settings": {"num_backup_threads": "6", "net_auto_throttle": True}}
+_avail_before = bbconfig.available
+bbconfig.available = lambda: True
+try:
+    _plain = bbsettings.export()
+    _sealed = bbsettings.export("hunter2", build="beta+1")
+finally:
+    bbconfig.cached = _cached_before
+ok(_plain["format"] == "bb64-settings" and _plain["version"] == bbsettings.VERSION, "the file names its format and version")
+ok(_plain["omitted"] == ["api_keys", "notifications"] and "secrets" not in _plain,
+   "without a passphrase the secrets are left out and named")
+ok(_plain["sections"]["notifications"]["endpoints"][0]["url"] == "" and
+   _plain["sections"]["notifications"]["endpoints"][0]["token"] == "",
+   "and the endpoints carry no URL or token")
+ok("tok-123" not in json.dumps(_sealed) and "example.invalid" not in json.dumps(_sealed)
+   and _rec["id"] in json.dumps(bbapi._read()) and _rec["id"] not in json.dumps(_sealed["sections"]),
+   "with a passphrase nothing secret is readable in the file")
+ok(_sealed["sections"]["client"]["settings"] == {"num_backup_threads": "6", "net_auto_throttle": True},
+   "the client's writable settings travel as values")
+
+_point(_dst)
+_written = []
+_report = bbsettings.import_(json.loads(json.dumps(_sealed)), "hunter2",
+                             write_client=lambda k, v: (_written.append((k, v)) or (True, "set")))
+ok(sorted(_written) == [("net_auto_throttle", True), ("num_backup_threads", 6)],
+   "client settings are written back through the validator: %r" % _written)
+ok(bbapi._read()[0]["hash"] == _rec["hash"] and bbapi._read()[0]["label"] == "laptop" and not bbapi.enabled(),
+   "the key record and the API switch are restored")
+ok(bbapi.verify(_secret, "read") is not None,
+   "the same key string authenticates against the restored record")
+_n = bbnotify.load()
+ok(_n["endpoints"][0]["token"] == "tok-123" and _n["endpoints"][0]["url"] == "https://example.invalid/topic"
+   and _n["events"]["frozen"] is False and _n["skipped_threshold"] == 7, "notification endpoints, events and threshold are restored")
+ok(bbquiet.load() == {"enabled": True, "windows": [{"days": [0, 4], "start": "22:00", "end": "07:00"}]},
+   "quiet hours are restored")
+ok("licence" in bbdismiss.load()["keys"] and bbdismiss.hidden() == frozenset({"stale"}),
+   "dismissed warnings and hidden kinds are restored")
+ok(any(a.startswith("api_keys") for a in _report["applied"]) and "client: 2 written" in _report["applied"],
+   "the report says what was applied: %r" % _report["applied"])
+try:
+    bbsettings.import_(json.loads(json.dumps(_sealed)), "wrong"); ok(False, "a wrong passphrase is refused")
+except ValueError as exc:
+    ok("passphrase" in str(exc), "a wrong passphrase is refused: %s" % exc)
+try:
+    bbsettings.import_(json.loads(json.dumps(_sealed))); ok(False, "an encrypted file without a passphrase is refused")
+except ValueError as exc:
+    ok("passphrase" in str(exc), "an encrypted file without a passphrase is refused")
+_newer = dict(_plain, version=bbsettings.VERSION + 1)
+try:
+    bbsettings.import_(_newer); ok(False, "a newer file is refused")
+except ValueError as exc:
+    ok("update the container" in str(exc), "a newer file is refused with the reason")
+try:
+    bbsettings.import_({"format": "something-else", "version": 1}); ok(False, "another format is refused")
+except ValueError as exc:
+    ok("not a Backblaze 64 settings file" in str(exc), "another format is refused")
+_r2 = bbsettings.import_(json.loads(json.dumps(_plain)), sections=["quiet_hours", "api_keys"])
+ok(_r2["skipped"] == ["api_keys: not in the file (exported without a passphrase)"] and _r2["applied"] == ["quiet_hours"],
+   "a passphrase-less file restores what it has and says what it lacks: %r" % _r2)
+_bad = json.loads(json.dumps(_sealed)); _bad["sections"]["client"]["settings"]["num_backup_threads"] = "lots"
+_before = bbquiet.load()
+try:
+    bbsettings.import_(_bad, "hunter2", write_client=lambda k, v: (True, "")); ok(False, "a bad value is refused")
+except ValueError as exc:
+    ok(bbquiet.load() == _before, "a bad value refuses the whole file before anything is written: %s" % exc)
+bbconfig.available = _avail_before
+
 if XPASS:
     print("%d expected failures now pass and should become plain assertions:" % len(XPASS))
     for m in XPASS:
