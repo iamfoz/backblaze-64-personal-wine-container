@@ -907,6 +907,8 @@ SETTINGS_HTML = """<!doctype html>
   .notice{border:1px solid var(--dim);border-left:4px solid var(--dim);background:var(--bg);
     border-radius:4px;padding:10px 12px;max-width:100ch;font-size:13px;line-height:1.5;}
   .notice.n-good{border-left-color:var(--good);}
+  .notice.n-warn{border-left-color:var(--warn);}
+  .notice.n-bad{border-left-color:var(--bad);}
   @media (max-width:560px){ table,thead,tbody,tr,th,td{display:block;}
     thead{display:none;} tr{border-bottom:1px solid var(--border);padding:6px 0;}
     th,td{border:none;padding:2px 0;white-space:normal;}
@@ -1435,20 +1437,26 @@ document.getElementById('xfer-import').addEventListener('click', function(){
   reader.onload = function(){
     var doc;
     try { doc = JSON.parse(reader.result); } catch(e){ err.textContent = 'That file is not JSON.'; err.hidden = false; return; }
-    post('manage/settings/import', {doc: doc, passphrase: document.getElementById('xfer-pass').value}).then(function(res){
-      if(!res.ok){ err.textContent = res.body.error || 'Could not import.'; err.hidden = false; return; }
-      // A box rather than a line of dim text: the first person to try this
-      // read past the result and thought nothing had happened.
-      var lines = [];
-      (res.body.applied || []).forEach(function(s){ lines.push('Applied: ' + s); });
-      (res.body.skipped || []).forEach(function(s){ lines.push('Skipped: ' + s); });
-      (res.body.notes || []).forEach(function(s){ lines.push('Note: ' + s); });
-      rep.innerHTML = '<strong>' + (lines.length ? 'Imported.' : 'Nothing in the file to apply.') + '</strong>' +
-        (lines.length ? '<br>' + lines.map(esc).join('<br>') : '');
+    // One box for every outcome, with the edge saying which: green when all
+    // of the file went in, yellow when part of it was skipped or a client
+    // setting was not written, red when nothing was applied. A line of dim
+    // text under the button was read past by the first person to try this.
+    var show = function(cls, head, lines){
+      rep.className = 'notice ' + cls;
+      rep.innerHTML = '<strong>' + esc(head) + '</strong>' + (lines.length ? '<br>' + lines.map(esc).join('<br>') : '');
       rep.hidden = false; rep.scrollIntoView({block: 'nearest'});
+    };
+    post('manage/settings/import', {doc: doc, passphrase: document.getElementById('xfer-pass').value}).then(function(res){
+      if(!res.ok){ show('n-bad', 'Import failed. Nothing was changed.', [res.body.error || 'Could not import.']); return; }
+      var lines = [], partial = false;
+      (res.body.applied || []).forEach(function(s){ lines.push('Applied: ' + s); if(s.indexOf('not written') >= 0) partial = true; });
+      (res.body.skipped || []).forEach(function(s){ lines.push('Skipped: ' + s); partial = true; });
+      (res.body.notes || []).forEach(function(s){ lines.push('Note: ' + s); partial = true; });
+      if(!(res.body.applied || []).length){ show('n-bad', 'Nothing in the file could be applied.', lines); return; }
+      show(partial ? 'n-warn' : 'n-good', partial ? 'Imported, with parts left out.' : 'Imported.', lines);
       msg.textContent = 'Imported.';
       loadNotify(); loadQuiet(); loadNotices(); loadClient();
-    });
+    }).catch(function(){ show('n-bad', 'Import failed.', ['The container did not answer, or answered with something other than a result.']); });
   };
   reader.readAsText(f);
 });
