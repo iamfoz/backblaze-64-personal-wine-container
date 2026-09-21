@@ -27,6 +27,10 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Fixed
 
+- The Backup client section of Settings now fills in by itself once the first client reading has
+  arrived. It asked once when the page opened, so a page opened before the reading stayed on
+  "not been read yet" until it was reloaded by hand. It asks again every fifteen seconds until
+  the reading is there, and not after, because the section holds fields being edited.
 - The Status tab stopped rendering in the previous beta build: every warning vanished and the
   client panel said the client had not been read yet. An apostrophe in the lost-lock notice
   ended the script's string early, and the parse test read the page from the source file, where

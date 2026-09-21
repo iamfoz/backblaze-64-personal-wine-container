@@ -1071,17 +1071,24 @@ function renderClient(d){
   var vals = (d.client && d.client.settings) || null;
   if(!list.length || !vals){
     box.innerHTML = '<p class="dim">The client has not been read yet. Each reading starts a Windows ' +
-      'process under Wine, so the first one arrives a little after the monitor starts. Reload this ' +
-      'page in a moment.</p>';
+      'process under Wine, so the first one arrives a little after the monitor starts. This section ' +
+      'fills in by itself when it does.</p>';
+    // Asked again until the reading is there, and not after: this section
+    // holds fields being edited, and a redraw would throw the edits away. A
+    // page opened before the first reading used to stay like this until it
+    // was reloaded by hand.
+    if(!CLIENT_RETRY) CLIENT_RETRY = setTimeout(function(){ CLIENT_RETRY = null; loadClient(); }, 15000);
     return;
   }
   box.innerHTML = list.map(function(s){ return csRow(s, d.rate_limits); }).join('');
 }
+var CLIENT_RETRY = null;
 function loadClient(){
   var err = document.getElementById('client-err');
   return fetch('manage/client', {cache:'no-store'}).then(function(r){ return r.json(); })
     .then(function(j){ err.hidden = true; renderClient(j); })
-    .catch(function(){ err.textContent = 'Could not read the client settings.'; err.hidden = false; });
+    .catch(function(){ err.textContent = 'Could not read the client settings.'; err.hidden = false;
+                       if(!CLIENT_RETRY) CLIENT_RETRY = setTimeout(function(){ CLIENT_RETRY = null; loadClient(); }, 15000); });
 }
 document.getElementById('client-settings').addEventListener('click', function(e){
   var t = e.target;
