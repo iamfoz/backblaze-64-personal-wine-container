@@ -903,7 +903,12 @@ SETTINGS_HTML = """<!doctype html>
   .err{color:var(--bad);margin-top:8px;}
   @media (max-width:560px){ table,thead,tbody,tr,th,td{display:block;}
     thead{display:none;} tr{border-bottom:1px solid var(--border);padding:6px 0;}
-    th,td{border:none;padding:2px 0;white-space:normal;} }
+    th,td{border:none;padding:2px 0;white-space:normal;}
+    /* The warnings list: the name and what it means on their own line, then
+       Show, Notify and the dismissed count side by side beneath, rather than
+       four stacked cells that read as four unrelated lines. */
+    #kinds tr{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center;padding:8px 0;}
+    #kinds td{padding:0;} #kinds td.label{flex:1 0 100%;} #kinds td:empty{display:none;} }
 </style></head><body>
 
 <h1>Settings</h1>
@@ -2683,7 +2688,9 @@ INDEX_HTML = """<!doctype html>
   #theme-select{font-family:inherit;font-size:12px;font-weight:bold;background:var(--hi-fg);
        color:var(--hi-bg);border:1px solid var(--hi-fg);border-radius:2px;padding:2px 4px;
        cursor:pointer;}
-  main{padding:10px;max-width:1100px;margin:0 auto;}
+  /* The panel titles sit 10px above their panel's border, so the top padding
+     has to be more than that or the first title lands on the top bar. */
+  main{padding:20px 10px 10px;max-width:1100px;margin:0 auto;}
   .panel{border:1px solid var(--border);border-radius:2px;margin-bottom:12px;padding:10px 14px;
        position:relative;background:var(--panel);transition:background .25s,border-color .25s;}
   .panel > .ptitle{position:absolute;top:-10px;left:14px;background:var(--bg);
@@ -2695,7 +2702,7 @@ INDEX_HTML = """<!doctype html>
     white-space:nowrap;color:var(--fg);}
   body.compact #panel-uploading,body.compact #panel-recent,
   body.compact #topbar,body.compact #footer{display:none;}
-  body.compact main{padding:6px;max-width:none;}
+  body.compact main{padding:14px 6px 6px;max-width:none;}
   body.compact #panel-status{margin-bottom:0;}
   /* One flat wrap of twenty items read as a wall. The same items in named rows
      read as four short lists, and each row can be switched off on its own. */
@@ -2763,7 +2770,7 @@ INDEX_HTML = """<!doctype html>
   #empty{opacity:.6;}
   #err{color:var(--bad);padding:10px;}
   #health a{color:inherit;text-decoration:underline;flex:1 1 auto;min-width:0;}
-  #health{color:var(--hi-bg);background:var(--bad);padding:4px 10px;margin-bottom:10px;
+  #health{color:var(--hi-bg);background:var(--bad);padding:4px 10px;margin-bottom:18px;
        border-radius:2px;font-weight:bold;}
   /* One row per warning, each with its own dismiss control, because a person
      may well have accepted one and not another. A critical warning has none. */
@@ -2845,7 +2852,7 @@ INDEX_HTML = """<!doctype html>
      is everything with a fixed or nowrap width. */
   @media (max-width:560px){
     body{font-size:13px;}
-    main{padding:7px;}
+    main{padding:18px 7px 7px;}   /* the top keeps the first panel title off the top bar */
     .panel{padding:9px 10px;}
     #status-grid{gap:5px 16px;}
     #topbar,#footer{padding:7px 10px;}

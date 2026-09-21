@@ -27,6 +27,9 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Fixed
 
+- On a phone, the first panel's title on the Monitor no longer sits on the top bar, and the
+  Warnings and events list reads as one card per warning with Show and Notify side by side
+  instead of four stacked cells.
 - The Backup client section of Settings now fills in by itself once the first client reading has
   arrived. It asked once when the page opened, so a page opened before the reading stayed on
   "not been read yet" until it was reloaded by hand. It asks again every fifteen seconds until
