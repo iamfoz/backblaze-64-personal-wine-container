@@ -348,7 +348,7 @@ slow cycle:
 | `settings` | The current value of each setting the container can change |
 | `schedule` | The client's backup schedule. Read only: the container never writes it |
 | `drive_selection` | Per drive, `whichfiles`, `backed_up` and `system`. A drive reading `none` backs up nothing while still appearing ticked in the client's settings window |
-| `selection_notices` | One entry per drive that warrants that warning: `key`, `drive`, `dismissed` |
+| `selection_notices` | One entry per drive that warrants that warning: `key`, `drive`, `dismissed`, `hidden`, `critical` (always false) |
 | `excluded_dirs` | Directories the client is set to skip |
 | `at`, `ok`, `error` | When the reading was taken and whether it succeeded |
 
@@ -499,7 +499,9 @@ An array, empty when nothing is wrong. Each entry:
 | `kind` | string | Machine-readable category. |
 | `text` | string | Human-readable description. |
 | `key` | string | The key that dismisses this warning. The same as `kind` for a health entry. |
-| `dismissed` | boolean | True when somebody has dismissed it in the web interface. |
+| `dismissed` | boolean | True when somebody has dismissed it in the web interface, or its kind is hidden there. |
+| `hidden` | boolean | True when this kind of warning is switched off on the Settings tab. |
+| `critical` | boolean | True for a warning that cannot be dismissed or hidden: a safety freeze, and passes losing the four-hour lock. |
 
 Alert when this array holds an entry with `dismissed` false. A dismissed entry is
 still reported here, because a consumer asking what is wrong should be told, and told

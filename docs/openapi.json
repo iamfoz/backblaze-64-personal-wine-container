@@ -135,7 +135,15 @@
             },
             "dismissed": {
               "type": "boolean",
-              "description": "True when somebody has dismissed it in the web interface. The entry is still reported; what a dismissal stops is the Status tab, the terminal monitor and the bb64_health_warning gauge."
+              "description": "True when somebody has dismissed it in the web interface, or its kind is hidden there. The entry is still reported; what a dismissal stops is the Status tab, the Monitor's warning band, the terminal monitor and the bb64_health_warning gauge."
+            },
+            "hidden": {
+              "type": "boolean",
+              "description": "True when this kind of warning is switched off on the Settings tab. dismissed is true as well."
+            },
+            "critical": {
+              "type": "boolean",
+              "description": "True for a warning that cannot be dismissed or hidden: a safety freeze, and passes losing the four-hour lock."
             }
           }
         },

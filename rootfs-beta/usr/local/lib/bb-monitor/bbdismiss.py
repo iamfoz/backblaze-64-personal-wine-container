@@ -14,6 +14,12 @@
 # bbnotify needs no part of this. It fires on transitions rather than on a
 # steady state, so a warning that has been standing long enough to be dismissed
 # has already fired once and will not fire again until it clears and returns.
+#
+# Hidden kinds are the other thing the store holds: a preference, set on the
+# Settings tab, that a kind of warning is never shown. A dismissal is one
+# occurrence accepted; hiding is the kind switched off. Reset forgets the
+# dismissals and keeps the preference, which is why the two live in one file
+# but are read out separately.
 
 import json, os, re, tempfile, threading, time
 
@@ -26,9 +32,10 @@ STORE = bbapi.DIR + "/dismissed.json"
 # colon and one backslash. Nothing else is stored, so a key can never carry a
 # path separator, a dot segment or anything else that reads as a file name.
 KEY = re.compile(r'^[a-z]+(:[A-Z]:\\)?$')
+KIND = re.compile(r'^[a-z]+$')
 
 _lock = threading.Lock()
-_cache = None           # (signature, frozenset of keys)
+_cache = None           # (signature, frozenset of keys to suppress, frozenset of hidden kinds)
 
 
 def key_for(kind, subject=None):
@@ -53,31 +60,66 @@ def load():
         with open(STORE, encoding="utf-8") as fh:
             c = json.load(fh)
     except (OSError, ValueError):
-        return {"keys": {}}
+        return {"keys": {}, "hidden": []}
     if not isinstance(c, dict) or not isinstance(c.get("keys"), dict):
-        return {"keys": {}}
+        return {"keys": {}, "hidden": []}
     out = {}
     for key, rec in c["keys"].items():
         if not KEY.match(str(key)) or not isinstance(rec, dict):
             continue
         out[key] = {"at": int(rec.get("at") or 0), "text": str(rec.get("text") or "")}
-    return {"keys": out}
+    hid = c.get("hidden")
+    hidden = sorted({str(k) for k in hid if KIND.match(str(k))}) if isinstance(hid, list) else []
+    return {"keys": out, "hidden": hidden}
 
 
-def keys():
-    """The dismissed keys. Read on every poll by both monitors and by the
-    metrics route, so the parse is cached against the file itself and a poll
-    that changes nothing costs one stat."""
+def _cached():
+    """(keys to suppress, hidden kinds). Read on every poll by both monitors
+    and by the metrics route, so the parse is cached against the file itself
+    and a poll that changes nothing costs one stat."""
     global _cache
     sig = _signature()
     with _lock:
         cached = _cache
     if cached is not None and cached[0] == sig:
-        return cached[1]
-    got = frozenset(load()["keys"])
+        return cached[1], cached[2]
+    rec = load()
+    hidden = frozenset(rec["hidden"])
+    got = frozenset(rec["keys"]) | hidden
     with _lock:
-        _cache = (sig, got)
-    return got
+        _cache = (sig, got, hidden)
+    return got, hidden
+
+
+def keys():
+    """Every key to keep off the Status tab, the Monitor, the terminal monitor
+    and the alert gauge: the dismissed keys and the hidden kinds together.
+    A hidden kind is in here as its bare kind, so a consumer that checks a
+    kind sees it; one that checks a subject key, such as a drive, must also
+    ask hidden()."""
+    return _cached()[0]
+
+
+def hidden():
+    """The kinds switched off on the Settings tab."""
+    return _cached()[1]
+
+
+def set_hidden(kinds):
+    """Replace the hidden kinds. Raises ValueError with a message for the page."""
+    if not isinstance(kinds, (list, tuple, set, frozenset)):
+        raise ValueError("hidden must be a list of warning kinds")
+    clean = set()
+    for k in kinds:
+        k = str(k or "").strip()
+        if not KIND.match(k):
+            raise ValueError("not a warning kind this container knows: %r" % k)
+        clean.add(k)
+    with bbapi._mutate():
+        rec = load()
+        rec["hidden"] = sorted(clean)
+        _write(rec)
+    return rec
 
 
 def listing():
@@ -110,13 +152,19 @@ def dismiss(key, text=""):
 
 
 def reset():
-    """Forget every dismissal. A store that was never written is already reset,
-    so a missing file is the answer rather than an error."""
+    """Forget every dismissal and keep the hidden kinds: a reset is "show me
+    what I accepted again", not "undo my settings". A store that was never
+    written is already reset, so a missing file is the answer rather than an
+    error."""
     with bbapi._mutate():
-        try:
-            os.unlink(STORE)
-        except OSError:
-            pass
+        rec = load()
+        if rec["hidden"]:
+            _write({"keys": {}, "hidden": rec["hidden"]})
+        else:
+            try:
+                os.unlink(STORE)
+            except OSError:
+                pass
     return True
 
 

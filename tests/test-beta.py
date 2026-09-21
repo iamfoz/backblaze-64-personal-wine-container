@@ -882,6 +882,23 @@ ok(_listing[0]["text"] == "Backblaze reports the licence as trial_expired",
    "the wording travels with the key, so Settings can say what was dismissed")
 ok(all(isinstance(r["at"], int) and r["at"] > 0 for r in _listing),
    "every entry records when it was dismissed")
+# Hidden kinds: a preference, kept through a reset, and reported through keys()
+# so every consumer that already checks a kind suppresses it. The listing is
+# the dismissals alone, because that is the log a reset clears.
+bbdismiss.set_hidden(["stale", "selection"])
+ok(bbdismiss.hidden() == frozenset({"stale", "selection"}), "hidden kinds are recorded")
+ok({"stale", "selection", "licence"} <= set(bbdismiss.keys()), "keys() carries hidden kinds and dismissals together")
+ok([r["key"] for r in bbdismiss.listing()] == ["licence", "selection:D:\\"], "the listing is dismissals only")
+bbdismiss.reset()
+ok(bbdismiss.listing() == [] and bbdismiss.hidden() == frozenset({"stale", "selection"}),
+   "a reset forgets dismissals and keeps the hidden kinds")
+try:
+    bbdismiss.set_hidden(["../x"]); ok(False, "a bad kind is refused")
+except ValueError:
+    ok(True, "a bad kind is refused")
+bbdismiss.set_hidden([])
+bbdismiss.dismiss("licence", "Backblaze reports the licence as trial_expired")
+bbdismiss.dismiss("selection:D:\\", "D:\\ is set to back up nothing")
 ok(oct(os.stat(bbdismiss.STORE).st_mode & 0o777) == "0o600",
    "the store is owner-only, like the key file beside it")
 bbdismiss.reset()

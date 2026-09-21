@@ -119,15 +119,38 @@ done
 # not tell us, but a parse error it will.
 JSDIR="$TMP/js"
 mkdir -p "$JSDIR"
+# The blocks are lifted from the page strings as Python evaluates them, not
+# from the source text. The difference is every backslash escape: a \' that
+# reads as an escaped quote in the source is a bare quote in the served page,
+# and one of those took the whole Status tab down on 2026-09-21 while this
+# test, reading the source, passed.
 BLOCKS="$(python3 - "$ROOT/rootfs-beta/usr/local/bin/bb-monitor-web" "$JSDIR" <<'PY'
-import re, sys
+import ast, re, sys
 src = open(sys.argv[1], encoding="utf-8").read()
-n = 0
-for m in re.finditer(r"<script>(.*?)</script>", src, re.S):
-    n += 1
-    line = src.count("\n", 0, m.start()) + 1
-    with open("%s/block%02d_line%d.js" % (sys.argv[2], n, line), "w", encoding="utf-8") as fh:
-        fh.write(m.group(1))
+tree = ast.parse(src)
+# The pages are assembled from literals and shared pieces (THEME_CSS, PAGE_CSS)
+# by concatenation, so each module-level string assignment is evaluated in
+# turn with the ones before it in scope. Anything that is not a string
+# expression over those is skipped; the pages are.
+env, n = {}, 0
+for node in tree.body:
+    if not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+        continue
+    name = node.targets[0].id
+    try:
+        val = eval(compile(ast.Expression(node.value), "<page>", "eval"), {"__builtins__": {}}, dict(env))
+    except Exception:
+        continue
+    if not isinstance(val, str):
+        continue
+    env[name] = val
+    if not name.endswith("_HTML"):
+        continue
+    for m in re.finditer(r"<script>(.*?)</script>", val, re.S):
+        n += 1
+        line = node.lineno + val.count("\n", 0, m.start())
+        with open("%s/block%02d_%s_line%d.js" % (sys.argv[2], n, name, line), "w", encoding="utf-8") as fh:
+            fh.write(m.group(1))
 print(n)
 PY
 )"

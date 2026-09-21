@@ -11,6 +11,15 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Added
 
+- The Monitor's warning band now shows one row per warning with an X to dismiss it, and no
+  longer shows warnings that were dismissed on the Status tab. Two warnings carry no X anywhere,
+  because both mean nothing is being backed up: a safety freeze, and passes losing their lock.
+  A dismissed warning still appears under Settings until warnings are reset.
+- Settings has one "Warnings and events" list in place of the Events list under Notifications
+  and the separate Warnings box: each warning kind has a Show box and, where a notification event
+  exists for it, a Notify box; events with no warning behind them have Notify alone. A warning
+  switched off is still in the API, marked hidden, and Reset warnings leaves that preference
+  alone. Both were user requests.
 - A "Backblaze client updated" notification event, alongside "Container updated": it names the
   version now running and the one before. The container's updater installs Backblaze's newest
   client at every start, so this is the event to line up with a backup that has started
@@ -18,6 +27,13 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Fixed
 
+- The Status tab stopped rendering in the previous beta build: every warning vanished and the
+  client panel said the client had not been read yet. An apostrophe in the lost-lock notice
+  ended the script's string early, and the parse test read the page from the source file, where
+  the escape looked fine, rather than as served. The test now checks the pages as they are
+  served, and would have failed on that build.
+- On a phone, the "Preparing" and "Finishing" line in the Uploading now panel wraps instead of
+  pushing the panel wider than the screen while a long file name is on it.
 - The "lost the four-hour lock" warning in bb-doctor, the Status tab, the terminal monitor and
   notifications now counts only losses since the last pass that got past the point where they
   happen. It used to count the whole day's log, so a repaired install stayed red until the log

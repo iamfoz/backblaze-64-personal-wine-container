@@ -432,12 +432,15 @@ no second copy. The Status tab lists everything the client says needs attention,
 with the reason for a pause and what to do about a safety freeze, and has a Copy status
 summary button that gives the five lines a maintainer asks for first.
 
-Each of those warnings carries a Dismiss link, for the case where you have looked at it and
-know the state is fine. A dismissed warning stays off the Status tab, off the terminal
-monitor's title bar and out of the `bb64_health_warning` metric, so an alert cannot keep
-firing on something you have already decided about; the API still reports it, marked
-dismissed. The Warnings panel on the Settings tab lists what has been dismissed and when,
-with a Reset that puts all of it back. Two drives never raise the "set to back up nothing"
+Each of those warnings carries a Dismiss link on the Status tab and an X on the Monitor's
+warning band, for the case where you have looked at it and know the state is fine. Two carry
+neither, because both mean nothing is being backed up: a safety freeze, and passes losing their
+four-hour lock. A dismissed warning stays off the Status tab, the Monitor, the terminal
+monitor's title bar and the `bb64_health_warning` metric, so an alert cannot keep firing on
+something you have already decided about; the API still reports it, marked dismissed. The
+Warnings and events list on the Settings tab has every kind of warning with a Show box and,
+where a notification event exists for it, a Notify box, lists what has been dismissed and when,
+and has a Reset that puts the dismissed ones back without touching the Show choices. Two drives never raise the "set to back up nothing"
 warning in the first place: `C:` is the Wine prefix and whichever letter Wine maps to the
 container root is the container itself, so neither holds anything that wants backing up.
 

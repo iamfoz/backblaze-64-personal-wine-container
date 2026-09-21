@@ -157,6 +157,35 @@ def client_reading():
     }
 
 
+# Every kind of warning the monitor raises, for the one list on the Settings
+# tab that holds both what is shown and what is sent. `event` is the
+# notification event for the same condition, where one exists. `critical`
+# marks the two that cannot be dismissed or hidden: a safety freeze and passes
+# losing their lock both mean nothing is being backed up, and a warning that
+# can be switched off is one that will be, the day before it matters.
+WARNING_KINDS = (
+    ("frozen",    "Safety freeze", "Backblaze has frozen the backup. Nothing is deleted.", "frozen", True),
+    ("lostlock",  "Passes losing the four-hour lock",
+                  "Every backup pass aborts at the transmit step.", "lostlock", True),
+    ("stale",     "No completed backup",
+                  "No pass has completed within the limit set in the client's own settings.", "stale", False),
+    ("skipped",   "Files skipped", "The client has given up on files.", "skipped", False),
+    ("filecheck", "Failed file check", "The client's own file check found a problem.", None, False),
+    ("licence",   "Licence",
+                  "The licence has expired, expires within two weeks, or is in a state other than active.",
+                  None, False),
+    ("renewal",   "Renewal failed", "The last licence renewal failed.", None, False),
+    ("selection", "Drive set to back up nothing",
+                  "A drive is ticked in the client but excluded entirely. One warning per drive.", None, False),
+)
+CRITICAL = frozenset(k for k, _, _, _, c in WARNING_KINDS if c)
+
+
+def warning_kinds():
+    return [{"key": k, "label": l, "does": d, "event": e, "critical": c}
+            for k, l, d, e, c in WARNING_KINDS]
+
+
 def selection_notices(sel):
     """The drives worth warning about, and whether the warning was dismissed.
 
@@ -167,13 +196,15 @@ def selection_notices(sel):
     if not sel:
         return []
     done = bbdismiss.keys()
+    hid = "selection" in bbdismiss.hidden()
     out = []
     for drive in sorted(sel):
         row = sel[drive] or {}
         if row.get("system") or row.get("backed_up"):
             continue
         key = bbdismiss.key_for("selection", drive)
-        out.append({"key": key, "drive": drive, "dismissed": key in done})
+        out.append({"key": key, "drive": drive, "dismissed": hid or key in done,
+                    "hidden": hid, "critical": False})
     return out
 
 
@@ -208,7 +239,14 @@ def health_entries(pairs):
     client reading, because that is where the drive they name already is.
     """
     done = bbdismiss.keys()
-    return [{"kind": k, "text": t, "key": k, "dismissed": k in done}
+    hid = bbdismiss.hidden()
+    # A critical kind reads as not dismissed whatever the store says: the
+    # dismiss route refuses it now, and a record from before it did must not
+    # keep a freeze off the page.
+    return [{"kind": k, "text": t, "key": k,
+             "dismissed": k in done and k not in CRITICAL,
+             "hidden": k in hid and k not in CRITICAL,
+             "critical": k in CRITICAL}
             for k, t in client_health(pairs)]
 
 
@@ -892,10 +930,8 @@ SETTINGS_HTML = """<!doctype html>
   counts and reasons, not file names.</p>
   <div id="endpoints"></div>
   <button class="ghost" id="ep-add">Add endpoint</button>
-  <h3>Events</h3>
-  <div class="ev" id="events"></div>
-  <label for="skipped-threshold">Files skipped: send from</label>
-  <div class="row"><input type="number" id="skipped-threshold" min="1" style="width:6em"> <span class="dim">files</span></div>
+  <p class="dim" style="margin:10px 0 0">Which warnings and events are sent is chosen in the
+  Warnings and events list below.</p>
   <div class="row" style="margin-top:12px"><button id="notify-save">Save notifications</button><span class="dim" id="notify-msg"></span></div>
   <div id="notify-err" class="err" hidden></div>
   <p class="dim" style="margin:12px 0 0">Tokens are kept in <code>/config/bb-api</code>, readable by the
@@ -910,10 +946,21 @@ SETTINGS_HTML = """<!doctype html>
   <button id="to-monitor">Open the Monitor's settings</button>
 </div>
 
-<h2>Warnings</h2>
+<h2>Warnings and events</h2>
 <div class="panel" id="notices">
-  <p class="dim">A dismissed warning stays off the Status tab, the terminal monitor and the
-  metrics until it is reset here. The API still reports it, marked dismissed.</p>
+  <p class="dim">Everything the container can warn about, in one list. Show puts a warning on the
+  Status tab, the Monitor's warning band, the terminal monitor and the alert gauge; one switched
+  off here is still in the API, marked hidden. Notify sends it to the endpoints above when it
+  starts and again when it clears. Two warnings cannot be switched off or dismissed, because both
+  mean nothing is being backed up: a safety freeze, and passes losing their four-hour lock.</p>
+  <div id="kinds"></div>
+  <label for="skipped-threshold">Files skipped: send from</label>
+  <div class="row"><input type="number" id="skipped-threshold" min="1" style="width:6em"> <span class="dim">files</span></div>
+  <div class="row" style="margin-top:12px"><button id="kinds-save">Save warnings and events</button><span class="dim" id="kinds-msg"></span></div>
+  <div id="kinds-err" class="err" hidden></div>
+  <h3>Dismissed</h3>
+  <p class="dim">A warning dismissed with its X on the Status tab or the Monitor stays off them until
+  it is reset here. The API still reports it, marked dismissed.</p>
   <div id="dismissed"></div>
   <div class="row" style="margin-top:12px"><button id="notices-reset">Reset warnings</button><span class="dim" id="notices-msg"></span></div>
   <div id="notices-err" class="err" hidden></div>
@@ -1123,13 +1170,62 @@ function renderNotify(d){
   document.getElementById('endpoints').innerHTML = (d.endpoints||[]).map(epRow).join('') ||
     '<p class="dim">No endpoints yet.</p>';
   [].slice.call(document.querySelectorAll('#endpoints .ep')).forEach(applyKind);
-  document.getElementById('events').innerHTML = (d.event_list||[]).map(function(ev){
-    return '<label><input type="checkbox" class="ev-key" value="'+esc(ev.key)+'"'+(d.events[ev.key] ? ' checked' : '')+
-           '><span><strong>'+esc(ev.label)+'</strong>'+(ev.clears ? ' <span class="dim">(and when it clears)</span>' : '')+
-           '<br><span class="dim">'+esc(ev.does)+'</span></span></label>';
-  }).join('');
   document.getElementById('skipped-threshold').value = d.skipped_threshold || 1;
+  renderKinds();
 }
+// One list for what is shown and what is sent. A warning kind gets a Show
+// box, and a Notify box when a notification event exists for the same
+// condition; an event with no warning behind it (a milestone, an update) gets
+// Notify alone. Drawn once both readings are in, whichever arrives second.
+var NOTICES = null;
+function renderKinds(){
+  if(!NOTICES || !NOTIFY) return;
+  var hidden = NOTICES.hidden || [], events = NOTIFY.events || {};
+  var dismissed = {};
+  (NOTICES.dismissed || []).forEach(function(n){ var k = (n.key || '').split(':')[0]; dismissed[k] = (dismissed[k] || 0) + 1; });
+  var covered = {};
+  var rows = (NOTICES.kinds || []).map(function(k){
+    if(k.event) covered[k.event] = true;
+    var show = k.critical
+      ? '<label title="Cannot be switched off"><input type="checkbox" checked disabled> Show <span class="dim">(always)</span></label>'
+      : '<label><input type="checkbox" class="show-key" value="'+esc(k.key)+'"'+(hidden.indexOf(k.key) < 0 ? ' checked' : '')+'> Show</label>';
+    var notify = k.event
+      ? '<label><input type="checkbox" class="ev-key" value="'+esc(k.event)+'"'+(events[k.event] ? ' checked' : '')+'> Notify</label>'
+      : '<span class="dim">no event</span>';
+    var dis = dismissed[k.key] ? (dismissed[k.key] === 1 ? 'dismissed once' : 'dismissed \u00d7' + dismissed[k.key]) : '';
+    return '<tr><td class="label"><strong>'+esc(k.label)+'</strong><br><span class="dim">'+esc(k.does)+'</span></td>' +
+           '<td>'+show+'</td><td>'+notify+'</td><td class="dim">'+esc(dis)+'</td></tr>';
+  });
+  (NOTIFY.event_list || []).forEach(function(ev){
+    if(covered[ev.key]) return;
+    rows.push('<tr><td class="label"><strong>'+esc(ev.label)+'</strong>'+(ev.clears ? ' <span class="dim">(and when it clears)</span>' : '')+
+              '<br><span class="dim">'+esc(ev.does)+'</span></td><td><span class="dim">event only</span></td>' +
+              '<td><label><input type="checkbox" class="ev-key" value="'+esc(ev.key)+'"'+(events[ev.key] ? ' checked' : '')+'> Notify</label></td><td></td></tr>');
+  });
+  document.getElementById('kinds').innerHTML =
+    '<table><thead><tr><th>Warning or event</th><th>Show</th><th>Notify</th><th>Dismissed</th></tr></thead><tbody>' +
+    rows.join('') + '</tbody></table>';
+}
+function collectHidden(){
+  return [].slice.call(document.querySelectorAll('.show-key')).filter(function(c){ return !c.checked; }).map(function(c){ return c.value; });
+}
+document.getElementById('kinds-save').addEventListener('click', function(){
+  var err = document.getElementById('kinds-err'), msg = document.getElementById('kinds-msg');
+  err.hidden = true; msg.textContent = '';
+  // Two stores, one button: the hidden kinds live with the dismissals, the
+  // events with the endpoints. The second save carries the endpoints as they
+  // stand on the page, which is what Save notifications would send too.
+  post('manage/notices/hidden', {hidden: collectHidden()}).then(function(res){
+    if(!res.ok){ err.textContent = res.body.error || 'Could not save.'; err.hidden = false; return null; }
+    NOTICES = res.body; renderNotices(res.body);
+    return post('manage/notify', collectNotify());
+  }).then(function(res){
+    if(!res) return;
+    if(!res.ok){ err.textContent = res.body.error || 'Could not save.'; err.hidden = false; return; }
+    NOTIFY = res.body; renderKinds();
+    msg.textContent = 'Saved.'; setTimeout(function(){ msg.textContent = ''; }, 1500);
+  });
+});
 function collectNotify(){
   var eps = [].slice.call(document.querySelectorAll('#endpoints .ep')).map(function(r){
     var g = function(c){ var el = r.querySelector(c); return el ? el.value : ''; };
@@ -1246,14 +1342,16 @@ function renderNotices(d){
     : '<p class="dim">Nothing dismissed.</p>';
 }
 function loadNotices(){
-  return fetch('manage/notices', {cache:'no-store'}).then(function(r){ return r.json(); }).then(renderNotices);
+  return fetch('manage/notices', {cache:'no-store'}).then(function(r){ return r.json(); })
+    .then(function(d){ NOTICES = d; renderNotices(d); renderKinds(); });
 }
 document.getElementById('notices-reset').addEventListener('click', function(){
   var err = document.getElementById('notices-err'), msg = document.getElementById('notices-msg');
   err.hidden = true; msg.textContent = '';
   post('manage/notices/reset', {}).then(function(res){
     if(!res.ok){ err.textContent = res.body.error || 'Could not reset.'; err.hidden = false; return; }
-    renderNotices(res.body); msg.textContent = 'Reset.'; setTimeout(function(){ msg.textContent = ''; }, 1500);
+    NOTICES = res.body; renderNotices(res.body); renderKinds();
+    msg.textContent = 'Reset.'; setTimeout(function(){ msg.textContent = ''; }, 1500);
   });
 });
 document.getElementById('quiet-save').addEventListener('click', function(){
@@ -1543,11 +1641,12 @@ function renderNotices(j){
       'path so nothing else here looks wrong. Seen with Backblaze client 10.0.3.1075 under an unpatched Wine, ' +
       'where the service takes the pass for dead and deletes the lock under it. On the stable image, set ' +
       '<code>BACKBLAZE_VERSION=10.0.1.1069</code> on the container and restart; the pinned version is installed ' +
-      'over the newer one. The beta\'s Wine carries the fix, so on the beta this is something else: run ' +
+      'over the newer one. The Wine in the beta carries the fix, so on the beta this is something else: run ' +
       'bb-report from the ' + tools + ' and open an issue with the bundle. This clears on its own once a pass ' +
       'gets past the point where the lock was lost.';
+    // A critical warning carries no Dismiss: the server refuses one anyway.
     out.push('<div class="notice n-bad"><strong>' + esc(h.text) + '.</strong>' + extra +
-             dismissLink(h.key || h.kind, h.text) + '</div>');
+             (h.critical ? '' : dismissLink(h.key || h.kind, h.text)) + '</div>');
   });
   if(j.inherit){
     var ih = j.inherit;
@@ -2602,6 +2701,11 @@ INDEX_HTML = """<!doctype html>
   @media (max-width:560px){
     .srow{gap:2px;}
     .srow-label{flex:1 0 100%;}
+    /* A phone has no room for an ellipsis to be useful: "Preparing" and the
+       file name go on separate lines and the name breaks anywhere it must,
+       so a long name can never push the panel wider than the screen. */
+    .nowline{flex-wrap:wrap;}
+    .nowfile{white-space:normal;overflow-wrap:anywhere;flex:1 1 100%;}
   }
   .good{color:var(--good);} .warn{color:var(--warn);} .bad{color:var(--bad);}
   .gauge{display:inline-flex;align-items:center;gap:6px;}
@@ -2651,9 +2755,15 @@ INDEX_HTML = """<!doctype html>
   .file-row.cells .meta{font-size:12px;}
   #empty{opacity:.6;}
   #err{color:var(--bad);padding:10px;}
-  #health a{color:inherit;text-decoration:underline;}
-  #health{color:var(--hi-bg);background:var(--bad);padding:7px 10px;margin-bottom:10px;
+  #health a{color:inherit;text-decoration:underline;flex:1 1 auto;min-width:0;}
+  #health{color:var(--hi-bg);background:var(--bad);padding:4px 10px;margin-bottom:10px;
        border-radius:2px;font-weight:bold;}
+  /* One row per warning, each with its own dismiss control, because a person
+     may well have accepted one and not another. A critical warning has none. */
+  #health .hrow{display:flex;align-items:center;gap:10px;padding:3px 0;}
+  #health .hx{flex:0 0 auto;background:none;border:1px solid var(--hi-bg);color:var(--hi-bg);
+       border-radius:3px;width:24px;height:24px;line-height:22px;padding:0;text-align:center;
+       font:inherit;font-weight:bold;cursor:pointer;}
   /* The one thing this dashboard ever has to celebrate, so it takes the good
      colour instead of the neutral panel border. It states a fact and expires by
      itself after a week, which is why it carries no dismiss control. */
@@ -3304,11 +3414,19 @@ async function tick(){
                           : 'Ask the running backup to pause, cooperatively';
     }
     var hw = document.getElementById('health');
-    if(d.health && d.health.length){
+    // Dismissed and hidden warnings stay off the band the way they stay off
+    // the Status tab; the API still carries them. The band is the headline;
+    // the Status tab has the detail and what to do.
+    var live = (d.health || []).filter(function(h){ return !h.dismissed; });
+    if(live.length){
       hw.style.display = 'block';
-      // The band is the headline; the Status tab has the detail and what to do.
-      hw.innerHTML = '<a href="/?tab=status" target="_top" title="Open the Status tab">' +
-        d.health.map(function(h){ return esc(h.text); }).join(' &bull; ') + '</a>';
+      hw.innerHTML = live.map(function(h){
+        return '<div class="hrow"><a href="/?tab=status" target="_top" title="Open the Status tab">' +
+          esc(h.text) + '</a>' + (h.critical ? '' :
+          '<button type="button" class="hx" data-key="' + esc(h.key || h.kind) + '" data-text="' + esc(h.text) +
+          '" title="Dismiss this warning. Settings lists it until warnings are reset." aria-label="Dismiss">\u00d7</button>') +
+          '</div>';
+      }).join('');
     } else { hw.style.display = 'none'; }
     var cw = document.getElementById('completion');
     if(d.completion){
@@ -3527,6 +3645,23 @@ async function tick(){
     openBtn.focus();
   }
   openBtn.addEventListener('click', openModal);
+  // The X on a warning row. Hidden straight away rather than at the next
+  // poll, which is up to fifteen seconds away and long enough to look as
+  // though the click did nothing; the poll then redraws without it anyway.
+  document.getElementById('health').addEventListener('click', function(e){
+    var b = e.target;
+    if(!b || !b.classList || !b.classList.contains('hx')) return;
+    e.preventDefault();
+    fetch('manage/notices/dismiss', {method:'POST', cache:'no-store',
+      headers:{'Content-Type':'application/json','X-Requested-With':'bb64'},
+      body: JSON.stringify({key: b.getAttribute('data-key'), text: b.getAttribute('data-text') || ''})
+    }).then(function(r){
+      if(!r.ok) return;
+      var row = b.parentNode; if(row) row.hidden = true;
+      var hw = document.getElementById('health');
+      if(!hw.querySelector('.hrow:not([hidden])')) hw.style.display = 'none';
+    });
+  });
   document.getElementById('modal-close').addEventListener('click', closeModal);
   backdrop.addEventListener('click', function(e){ if(e.target === backdrop) closeModal(); });
   function typing(e){ var t = e.target && e.target.tagName; return t === 'INPUT' || t === 'SELECT' || t === 'TEXTAREA' || (e.target && e.target.isContentEditable); }
@@ -4118,10 +4253,11 @@ class Handler(BaseHTTPRequestHandler):
                              "state": _quiet.state(conf), "days": list(bbquiet.DAYS)})
             return True
         if path == "/manage/notices":
-            # What has been dismissed, for the Settings tab's list. The Status
-            # tab does not need this route: every notice it draws already
-            # carries its own dismissed flag in the status payload.
-            self._json(200, {"schema": bbapi.SCHEMA, "dismissed": bbdismiss.listing()})
+            # What has been dismissed and what is hidden, with the table of
+            # kinds, for the Settings tab. The Status tab does not need this
+            # route: every notice it draws already carries its own flags.
+            self._json(200, {"schema": bbapi.SCHEMA, "dismissed": bbdismiss.listing(),
+                             "hidden": sorted(bbdismiss.hidden()), "kinds": warning_kinds()})
             return True
         if path == "/manage/client":
             # The reading and the writable settings in one answer, because the
@@ -4385,18 +4521,42 @@ class Handler(BaseHTTPRequestHandler):
             # bare kind or one drive and nothing else, so nothing from the
             # request reaches a file name however it is spelt. The text is
             # stored only so the Settings list can say what was dismissed.
+            key = str(body.get("key") or "")
+            if key.split(":", 1)[0] in CRITICAL:
+                self._json(400, {"error": "that warning means nothing is being backed up; it cannot be dismissed"})
+                return
             try:
-                bbdismiss.dismiss(str(body.get("key") or ""), str(body.get("text") or ""))
+                bbdismiss.dismiss(key, str(body.get("text") or ""))
             except ValueError as exc:
                 self._json(400, {"error": str(exc)})
                 return
             self._json(200, {"schema": bbapi.SCHEMA, "ok": True,
-                             "dismissed": bbdismiss.listing()})
+                             "dismissed": bbdismiss.listing(), "hidden": sorted(bbdismiss.hidden())})
             return
         if path == "/manage/notices/reset":
             bbdismiss.reset()
             self._json(200, {"schema": bbapi.SCHEMA, "ok": True,
-                             "dismissed": bbdismiss.listing()})
+                             "dismissed": bbdismiss.listing(), "hidden": sorted(bbdismiss.hidden())})
+            return
+        if path == "/manage/notices/hidden":
+            # The kinds switched off. Only kinds this container raises, and
+            # never a critical one, whatever the page sends.
+            kinds = body.get("hidden")
+            known = {k for k, _, _, _, _ in WARNING_KINDS}
+            if not isinstance(kinds, list):
+                self._json(400, {"error": "hidden must be a list of warning kinds"})
+                return
+            bad = [str(k) for k in kinds if str(k) not in known or str(k) in CRITICAL]
+            if bad:
+                self._json(400, {"error": "not a warning that can be switched off: %s" % ", ".join(bad)})
+                return
+            try:
+                bbdismiss.set_hidden([str(k) for k in kinds])
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(200, {"schema": bbapi.SCHEMA, "ok": True,
+                             "dismissed": bbdismiss.listing(), "hidden": sorted(bbdismiss.hidden())})
             return
         if path == "/manage/keys":
             label = (body.get("label") or "").strip()
