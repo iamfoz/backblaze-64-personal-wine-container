@@ -115,12 +115,18 @@ VOLS="$BZ/bzvolumes.xml"
 KNOWN_D=v00121e7007550b3825692e70910; KNOWN_E=v000d1c7004550b3825692e70910
 printf '<bzvolumes>\n<bzvolume bzVolumeGuid="%s" mountPointPathHex="443a5c" typeOfVolumeTwoCharCode="gm" />\n<bzvolume bzVolumeGuid="%s" mountPointPathHex="453a5c" typeOfVolumeTwoCharCode="gm" />\n</bzvolumes>\n' "$KNOWN_D" "$KNOWN_E" > "$VOLS"
 # The stamp as captured: <bzvolume vguid="..." associated_hguid="..." />.
-mkdrive(){ mkdir -p "$FX/drive_$1/.bzvol"; ln -sfn "$FX/drive_$1" "${PFX}dosdevices/$1:"; [ -n "$2" ] && printf '<?xml version="1.0" encoding="UTF-8" ?>\n<contents>\n<bzvolume vguid="%s" associated_hguid="a279b04955a1845499e60219" />\n</contents>\n' "$2" > "$FX/drive_$1/.bzvol/bzvol_id.xml"; :; }
+mkdrive(){ mkdir -p "$FX/drive_$1/.bzvol"; ln -sfn "$FX/drive_$1" "${PFX}dosdevices/$1:"; [ -n "$2" ] && printf '<?xml version="1.0" encoding="UTF-8" ?>\n<contents>\n<bzvolume vguid="%s" associated_hguid="%s" />\n</contents>\n' "$2" "${3:-a279b04955a1845499e60219}" > "$FX/drive_$1/.bzvol/bzvol_id.xml"; :; }
+# This install's own identity, as bzinstall.xml carries it (attribute name captured 2026-09-22).
+mkdir -p "${PFX}drive_c/Program Files/Backblaze"
+printf '<?xml version="1.0"?>\n<bzinstall hguid="a279b04955a1845499e60219" version="10.0.3.1075" />\n' > "${PFX}drive_c/Program Files/Backblaze/bzinstall.xml"
 mkdrive d "$KNOWN_D"                         # stamped with the id the client has for D:
 mkdrive e "v00aaaaaaaaaaaaaaaaaaaaaaaaa"      # stamped by another install; the client has a record for E:
 mkdrive f ""; : > "$FX/drive_f/.bzvol/bzvol_id.xml"   # stamp present but empty, and no record for F:
 mkdrive g "$KNOWN_E"                         # the id the client knows as E:, now mapped as G:
 mkdrive h ""                                 # .bzvol with no stamp yet
+KNOWN_I=v00ffffffffffffffffffffffff1
+printf '<bzvolume bzVolumeGuid="%s" mountPointPathHex="493a5c" typeOfVolumeTwoCharCode="gm" />\n' "$KNOWN_I" >> "$VOLS"
+mkdrive i "$KNOWN_I" "0000000000000000deadbeef"  # right volume id, stamped for another computer identity
 DR="$(cd "$FX" && sh -c 'PREFIX="$1"; BZ="$2"; OK(){ echo "[ok] $*"; }; WARN(){ echo "[warn] $*"; }; BAD(){ echo "[FAIL] $*"; }; NOTE(){ echo "  $*"; }; . "$3"' _ "$PFX" "$BZ" "$DROP" 2>&1)"
 has "$DR" "\[ok\] D: the client recognises this drive (id $KNOWN_D)" "drives: a stamp matching the client's record for that letter is recognised"
 has "$DR" "\[warn\] E: the client does not recognise this drive's identity" "drives: a stamp from another install is a warning"
@@ -132,7 +138,10 @@ has "$DR" "\[warn\] F: .bzvol/bzvol_id.xml carries no volume id" "drives: an emp
 has "$DR" "no record of a drive at F:" "drives: with no record the advice is to re-tick the drive"
 has "$DR" "\[warn\] G: the client knows this drive as E:, not G:" "drives: a known id under another letter names the letter it moved from"
 has "$DR" "H: .bzvol present but no bzvol_id.xml yet" "drives: a .bzvol without a stamp is not a warning"
-for L in d e f g h; do rm -f "${PFX}dosdevices/$L:"; done
+has "$DR" "\[warn\] I: the drive is stamped for a different computer identity" "drives: a stamp for another computer identity is a warning"
+has "$DR" "set associated_hguid in .*drive_i/.bzvol/bzvol_id.xml" "drives: with the field and file to change"
+if grep -q "deadbeef\|a279b04955a1845499e60219" <<<"$DR"; then echo "FAIL drives: neither hguid may be printed"; FAILED=$((FAILED+1)); else echo "PASS drives: neither hguid is printed"; fi
+for L in d e f g h i; do rm -f "${PFX}dosdevices/$L:"; done
 
 echo
 echo "$FAILED failures"

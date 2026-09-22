@@ -107,6 +107,20 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
             fi
         elif [ "$_known" = "$_id" ]; then
             OK "${_letter}: the client recognises this drive (id ${_id})"
+            # The stamp also names the computer it belongs to. An inherit or a
+            # reinstall gives this install a new hguid, and a drive stamped for
+            # the old one is refused however right its volume id is. Compared,
+            # never printed: the hguid is the machine's identity.
+            _hg="$(grep -oE 'associated_hguid="[0-9a-f]+"' "$_idf" 2>/dev/null | grep -oE '[0-9a-f]{16,}' | head -1)"
+            _inst="${PREFIX}drive_c/Program Files/Backblaze/bzinstall.xml"
+            _mine="$(grep -oE ' hguid="[0-9a-f]+"' "$_inst" 2>/dev/null | grep -oE '[0-9a-f]{16,}' | head -1)"
+            if [ -n "$_hg" ] && [ -n "$_mine" ] && [ "$_hg" != "$_mine" ]; then
+                WARN "${_letter}: the drive is stamped for a different computer identity than this install's"
+                NOTE "an inherit or a reinstall gave this install a new identity, and the client will not back up a drive"
+                NOTE "stamped for the old one. With the container stopped, set associated_hguid in ${_idf} to the"
+                NOTE "value of hguid in bzinstall.xml under Program Files\\Backblaze. Never delete .bzvol: Backblaze"
+                NOTE "removes the drive's backed-up files when it goes."
+            fi
         elif grep -q "bzVolumeGuid=\"${_id}\"" "$_vols" 2>/dev/null; then
             _ohex="$(grep "bzVolumeGuid=\"${_id}\"" "$_vols" | grep -oE 'mountPointPathHex="[0-9a-f]*"' | grep -oE '[0-9a-f]{2}' | head -1)"
             _other="$(printf "\\$(printf '%03o' $((0x${_ohex:-3f})))")"
