@@ -158,6 +158,14 @@ mkdrive h ""                                 # .bzvol with no stamp yet
 KNOWN_I=v00ffffffffffffffffffffffff1
 printf '<bzvolume bzVolumeGuid="%s" mountPointPathHex="493a5c" typeOfVolumeTwoCharCode="gm" />\n' "$KNOWN_I" >> "$VOLS"
 mkdrive i "$KNOWN_I" "0000000000000000deadbeef"  # right volume id, stamped for another computer identity
+# Two records for one letter, an old drive and the current one (a user's list on
+# 2026-09-22): the stamp matching either is recognised, and the value to restore
+# is the record most recently seen attached, not the first in the file.
+OLD_K=v000000000000000000000000001; CUR_K=v000000000000000000000000002
+printf '<bzvolume bzVolumeGuid="%s" mountPointPathHex="4b3a5c" typeOfVolumeTwoCharCode="gm" lastTimeVolumeWasSeenAttachedGmtMillis="1700000000000" />\n<bzvolume bzVolumeGuid="%s" mountPointPathHex="4b3a5c" typeOfVolumeTwoCharCode="gm" lastTimeVolumeWasSeenAttachedGmtMillis="1790000000000" />\n' "$OLD_K" "$CUR_K" >> "$VOLS"
+mkdrive k "$CUR_K"
+printf '<bzvolume bzVolumeGuid="%s" mountPointPathHex="4c3a5c" typeOfVolumeTwoCharCode="gm" lastTimeVolumeWasSeenAttachedGmtMillis="1700000000000" />\n<bzvolume bzVolumeGuid="%s" mountPointPathHex="4c3a5c" typeOfVolumeTwoCharCode="gm" lastTimeVolumeWasSeenAttachedGmtMillis="1790000000000" />\n' "v000000000000000000000000003" "v000000000000000000000000004" >> "$VOLS"
+mkdrive l "v00fffffffffffffffffffffffff"
 DR="$(cd "$FX" && sh -c 'PREFIX="$1"; BZ="$2"; OK(){ echo "[ok] $*"; }; WARN(){ echo "[warn] $*"; }; BAD(){ echo "[FAIL] $*"; }; NOTE(){ echo "  $*"; }; . "$3"' _ "$PFX" "$BZ" "$DROP" 2>&1)"
 has "$DR" "\[ok\] D: the client recognises this drive (id $KNOWN_D)" "drives: a stamp matching the client's record for that letter is recognised"
 has "$DR" "\[warn\] E: the client does not recognise this drive's identity" "drives: a stamp from another install is a warning"
@@ -170,6 +178,9 @@ has "$DR" "no record of a drive at F:" "drives: with no record the advice is to 
 has "$DR" "\[warn\] G: the client knows this drive as E:, not G:" "drives: a known id under another letter names the letter it moved from"
 has "$DR" "H: .bzvol present but no bzvol_id.xml yet" "drives: a .bzvol without a stamp is not a warning"
 has "$DR" "\[warn\] I: the drive is stamped for a different computer identity" "drives: a stamp for another computer identity is a warning"
+has "$DR" "\[ok\] K: the client recognises this drive (id $CUR_K)" "drives: with two records for one letter, a stamp matching the current one is recognised"
+if grep -q "K: the client knows this drive as K:, not K:" <<<"$DR"; then echo "FAIL drives: the same-letter contradiction is back"; FAILED=$((FAILED+1)); else echo "PASS drives: no 'known as K:, not K:' contradiction"; fi
+has "$DR" "record for L: is v000000000000000000000000004" "drives: the value to restore is the record most recently seen attached"
 has "$DR" "set associated_hguid in .*drive_i/.bzvol/bzvol_id.xml" "drives: with the field and file to change"
 if grep -q "deadbeef\|a279b04955a1845499e60219" <<<"$DR"; then echo "FAIL drives: neither hguid may be printed"; FAILED=$((FAILED+1)); else echo "PASS drives: neither hguid is printed"; fi
 # --fix: the two repairs with a known value, and the refusals. A stamp in any
@@ -188,7 +199,7 @@ has "$DF" "\[warn\] F: .bzvol/bzvol_id.xml carries no volume id" "fix: an empty 
 has "$DF" "\[FAIL\] J: could not repair" "fix: a stamp with two volume lines is refused"
 [ "$(grep -c '<bzvolume ' "$FX/drive_j/.bzvol/bzvol_id.xml")" = 2 ] && echo "PASS fix: and left as it was" || { echo "FAIL fix: the malformed stamp was changed"; FAILED=$((FAILED+1)); }
 if grep -q "deadbeef\|a279b04955a1845499e60219" <<<"$DF"; then echo "FAIL fix: neither hguid may be printed"; FAILED=$((FAILED+1)); else echo "PASS fix: neither hguid is printed"; fi
-for L in d e f g h i j; do rm -f "${PFX}dosdevices/$L:"; done
+for L in d e f g h i j k l; do rm -f "${PFX}dosdevices/$L:"; done
 
 echo
 echo "$FAILED failures"

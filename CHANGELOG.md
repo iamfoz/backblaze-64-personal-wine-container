@@ -34,6 +34,11 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Fixed
 
+- bb-doctor's drive identity check reads every record the client holds for a letter, not the
+  first: a machine where drives have been re-added or reinstalled keeps one record per drive that
+  ever sat at that letter, and taking the first read a healthy drive as "known as D:, not D:".
+  A stamp matching any record for its letter is recognised, and the value `--fix` restores is the
+  record most recently seen attached.
 - bb-doctor gained three repairs under `--fix`, each also reported without it: it starts the
   Backblaze service when the GUI is up and the service is not; it stops a pass that bb-health
   reports as stuck, children first, so bzserv starts a fresh one; and it writes the supportedOS

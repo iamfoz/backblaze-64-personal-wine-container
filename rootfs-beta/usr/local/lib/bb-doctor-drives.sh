@@ -109,7 +109,15 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
         NOTE "${_letter}: .bzvol present; bzvolumes.xml not readable, identity not checked"
     else
         _id="$(grep -oE 'vguid="v[0-9a-f]{27}"' "$_idf" 2>/dev/null | grep -oE 'v[0-9a-f]{27}' | head -1)"
-        _known="$(grep "mountPointPathHex=\"${_hex}\"" "$_vols" 2>/dev/null | grep -oE 'bzVolumeGuid="v[0-9a-f]{27}"' | grep -oE 'v[0-9a-f]{27}' | head -1)"
+        # The list can hold several records for one letter, one per drive that
+        # has ever sat there, so a stamp is recognised if it matches any of
+        # them, and the value to restore is the record most recently seen
+        # attached. Taking the first record read a user's healthy drive as
+        # "known as D:, not D:" on 2026-09-22.
+        _mine_lines="$(grep "mountPointPathHex=\"${_hex}\"" "$_vols" 2>/dev/null)"
+        _ids_here="$(printf '%s\n' "$_mine_lines" | grep -oE 'bzVolumeGuid="v[0-9a-f]{27}"' | grep -oE 'v[0-9a-f]{27}')"
+        _known="$(printf '%s\n' "$_mine_lines" | sed -n 's/.*bzVolumeGuid="\(v[0-9a-f]\{27\}\)".*lastTimeVolumeWasSeenAttachedGmtMillis="\([0-9]*\)".*/\2 \1/p' | sort -n | tail -1 | cut -d' ' -f2)"
+        [ -n "$_known" ] || _known="$(printf '%s\n' "$_ids_here" | head -1)"
         if [ -z "$_id" ]; then
             if [ -f "$_idf" ]; then
                 WARN "${_letter}: .bzvol/bzvol_id.xml carries no volume id, so the client cannot match this drive to its backup"
@@ -125,7 +133,7 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
             else
                 NOTE "${_letter}: .bzvol present but no bzvol_id.xml yet; the client has not taken ownership of this drive"
             fi
-        elif [ "$_known" = "$_id" ]; then
+        elif printf '%s\n' "$_ids_here" | grep -qx -- "$_id"; then
             OK "${_letter}: the client recognises this drive (id ${_id})"
             # The stamp also names the computer it belongs to. An inherit or a
             # reinstall gives this install a new hguid, and a drive stamped for
