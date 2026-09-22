@@ -24,6 +24,8 @@ LOCK="$BZ/bzbackup/lock_bzfileid_4_hour_lock.lck"
 # WINEPREFIX. Stub the two external commands: bb-health answers OK so the
 # doctor's own check is what decides, and curl answers reachable instantly.
 sed -e "s#/proc/\[0-9\]\*/cmdline#$FX/proc/[0-9]*/cmdline#g" \
+    -e "s#\"/proc/\$p/cmdline\"#\"$FX/proc/\$p/cmdline\"#g" \
+    -e "s#^stop_process() { kill \"\$1\" 2>/dev/null; }#stop_process() { rm -rf \"$FX/proc/\$1\"; }#" \
     -e "s#/proc/uptime#$FX/proc/uptime#g" \
     "$SRC" > "$FX/bb-doctor"
 chmod +x "$FX/bb-doctor"
@@ -104,6 +106,35 @@ locked "--fix keeps the lock when the failures are no longer being written"
 wedge; touch "$LOCK"
 run --fix >/dev/null
 locked "--fix keeps a lock younger than the grace window"
+
+# ---- the three on-demand repairs: service, stuck pass, manifest ---------------------
+# The fixture's wine stub "starts" the service by putting a bzserv.exe entry in
+# the fake process table; stop_process is stood in for by removing an entry.
+cat > "$FX/bin/wine" <<EOF
+#!/bin/sh
+case "\$1 \$2 \$3" in "net start bzserv") mkdir -p "$FX/proc/900"; printf 'C:\\\\Program Files\\\\Backblaze\\\\bzserv.exe' > "$FX/proc/900/cmdline";; esac
+EOF
+chmod +x "$FX/bin/wine"
+mkdir -p "$PFX/drive_c/Program Files/Backblaze"; : > "$PFX/drive_c/Program Files/Backblaze/bzserv.exe"
+rm -f "$LOCK"; : > "$LOGCUR"
+mkproc "bzbui.exe -noquiet"
+has "$(run)" "\[FAIL\] the Backblaze service (bzserv) is not running" "service: GUI up with no bzserv is reported"
+has "$(run --fix)" "fixed: started the Backblaze service" "service: --fix starts it and sees it running"
+mkproc "bzbui.exe -noquiet" "bzserv.exe"
+has "$(run)" "\[ ok \] the Backblaze service (bzserv) is running" "service: both up is fine"
+printf '#!/bin/sh\necho "HANG a push child has been alive 25m (threshold 20m) without finishing its chunk"\nexit 1\n' > "$FX/bin/bb-health"
+mkproc "bzserv.exe" "bztransmit.exe -prepare_bzcombs" "bztransmit.exe -threadpush foo.xml"
+has "$(run)" "re-run with --fix to stop the stuck pass" "hang: without --fix the pass is left alone and the repair named"
+[ -d "$FX/proc/101" ] && [ -d "$FX/proc/102" ] && echo "PASS hang: and nothing was stopped" || { echo "FAIL hang: processes stopped without --fix"; FAILED=$((FAILED+1)); }
+has "$(run --fix)" "fixed: stopped the stuck pass and 1 upload child" "hang: --fix stops the child and the pass"
+[ ! -d "$FX/proc/101" ] && [ ! -d "$FX/proc/102" ] && [ -d "$FX/proc/100" ] && echo "PASS hang: both bztransmit gone, bzserv untouched" || { echo "FAIL hang: wrong processes stopped"; FAILED=$((FAILED+1)); }
+printf '#!/bin/sh\necho OK\n' > "$FX/bin/bb-health"
+mkdir -p "$PFX/drive_c/windows/system32" "$PFX/drive_c/windows/syswow64"
+rm -f "$PFX/drive_c/windows/system32/rundll32.exe.manifest" "$PFX/drive_c/windows/syswow64/rundll32.exe.manifest"
+has "$(run)" "\[warn\] supportedOS manifest missing in: system32 syswow64" "manifest: a missing manifest is reported"
+has "$(run --fix)" "fixed: wrote the supportedOS manifest into: system32 syswow64" "manifest: --fix writes it"
+grep -q '8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a' "$PFX/drive_c/windows/syswow64/rundll32.exe.manifest" && echo "PASS manifest: with the Windows 10 supportedOS id" || { echo "FAIL manifest: file content wrong"; FAILED=$((FAILED+1)); }
+has "$(run)" "\[ ok \] rundll32 supportedOS manifest present" "manifest: and it is present afterwards"
 
 # ---- the beta's source-drive drop-in: identity by the client's own format --------
 # bzvol_id.xml carries bzVolumeGuid="v00" + 25 hex; bzvolumes.xml maps each id to

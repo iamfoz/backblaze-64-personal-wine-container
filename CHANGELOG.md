@@ -34,6 +34,10 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Fixed
 
+- bb-doctor gained three repairs under `--fix`, each also reported without it: it starts the
+  Backblaze service when the GUI is up and the service is not; it stops a pass that bb-health
+  reports as stuck, children first, so bzserv starts a fresh one; and it writes the supportedOS
+  manifest when it is missing, the same text startapp writes at every start.
 - bb-doctor's drive identity check now reads the client's own id format: `v00` followed by 25
   hex characters in `.bzvol/bzvol_id.xml`, matched against the mount point the client records
   for that letter in `bzvolumes.xml`. It looked for a GUID shape that never occurs, so it warned

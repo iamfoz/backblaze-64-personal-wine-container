@@ -52,6 +52,40 @@ proc_match() {
     return 1
 }
 
+# The pids whose command line contains $1, one per line.
+proc_pids() {
+    for c in /proc/[0-9]*/cmdline; do
+        [ -r "$c" ] || continue
+        if tr '\0' ' ' < "$c" 2>/dev/null | grep -q -- "$1"; then
+            p="${c#*/proc/}"; echo "${p%/cmdline}"
+        fi
+    done
+}
+
+# One process, by pid. A function so the test suite can stand in for it.
+stop_process() { kill "$1" 2>/dev/null; }
+
+# The same manifest startapp.sh writes at every start: without it the
+# unmanifested rundll32 the client's self-update runs is told Windows 8 by the
+# version lie and the update aborts on the OS check.
+write_manifest() {
+    cat > "$1" <<'EOF'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10/11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+      <!-- Windows 8.1 -->
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
+      <!-- Windows 8 -->
+      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>
+    </application>
+  </compatibility>
+</assembly>
+EOF
+}
+
 # Age of a file in whole minutes, or empty if it cannot be read. Same fail-safe
 # contract as bb-health's copy: a read error yields "" and the caller skips the
 # check rather than inventing a stale age.
@@ -136,9 +170,20 @@ for d in system32 syswow64; do
 done
 if [ -z "$missing_manifest" ]; then
     OK "rundll32 supportedOS manifest present"
+elif [ "$FIX" = 1 ]; then
+    written=""
+    for d in $missing_manifest; do
+        [ -d "${PREFIX}drive_c/windows/${d}" ] || continue
+        write_manifest "${PREFIX}drive_c/windows/${d}/rundll32.exe.manifest" 2>/dev/null && written="${written} ${d}"
+    done
+    if [ "$written" = "$missing_manifest" ]; then
+        FIXED "wrote the supportedOS manifest into:${written}"
+    else
+        BAD "supportedOS manifest still missing in:${missing_manifest} - could not write to the prefix; check who owns it (USER_ID/GROUP_ID)"
+    fi
 else
     WARN "supportedOS manifest missing in:${missing_manifest} - client self-updates will fail the OS check"
-    NOTE "restarting the container rewrites this automatically."
+    NOTE "re-run with --fix to write it, or restart the container, which writes it too."
 fi
 echo
 
@@ -148,6 +193,28 @@ if [ -f "${BBDIR}/bzserv.exe" ]; then
     OK "client installed"
     vf="${BZ}/bzreports/bzserv_version.txt"
     [ -r "$vf" ] && OK "version $(tr -d ' \r\n' < "$vf") (run bb-version to compare with what Backblaze is serving)"
+    # The service that runs every pass. Wine's service manager starts it at
+    # boot and startapp watches it every five minutes; this is the view on
+    # demand and, under --fix, the same start by hand. Checked only once the
+    # GUI is up, which is the point startapp has reached when it launches it.
+    if proc_match "bzbui.exe"; then
+        if proc_match "bzserv.exe"; then
+            OK "the Backblaze service (bzserv) is running"
+        elif [ "$FIX" = 1 ]; then
+            env PATH="/opt/wine/bin:${PATH}" WINEPREFIX="$PREFIX" WINEDEBUG=-all HOME=/config \
+                wine net start bzserv >/dev/null 2>&1
+            n=0
+            while [ "$n" -lt 10 ] && ! proc_match "bzserv.exe"; do sleep 1; n=$((n+1)); done
+            if proc_match "bzserv.exe"; then
+                FIXED "started the Backblaze service (bzserv) - the next pass starts within a minute"
+            else
+                BAD "the Backblaze service (bzserv) is not running and would not start - see bzlogs/bzserv"
+            fi
+        else
+            BAD "the Backblaze service (bzserv) is not running, so no backup pass can start"
+            NOTE "re-run with --fix to start it; the container also tries on its own every five minutes."
+        fi
+    fi
     # The control panel needs hyphen-named skin aliases or it renders blank.
     miss=0; linked=0
     for g in "${BBDIR}"/*_4x.gif; do
@@ -271,8 +338,37 @@ case "$status" in
         fi ;;
     HANG*)
         BAD "$status"
-        NOTE "not auto-fixed here: killing transfer threads mid-flight is the watchdog's job."
-        NOTE "set ENABLE_WATCHDOG=true, or restart the container." ;;
+        # The pass never gives up waiting for a lost child on its own, so the
+        # repair is to stop the pass as well as its children; bzserv starts a
+        # fresh one within seconds and it carries on from its bz_done files.
+        # Only the pids found now are stopped, never a re-scan by name, which
+        # could catch the fresh pass bzserv has already started.
+        if [ "$FIX" = 1 ]; then
+            kids="$(proc_pids 'bztransmit.exe -threadpush')"
+            pass="$(proc_pids 'bztransmit.exe' | grep -v -x -F -- "$kids")"
+            for p in $kids; do stop_process "$p"; done
+            [ -n "$kids" ] && sleep 2
+            for p in $pass; do stop_process "$p"; done
+            sleep 3
+            left=""
+            for p in $kids $pass; do [ -r "/proc/$p/cmdline" ] && left="$left $p"; done
+            if [ -n "$left" ]; then
+                for p in $left; do kill -9 "$p" 2>/dev/null; done
+                sleep 2
+                left=""
+                for p in $kids $pass; do [ -r "/proc/$p/cmdline" ] && left="$left $p"; done
+            fi
+            if [ -z "$kids$pass" ]; then
+                NOTE "no bztransmit found to stop - the stall may have cleared on its own."
+            elif [ -z "$left" ]; then
+                FIXED "stopped the stuck pass and $(echo $kids | wc -w | tr -d ' ') upload child(ren) - bzserv starts a fresh pass within a minute"
+            else
+                BAD "could not stop process(es):${left} - restart the container"
+            fi
+        else
+            NOTE "re-run with --fix to stop the stuck pass; bzserv starts a fresh one. Or set ENABLE_WATCHDOG=true,"
+            NOTE "which does this on its own."
+        fi ;;
     *) WARN "could not determine backup health" ;;
 esac
 # Count live push threads rather than files. The bzthread directory keeps
