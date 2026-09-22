@@ -12,6 +12,12 @@
 #   client          the Backblaze client's own writable settings, as values;
 #                   import writes them back through bzcli one at a time
 #
+# Never in the file: the computer identity (hguid), the drive stamps under
+# .bzvol, the volume list, the drive selections and exclusions, or any backup
+# state. A file that could stamp a second container with the same identity
+# would set two machines on one backup, and Backblaze removes files when the
+# stamps stop agreeing. Moving a backup is a copy of appdata or an inherit.
+#
 # Secrets. The key hashes, and the notification endpoints whole (a webhook
 # URL is itself a secret), are the sensitive part. With a passphrase they go
 # into the file encrypted; without one they are left out and the file records

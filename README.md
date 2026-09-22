@@ -283,8 +283,10 @@ choices and dismissals, and the Backblaze client's own settings as values. The A
 endpoints are the secrets. With a passphrase they go into the file encrypted, using scrypt and
 HMAC from Python's standard library, which is all the image has. Without one they are left out
 and the file records which sections are missing. The file carries a version, so a later build
-can read an older file. `bb-settings export` and
-`bb-settings import` do the same from the console.
+can read an older file. It does not carry the backup or its identity: the computer id, the drive
+stamps, the drive selections and the client's file lists stay in appdata and on the drives, and
+moving a backup to another host is still a copy of appdata or an inherit through the client.
+`bb-settings export` and `bb-settings import` do the same from the console.
 - `WEDGE`: a stale four-hour lock is blocking every pass. This is what an out-of-memory
   kill or a container restart mid-pass leaves behind: the lock file outlives the process
   that owned it, and every subsequent pass fails to acquire it. It usually shows as a

@@ -1003,7 +1003,10 @@ SETTINGS_HTML = """<!doctype html>
   into the file encrypted; without one they are left out and the file records which sections are
   missing. Importing replaces
   each section the file holds and writes the client settings back through bzcli one at a time.
-  The file carries a version, so a later build can read an older file.</p>
+  The file carries a version, so a later build can read an older file. It does not carry the
+  backup or its identity: the computer id, the drive stamps, the drive selections and the client's
+  file lists stay in appdata and on the drives, and moving a backup to another host is still a copy
+  of appdata or an inherit through the client.</p>
   <label for="xfer-pass">Passphrase <span class="dim">(for the secrets; leave empty to leave them out)</span></label>
   <div class="row"><input type="password" id="xfer-pass" autocomplete="new-password" style="max-width:280px"></div>
   <div class="row" style="margin-top:12px"><button id="xfer-export">Export settings</button><span class="dim" id="xfer-msg"></span></div>
