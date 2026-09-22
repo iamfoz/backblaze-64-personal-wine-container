@@ -15,6 +15,25 @@
 
 echo "Source drives"
 _drives=0
+
+# Set one attribute of a drive stamp to a value the client itself wrote
+# elsewhere, under --fix. The file must be laid out the way the client writes
+# it, one <bzvolume vguid=... associated_hguid=... /> line, or nothing is
+# touched: a stamp in any other shape is not one this container understands
+# well enough to edit. The previous stamp is kept beside it, and the file is
+# rewritten in place so its owner and mode on the share stay as they were.
+_stamp_repair() {
+    _sr_file="$1"; _sr_attr="$2"; _sr_val="$3"
+    [ -f "$_sr_file" ] && [ -w "$_sr_file" ] || return 1
+    [ "$(grep -c '<bzvolume ' "$_sr_file" 2>/dev/null)" = 1 ] || return 1
+    grep -q 'vguid="[^"]*"' "$_sr_file" && grep -q 'associated_hguid="[^"]*"' "$_sr_file" || return 1
+    _sr_bak="${_sr_file}.bak-$(date +%Y%m%d%H%M%S)"
+    cp -p "$_sr_file" "$_sr_bak" 2>/dev/null || return 1
+    _sr_new="$(sed "s/${_sr_attr}=\"[^\"]*\"/${_sr_attr}=\"${_sr_val}\"/" "$_sr_file")" || return 1
+    printf '%s' "$_sr_new" | grep -q "${_sr_attr}=\"${_sr_val}\"" || return 1
+    printf '%s\n' "$_sr_new" > "$_sr_file" || return 1
+    grep -q "${_sr_attr}=\"${_sr_val}\"" "$_sr_file"
+}
 for _link in "${PREFIX}dosdevices"/[d-z]:; do
     [ -L "$_link" ] || continue
     _root="$(readlink -f "$_link" 2>/dev/null)"
@@ -96,8 +115,9 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
                 WARN "${_letter}: .bzvol/bzvol_id.xml carries no volume id, so the client cannot match this drive to its backup"
                 if [ -n "$_known" ]; then
                     NOTE "the client's own record for ${_letter}: is ${_known}. With the container stopped, set vguid in"
-                    NOTE "${_idf} to that id, and the existing backup of this drive carries on. Never delete .bzvol:"
-                    NOTE "Backblaze removes the drive's backed-up files when it goes."
+                    NOTE "${_idf} to that id, and the existing backup of this drive carries on. Not done by --fix: an"
+                    NOTE "empty stamp is not laid out the way the client writes it. Never delete .bzvol: Backblaze"
+                    NOTE "removes the drive's backed-up files when it goes."
                 else
                     NOTE "the client has no record of a drive at ${_letter}: either. Untick and re-tick it in the client's"
                     NOTE "settings; the client stamps it afresh and its upload starts over."
@@ -115,11 +135,20 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
             _inst="${PREFIX}drive_c/Program Files/Backblaze/bzinstall.xml"
             _mine="$(grep -oE ' hguid="[0-9a-f]+"' "$_inst" 2>/dev/null | grep -oE '[0-9a-f]{16,}' | head -1)"
             if [ -n "$_hg" ] && [ -n "$_mine" ] && [ "$_hg" != "$_mine" ]; then
-                WARN "${_letter}: the drive is stamped for a different computer identity than this install's"
-                NOTE "an inherit or a reinstall gave this install a new identity, and the client will not back up a drive"
-                NOTE "stamped for the old one. With the container stopped, set associated_hguid in ${_idf} to the"
-                NOTE "value of hguid in bzinstall.xml under Program Files\\Backblaze. Never delete .bzvol: Backblaze"
-                NOTE "removes the drive's backed-up files when it goes."
+                if [ "$FIX" = 1 ]; then
+                    if _stamp_repair "$_idf" associated_hguid "$_mine"; then
+                        OK "${_letter}: repaired: the stamp now carries this install's computer identity; the previous stamp is kept beside it"
+                        NOTE "restart the container so the client re-reads it."
+                    else
+                        BAD "${_letter}: could not repair ${_idf}: not laid out the way the client writes it, or not writable; nothing changed"
+                    fi
+                else
+                    WARN "${_letter}: the drive is stamped for a different computer identity than this install's"
+                    NOTE "an inherit or a reinstall gave this install a new identity, and the client will not back up a drive"
+                    NOTE "stamped for the old one. Re-run with --fix to set associated_hguid in ${_idf} to this install's;"
+                    NOTE "the previous stamp is kept beside it. Never delete .bzvol: Backblaze removes the drive's backed-up"
+                    NOTE "files when it goes."
+                fi
             fi
         elif grep -q "bzVolumeGuid=\"${_id}\"" "$_vols" 2>/dev/null; then
             _ohex="$(grep "bzVolumeGuid=\"${_id}\"" "$_vols" | grep -oE 'mountPointPathHex="[0-9a-f]*"' | grep -oE '[0-9a-f]{2}' | head -1)"
@@ -128,13 +157,21 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
             NOTE "the drive letter changed. Map the folder back to drive_$(printf '%s' "$_other" | tr 'A-Z' 'a-z') so it is ${_other}: again, or the"
             NOTE "client treats it as a new drive and starts its upload over."
         else
-            WARN "${_letter}: the client does not recognise this drive's identity (${_id} is not in bzvolumes.xml)"
-            if [ -n "$_known" ]; then
+            if [ -n "$_known" ] && [ "$FIX" = 1 ]; then
+                if _stamp_repair "$_idf" vguid "$_known"; then
+                    OK "${_letter}: repaired: vguid set to ${_known}, the client's own record for this drive; the previous stamp is kept beside it"
+                    NOTE "restart the container so the client re-reads it."
+                else
+                    BAD "${_letter}: could not repair ${_idf}: not laid out the way the client writes it, or not writable; nothing changed"
+                fi
+            elif [ -n "$_known" ]; then
+                WARN "${_letter}: the client does not recognise this drive's identity (${_id} is not in bzvolumes.xml)"
                 NOTE "the client's own record for ${_letter}: is ${_known}: another install stamped this drive, or an"
-                NOTE "inherit brought a different record. To keep the existing backup of this drive, stop the container"
-                NOTE "and set vguid in ${_idf} to ${_known}. Never delete .bzvol: Backblaze removes the drive's"
-                NOTE "backed-up files when it goes."
+                NOTE "inherit brought a different record. Re-run with --fix to set vguid in ${_idf} to that id and"
+                NOTE "keep the existing backup of this drive; the previous stamp is kept beside it. Never delete .bzvol:"
+                NOTE "Backblaze removes the drive's backed-up files when it goes."
             else
+                WARN "${_letter}: the client does not recognise this drive's identity (${_id} is not in bzvolumes.xml)"
                 NOTE "the client has no record of a drive at ${_letter}: at all. Untick and re-tick it in the client's"
                 NOTE "settings; the client stamps it afresh and its upload starts over. If you inherited, check that"
                 NOTE "the right computer was chosen."

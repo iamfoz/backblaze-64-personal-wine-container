@@ -131,7 +131,7 @@ DR="$(cd "$FX" && sh -c 'PREFIX="$1"; BZ="$2"; OK(){ echo "[ok] $*"; }; WARN(){ 
 has "$DR" "\[ok\] D: the client recognises this drive (id $KNOWN_D)" "drives: a stamp matching the client's record for that letter is recognised"
 has "$DR" "\[warn\] E: the client does not recognise this drive's identity" "drives: a stamp from another install is a warning"
 has "$DR" "record for E: is $KNOWN_E" "drives: and the note names the id the client has for that letter"
-has "$DR" "set vguid in .*drive_e/.bzvol/bzvol_id.xml to $KNOWN_E" "drives: the repair names the field and the file"
+has "$DR" "set vguid in .*drive_e/.bzvol/bzvol_id.xml to that id" "drives: the repair names the field and the file"
 has "$DR" "Never delete .bzvol" "drives: and warns against deleting the stamp"
 if grep -q "a279b04955a1845499e60219" <<<"$DR"; then echo "FAIL drives: the hguid must never be printed"; FAILED=$((FAILED+1)); else echo "PASS drives: the hguid is never printed"; fi
 has "$DR" "\[warn\] F: .bzvol/bzvol_id.xml carries no volume id" "drives: an empty stamp is a warning"
@@ -141,7 +141,23 @@ has "$DR" "H: .bzvol present but no bzvol_id.xml yet" "drives: a .bzvol without 
 has "$DR" "\[warn\] I: the drive is stamped for a different computer identity" "drives: a stamp for another computer identity is a warning"
 has "$DR" "set associated_hguid in .*drive_i/.bzvol/bzvol_id.xml" "drives: with the field and file to change"
 if grep -q "deadbeef\|a279b04955a1845499e60219" <<<"$DR"; then echo "FAIL drives: neither hguid may be printed"; FAILED=$((FAILED+1)); else echo "PASS drives: neither hguid is printed"; fi
-for L in d e f g h i; do rm -f "${PFX}dosdevices/$L:"; done
+# --fix: the two repairs with a known value, and the refusals. A stamp in any
+# other shape than the client's is left alone, and so is an empty one.
+mkdir -p "$FX/drive_j/.bzvol"; ln -sfn "$FX/drive_j" "${PFX}dosdevices/j:"
+printf '<bzvolume vguid="v00aaaaaaaaaaaaaaaaaaaaaaaaa" associated_hguid="x" />\n<bzvolume vguid="v00bbbbbbbbbbbbbbbbbbbbbbbbb" associated_hguid="x" />\n' > "$FX/drive_j/.bzvol/bzvol_id.xml"
+printf '<bzvolume bzVolumeGuid="%s" mountPointPathHex="4a3a5c" typeOfVolumeTwoCharCode="gm" />\n' "v00ccccccccccccccccccccccccc" >> "$VOLS"
+DF="$(cd "$FX" && sh -c 'FIX=1; PREFIX="$1"; BZ="$2"; OK(){ echo "[ok] $*"; }; WARN(){ echo "[warn] $*"; }; BAD(){ echo "[FAIL] $*"; }; NOTE(){ echo "  $*"; }; . "$3"' _ "$PFX" "$BZ" "$DROP" 2>&1)"
+has "$DF" "\[ok\] E: repaired: vguid set to $KNOWN_E" "fix: a stamp from another install gets the client's own id"
+grep -q "vguid=\"$KNOWN_E\" associated_hguid=\"a279b04955a1845499e60219\"" "$FX/drive_e/.bzvol/bzvol_id.xml" && echo "PASS fix: the file carries the new vguid and the untouched hguid" || { echo "FAIL fix: drive_e stamp not rewritten as expected"; FAILED=$((FAILED+1)); }
+ls "$FX/drive_e/.bzvol/"bzvol_id.xml.bak-* >/dev/null 2>&1 && echo "PASS fix: the previous stamp is kept beside it" || { echo "FAIL fix: no backup of the stamp"; FAILED=$((FAILED+1)); }
+has "$DF" "\[ok\] I: repaired: the stamp now carries this install's computer identity" "fix: a stamp for another identity gets this install's"
+grep -q "vguid=\"$KNOWN_I\" associated_hguid=\"a279b04955a1845499e60219\"" "$FX/drive_i/.bzvol/bzvol_id.xml" && echo "PASS fix: the file carries the new hguid and the untouched vguid" || { echo "FAIL fix: drive_i stamp not rewritten as expected"; FAILED=$((FAILED+1)); }
+has "$DF" "\[warn\] F: .bzvol/bzvol_id.xml carries no volume id" "fix: an empty stamp is still only a warning"
+[ ! -s "$FX/drive_f/.bzvol/bzvol_id.xml" ] && ! ls "$FX/drive_f/.bzvol/"bzvol_id.xml.bak-* >/dev/null 2>&1 && echo "PASS fix: and is not written" || { echo "FAIL fix: the empty stamp was touched"; FAILED=$((FAILED+1)); }
+has "$DF" "\[FAIL\] J: could not repair" "fix: a stamp with two volume lines is refused"
+[ "$(grep -c '<bzvolume ' "$FX/drive_j/.bzvol/bzvol_id.xml")" = 2 ] && echo "PASS fix: and left as it was" || { echo "FAIL fix: the malformed stamp was changed"; FAILED=$((FAILED+1)); }
+if grep -q "deadbeef\|a279b04955a1845499e60219" <<<"$DF"; then echo "FAIL fix: neither hguid may be printed"; FAILED=$((FAILED+1)); else echo "PASS fix: neither hguid is printed"; fi
+for L in d e f g h i j; do rm -f "${PFX}dosdevices/$L:"; done
 
 echo
 echo "$FAILED failures"

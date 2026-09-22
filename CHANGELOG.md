@@ -44,7 +44,10 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   computer identity in the stamp with this install's, since an inherit or a reinstall changes it
   and the client then refuses the drive however right its volume id is; neither value is printed.
   Every note says never to delete `.bzvol`, which Backblaze's own README there says removes the
-  drive's files from the datacenter.
+  drive's files from the datacenter. Under `--fix` the doctor repairs the two cases whose correct
+  value the client itself wrote elsewhere, setting `vguid` or `associated_hguid` in the stamp
+  with the previous stamp kept beside it, and only when the stamp is laid out the way the client
+  writes it. An empty stamp or an unknown drive is left for the client to take again.
 - On a phone, the first panel's title on the Monitor no longer sits on the top bar, and the
   Warnings and events list reads as one card per warning with Show and Notify side by side
   instead of four stacked cells.

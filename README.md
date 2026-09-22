@@ -428,9 +428,12 @@ permissions and free space, RAM and swap against your file count, zombie process
 thread count, stalls, and whether Backblaze is reachable.
 
 With `--fix` it repairs what can be repaired safely: the reported Windows version,
-missing drive links, missing skin aliases, and a stale lock left behind by an
-out-of-memory kill. Repairs are idempotent, never touch backup state, and are skipped
-whenever the diagnosis is ambiguous: a tool that "fixes" a misdiagnosis is worse than
+missing drive links, missing skin aliases, a stale lock left behind by an
+out-of-memory kill, and a drive stamp (`.bzvol/bzvol_id.xml`) whose volume id or computer
+identity differs from the client's own record, restored to the value the client wrote with the
+previous stamp kept beside it. Repairs are idempotent and are skipped whenever the diagnosis is
+ambiguous; the stamp repair is the one that touches the backup's identity, and it writes only a
+value the client itself recorded, never a guess: a tool that "fixes" a misdiagnosis is worse than
 one that just reports. Anything it will not fix on its own (too little RAM, no swap,
 a full disk, a wedged transfer) is reported with what to do about it.
 
