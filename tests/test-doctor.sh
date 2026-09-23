@@ -166,7 +166,15 @@ printf '<bzvolume bzVolumeGuid="%s" mountPointPathHex="4b3a5c" typeOfVolumeTwoCh
 mkdrive k "$CUR_K"
 printf '<bzvolume bzVolumeGuid="%s" mountPointPathHex="4c3a5c" typeOfVolumeTwoCharCode="gm" lastTimeVolumeWasSeenAttachedGmtMillis="1700000000000" />\n<bzvolume bzVolumeGuid="%s" mountPointPathHex="4c3a5c" typeOfVolumeTwoCharCode="gm" lastTimeVolumeWasSeenAttachedGmtMillis="1790000000000" />\n' "v000000000000000000000000003" "v000000000000000000000000004" >> "$VOLS"
 mkdrive l "v00fffffffffffffffffffffffff"
+# One drive with a large sparse file for the read-speed sample; the others have none.
+mkdir -p "$FX/drive_d/media"; dd if=/dev/zero of="$FX/drive_d/media/film.mkv" bs=1M count=0 seek=300 2>/dev/null
 DR="$(cd "$FX" && sh -c 'PREFIX="$1"; BZ="$2"; OK(){ echo "[ok] $*"; }; WARN(){ echo "[warn] $*"; }; BAD(){ echo "[FAIL] $*"; }; NOTE(){ echo "  $*"; }; . "$3"' _ "$PFX" "$BZ" "$DROP" 2>&1)"
+if date +%s%N 2>/dev/null | grep -qE '^[0-9]{16,}$'; then
+  has "$DR" "D: reads at about [0-9]* MB/s (64 MB sample)" "drives: read speed is measured on a drive with a large file"
+else
+  has "$DR" "D: read speed not measured (could not read .*, or no high-resolution clock)" "drives: without a high-resolution clock the read speed is not invented"
+fi
+has "$DR" "E: read speed not measured: no file over 64 MB" "drives: no large file means no measurement, said plainly"
 has "$DR" "\[ok\] D: the client recognises this drive (id $KNOWN_D)" "drives: a stamp matching the client's record for that letter is recognised"
 has "$DR" "\[warn\] E: the client does not recognise this drive's identity" "drives: a stamp from another install is a warning"
 has "$DR" "record for E: is $KNOWN_E" "drives: and the note names the id the client has for that letter"

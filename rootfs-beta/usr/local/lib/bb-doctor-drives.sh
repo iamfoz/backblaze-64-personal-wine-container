@@ -84,6 +84,46 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
         OK "${_letter}: ${_root} readable, ${_seen} top-level entr$([ "$_seen" = 1 ] && echo y || echo ies) sampled"
     fi
 
+    # -- Read speed: how fast the client's parent can stage chunks -----------------
+    # Before each 10 MB chunk upload the pass reads the chunk from the source,
+    # hashes it and stages it, and only then launches the child that sends it.
+    # The read is the slow part on a FUSE share: one user's parent took two
+    # seconds per chunk from /mnt/user, so however many threads the client had,
+    # one or two were ever busy (2026-09-22). 64 MB from a quarter of the way
+    # into one large file, so a file the client just read is less likely to
+    # come from cache; the figure is an upper bound on what the pass will see.
+    _big="$(find "$_root" -maxdepth 3 -type f -size +67108864c 2>/dev/null | head -1)"
+    _fs="$(df -T "$_root" 2>/dev/null | awk 'NR==2{print $2}')"
+    if [ -z "$_big" ]; then
+        NOTE "${_letter}: read speed not measured: no file over 64 MB within three levels of ${_root}"
+    else
+        _sz="$(stat -c %s "$_big" 2>/dev/null || echo 0)"
+        _skip=$(( _sz / 4 / 1048576 ))
+        _t0="$(date +%s%N 2>/dev/null)"
+        case "$_t0" in *[!0-9]*|'') _t0="" ;; esac
+        if dd if="$_big" of=/dev/null bs=1M skip="$_skip" count=64 2>/dev/null && [ -n "$_t0" ]; then
+            _t1="$(date +%s%N)"
+            _ms=$(( (_t1 - _t0) / 1000000 ))
+            [ "$_ms" -lt 1 ] && _ms=1
+            _mbs=$(( 64000 / _ms ))
+            # A chunk is 10 MB; the parent's other work per chunk is well under a second.
+            _cpm=$(( _mbs * 6 ))
+            if [ "$_mbs" -ge 40 ]; then
+                OK "${_letter}: reads at about ${_mbs} MB/s (64 MB sample), enough for ${_cpm}+ chunks a minute"
+            elif [ "$_mbs" -ge 20 ]; then
+                NOTE "${_letter}: reads at about ${_mbs} MB/s (64 MB sample): the pass can stage at most about ${_cpm} chunks a minute from here"
+            else
+                WARN "${_letter}: reads at about ${_mbs} MB/s (64 MB sample), so the pass can stage at most about ${_cpm} chunks (10 MB) a minute from here, whatever the thread setting"
+                case "$_fs" in
+                    shfs|fuse*) NOTE "this drive is a ${_fs} mount, Unraid's user-share layer. Map the disk or pool path underneath (/mnt/cache/... or /mnt/diskN/...) instead of /mnt/user/... and the reads skip that layer." ;;
+                    *) NOTE "the client reads each 10 MB chunk from here before it can upload it; a faster path to these files is the only lever." ;;
+                esac
+            fi
+        else
+            NOTE "${_letter}: read speed not measured (could not read ${_big}, or no high-resolution clock)"
+        fi
+    fi
+
     # -- Identity: does the client still know this drive? ---------------------------
     # The client stamps each drive it owns in <root>/.bzvol/bzvol_id.xml:
     # <bzvolume vguid="v00..." associated_hguid="..." />, the volume id being

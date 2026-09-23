@@ -39,6 +39,10 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   ever sat at that letter, and taking the first read a healthy drive as "known as D:, not D:".
   A stamp matching any record for its letter is recognised, and the value `--fix` restores is the
   record most recently seen attached.
+- bb-doctor measures each source drive's read speed with a 64 MB sample from a large file and says
+  how many 10 MB chunks a minute the pass can stage from it. The pass reads, hashes and stages each
+  chunk before it launches the child that uploads it, so a slow read caps the rate whatever the
+  thread setting; on a user-share (shfs) mount the note says to map the disk or pool path instead.
 - bb-doctor gained three repairs under `--fix`, each also reported without it: it starts the
   Backblaze service when the GUI is up and the service is not; it stops a pass that bb-health
   reports as stuck, children first, so bzserv starts a fresh one; and it writes the supportedOS
