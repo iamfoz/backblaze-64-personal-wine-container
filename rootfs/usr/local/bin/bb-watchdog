@@ -91,8 +91,19 @@ cooling_down() {
 
 say "started: checking every ${INTERVAL}s (cooldown ${COOLDOWN_MIN}m)"
 
+# The Settings tab's switch. Off means leave: the service script that started
+# this parks until it is switched on again, so no bb-watchdog process exists
+# while it is off, the same as with the variable unset.
+SWITCH=/config/bb-api/watchdog.json
+
 while true; do
     sleep "$INTERVAL" || sleep 300
+
+    if [ -r "$SWITCH" ] && grep -q '"enabled": *false' "$SWITCH"; then
+        say "switched off from Settings - stopping"
+        echo disabled > /tmp/.bb-watchdog-state 2>/dev/null
+        exit 0
+    fi
 
     status="$(bb-health 2>/dev/null)" || true
     case "$status" in

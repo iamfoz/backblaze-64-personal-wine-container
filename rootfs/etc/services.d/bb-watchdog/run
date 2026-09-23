@@ -19,11 +19,27 @@
 set -u
 
 STATE_FILE=/tmp/.bb-watchdog-state
+# The switch the Settings tab writes. When the file exists it wins; when it
+# does not, ENABLE_WATCHDOG decides, so a container that never touched the
+# page behaves as it always did. One line of JSON, read with grep.
+SWITCH=/config/bb-api/watchdog.json
 
-if [ "${ENABLE_WATCHDOG:-false}" != "true" ]; then
+wanted() {
+    if [ -r "$SWITCH" ]; then
+        grep -q '"enabled": *true' "$SWITCH"
+    else
+        [ "${ENABLE_WATCHDOG:-false}" = "true" ]
+    fi
+}
+
+# Parked rather than exited, so the supervisor does not restart it in a loop,
+# and polled every minute so a switch flipped on the page starts it without a
+# container restart. While parked no bb-watchdog process exists at all.
+if ! wanted; then
     echo disabled > "$STATE_FILE" 2>/dev/null
-    echo "[bb-watchdog] disabled (set ENABLE_WATCHDOG=true to enable auto-recovery)"
-    exec sleep infinity
+    echo "[bb-watchdog] disabled (set ENABLE_WATCHDOG=true, or switch it on in Settings, to enable auto-recovery)"
+    while ! wanted; do sleep 60; done
+    echo "[bb-watchdog] switched on from Settings"
 fi
 
 echo enabled > "$STATE_FILE" 2>/dev/null

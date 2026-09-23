@@ -976,7 +976,18 @@ def _point(dirpath):
     bbdismiss.STORE = dirpath + "/dismissed.json"; bbdismiss._cache = None
 _src = os.path.join(FIX, "xfer-src"); _dst = os.path.join(FIX, "xfer-dst")
 os.makedirs(_src); os.makedirs(_dst)
-_point(_src)
+import bbrecover
+def _point_recover(dirpath):
+    bbrecover.STORE = dirpath + "/watchdog.json"; bbrecover.STATE = dirpath + "/wd-state"
+_point(_src); _point_recover(_src)
+ok(bbrecover.load() is None and bbrecover.state()["source"] == "variable", "with no stored switch the variable decides")
+bbrecover.save(True)
+ok(bbrecover.load() == {"enabled": True} and bbrecover.state()["source"] == "setting" and bbrecover.state()["enabled"],
+   "a stored switch wins over the variable")
+ok(open(bbrecover.STORE).read().strip() == '{"enabled": true}', "the store is one line of JSON a shell can grep")
+bbrecover.clear()
+ok(bbrecover.load() is None, "clearing hands the decision back to the variable")
+bbrecover.save(False)
 _rec, _secret = bbapi.create("laptop", ["read"])
 bbapi.set_enabled(False)
 bbnotify.save({"endpoints": [{"kind": "ntfy", "label": "phone", "url": "https://example.invalid/topic",
@@ -1006,7 +1017,7 @@ ok("tok-123" not in json.dumps(_sealed) and "example.invalid" not in json.dumps(
 ok(_sealed["sections"]["client"]["settings"] == {"num_backup_threads": "6", "net_auto_throttle": True},
    "the client's writable settings travel as values")
 
-_point(_dst)
+_point(_dst); _point_recover(_dst)
 _written = []
 _report = bbsettings.import_(json.loads(json.dumps(_sealed)), "hunter2",
                              write_client=lambda k, v: (_written.append((k, v)) or (True, "set")))
@@ -1025,6 +1036,8 @@ ok("licence" in bbdismiss.load()["keys"] and bbdismiss.hidden() == frozenset({"s
    "dismissed warnings and hidden kinds are restored")
 ok(any(a.startswith("api_keys") for a in _report["applied"]) and "client: 2 written" in _report["applied"],
    "the report says what was applied: %r" % _report["applied"])
+ok(_sealed["sections"]["recovery"] == {"watchdog": False} and bbrecover.load() == {"enabled": False},
+   "the recovery switch travels and is restored")
 try:
     bbsettings.import_(json.loads(json.dumps(_sealed)), "wrong"); ok(False, "a wrong passphrase is refused")
 except ValueError as exc:

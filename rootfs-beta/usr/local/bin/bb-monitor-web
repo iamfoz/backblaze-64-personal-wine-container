@@ -30,6 +30,7 @@ import bbconfig
 import bbctl
 import bbdata
 import bbdismiss
+import bbrecover
 import bbsettings
 import bbreport
 import bbtools
@@ -979,6 +980,22 @@ SETTINGS_HTML = """<!doctype html>
   <div id="notices-err" class="err" hidden></div>
 </div>
 
+<h2>Automatic recovery</h2>
+<div class="panel" id="recover">
+  <p class="dim">The watchdog checks the backup every five minutes and acts on what bb-health reports:
+  it clears a stale four-hour lock, and it stops a pass stuck on a lost upload child so the service
+  starts a fresh one. Every action goes to the container log. Off by default because it deletes a
+  file and kills processes. This switch overrides the container's <code>ENABLE_WATCHDOG</code>
+  variable and takes effect within a minute, no restart needed; "Follow the variable" hands the
+  decision back to it.</p>
+  <div class="row">
+    <label class="switch"><input type="checkbox" id="wd-enabled"> <span>Automatic recovery on</span></label>
+    <span class="dim" id="wd-state"></span>
+  </div>
+  <div class="row" style="margin-top:12px"><button id="wd-save">Save recovery</button><button class="ghost" id="wd-follow">Follow the variable</button><span class="dim" id="wd-msg"></span></div>
+  <div id="wd-err" class="err" hidden></div>
+</div>
+
 <h2>Quiet hours</h2>
 <div class="panel" id="quiet">
   <p class="dim">Pause the backup on a schedule. At the start of a window the container asks the client
@@ -1414,6 +1431,31 @@ try {
   var t = localStorage.getItem('bbMonitorTheme');
   if(t) document.documentElement.setAttribute('data-theme', t);
 } catch(e){}
+// ---- automatic recovery ----
+function wdStateText(d){
+  var src = d.source === 'setting' ? 'set here' : ('following ENABLE_WATCHDOG=' + (d.variable ? 'true' : 'false'));
+  var run = d.running ? 'watchdog running' : (d.enabled ? 'starting within a minute' : 'watchdog parked');
+  return (d.enabled ? 'On' : 'Off') + ', ' + src + '; ' + run + '.';
+}
+function renderWatchdog(d){
+  document.getElementById('wd-enabled').checked = !!d.enabled;
+  document.getElementById('wd-state').textContent = wdStateText(d);
+  document.getElementById('wd-follow').hidden = d.source !== 'setting';
+}
+function loadWatchdog(){
+  return fetch('manage/watchdog', {cache:'no-store'}).then(function(r){ return r.json(); }).then(renderWatchdog);
+}
+function postWatchdog(body){
+  var err = document.getElementById('wd-err'), msg = document.getElementById('wd-msg');
+  err.hidden = true; msg.textContent = '';
+  post('manage/watchdog', body).then(function(res){
+    if(!res.ok){ err.textContent = res.body.error || 'Could not save.'; err.hidden = false; return; }
+    renderWatchdog(res.body); msg.textContent = 'Saved.'; setTimeout(function(){ msg.textContent = ''; }, 1500);
+  });
+}
+document.getElementById('wd-save').addEventListener('click', function(){ postWatchdog({enabled: document.getElementById('wd-enabled').checked}); });
+document.getElementById('wd-follow').addEventListener('click', function(){ postWatchdog({enabled: null}); });
+
 // ---- backup and restore ----
 document.getElementById('xfer-export').addEventListener('click', function(){
   var err = document.getElementById('xfer-err'), msg = document.getElementById('xfer-msg');
@@ -1467,7 +1509,9 @@ loadClient();
 loadNotify();
 loadQuiet();
 loadNotices();
+loadWatchdog();
 setInterval(loadQuiet, 30000);
+setInterval(loadWatchdog, 30000);
 </script>
 </body></html>
 """
@@ -4345,6 +4389,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"schema": bbapi.SCHEMA, "config": conf,
                              "state": _quiet.state(conf), "days": list(bbquiet.DAYS)})
             return True
+        if path == "/manage/watchdog":
+            self._json(200, dict(bbrecover.state(), schema=bbapi.SCHEMA))
+            return True
         if path == "/manage/notices":
             # What has been dismissed and what is hidden, with the table of
             # kinds, for the Settings tab. The Status tab does not need this
@@ -4608,6 +4655,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": str(exc)})
                 return
             self._json(200, {"schema": bbapi.SCHEMA, "config": conf, "state": _quiet.state(conf)})
+            return
+        if path == "/manage/watchdog":
+            if body.get("enabled") is None:
+                bbrecover.clear()
+            elif isinstance(body.get("enabled"), bool):
+                bbrecover.save(body["enabled"])
+            else:
+                self._json(400, {"error": "enabled must be true, false or null"})
+                return
+            self._json(200, dict(bbrecover.state(), schema=bbapi.SCHEMA))
             return
         if path == "/manage/notices/dismiss":
             # The key is checked in bbdismiss against a pattern that admits a

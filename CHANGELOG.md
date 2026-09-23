@@ -11,6 +11,11 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Added
 
+- An Automatic recovery switch on the Settings tab. It overrides `ENABLE_WATCHDOG` and takes
+  effect within a minute without a restart: the watchdog's service script polls the switch while
+  parked and the watchdog reads it every cycle, so no watchdog process exists while it is off,
+  the same as with the variable unset. "Follow the variable" hands the decision back. The switch
+  travels in the settings export.
 - Settings export and import, from a user request. The Settings tab's Backup and restore panel
   writes one JSON file with the API keys, notification endpoints and events, quiet hours, warning
   choices and dismissals, and the Backblaze client's own settings as values, and reads one back,

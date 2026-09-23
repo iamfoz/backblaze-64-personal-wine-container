@@ -123,7 +123,7 @@ Note on the beta tag: the :beta image carries two patches to Wine's socket code 
     Name="Enable Watchdog"
     Target="ENABLE_WATCHDOG"
     Default="false"
-    Description="Set to true to let the container recover automatically when a backup stalls: it clears a stale four-hour lock left behind by an out-of-memory kill or an unclean restart, and restarts deadlocked upload threads. Actions are written to the container log. Off by default because it deletes a lock file and kills processes."
+    Description="Set to true to let the container recover automatically when a backup stalls: it clears a stale four-hour lock left behind by an out-of-memory kill or an unclean restart, and stops a pass stuck on a lost upload child so the service starts a fresh one. Actions are written to the container log. Off by default because it deletes a lock file and kills processes. The beta's Settings tab has a switch that overrides this without a restart."
     Type="Variable"
     Display="advanced"
     Required="false"
