@@ -245,8 +245,28 @@ create_skin_aliases() {
 # 2026-09-20 it exited with code 1067 six hours into a run and nothing
 # brought it back. Each start is logged, and a service that will not stay up
 # produces one attempt per cycle rather than a tight loop.
+# By the process table, not the service manager. On 2026-09-23 Wine's service
+# manager reported bzserv RUNNING for an hour after the process had gone, so
+# this check said fine while bb-health said DOWN, and the start below did
+# nothing because a start on a service the manager thinks is running is a
+# no-op. bb-health and bb-doctor look at the process table for the same reason.
 bzserv_running() {
-    wine sc query bzserv 2>/dev/null | grep -q 'RUNNING'
+    for _c in /proc/[0-9]*/cmdline; do
+        [ -r "$_c" ] || continue
+        tr '\0' ' ' < "$_c" 2>/dev/null | grep -q 'bzserv.exe' && return 0
+    done
+    return 1
+}
+
+# Clear the phantom first when the manager still shows it running, or the
+# start is ignored; then start. Output goes nowhere: the result is checked
+# by bzserv_running afterwards, and the service's own log has the detail.
+bzserv_start() {
+    if wine sc query bzserv 2>/dev/null | grep -q 'RUNNING'; then
+        wine net stop bzserv >/dev/null 2>&1
+        sleep 5
+    fi
+    wine net start bzserv >/dev/null 2>&1
 }
 
 ensure_bzserv() {
@@ -256,7 +276,7 @@ ensure_bzserv() {
         bzserv_running && { [ "$tries" -eq 0 ] || log_message "SERVICE: bzserv is running now"; return 0; }
         tries=$((tries + 1))
         log_message "SERVICE: bzserv is not running - starting it (attempt ${tries})"
-        wine net start bzserv >/dev/null 2>&1
+        bzserv_start
     done
     sleep 30
     if bzserv_running; then
@@ -272,7 +292,7 @@ watch_bzserv() {
         sleep 300
         bzserv_running && continue
         log_message "SERVICE: bzserv has stopped - starting it again"
-        wine net start bzserv >/dev/null 2>&1
+        bzserv_start
         sleep 60
         if bzserv_running; then
             log_message "SERVICE: bzserv is running now"

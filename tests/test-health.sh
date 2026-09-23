@@ -190,6 +190,14 @@ ok "OK" "$(run)" "unreadable GUI age fails SAFE (no DOWN verdict)"
 mkproc "bzbui.exe -noquiet" "bzserv.exe"; procage 100 600
 ok "OK" "$(run)" "GUI and bzserv both up is healthy"
 
+# 27. a stuck pass during a service outage is HANG, not DOWN: the watchdog can
+#     act on HANG itself, and DOWN masked it for three hours on 2026-09-23
+mkproc "bzbui.exe -noquiet" "bztransmit.exe -prepare_bzcombs" "bztransmit.exe -threadpush foo.xml"
+procage 100 600; procage 102 1500; echo "line" > "$LOGF"
+ok "HANG" "$(run)" "a stuck push child with the service down reads as HANG, not DOWN"
+mkproc "bzbui.exe -noquiet"; procage 100 600
+ok "DOWN" "$(run)" "with no pass to stop the outage reads as DOWN"
+
 echo
 echo "$FAILED failures"
 exit $(( FAILED > 0 ? 1 : 0 ))

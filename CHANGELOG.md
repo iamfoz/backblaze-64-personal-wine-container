@@ -34,6 +34,13 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Fixed
 
+- The service watch in startapp checked bzserv through Wine's service manager, which went on
+  reporting RUNNING for an hour after the process had died, so the watch saw nothing while
+  bb-health said DOWN, and its starts were ignored because a start on a service the manager
+  thinks is running does nothing. It now checks the process table and stops the phantom before
+  starting.
+- bb-health reports HANG before DOWN. With DOWN first, a pass stuck during a service outage was
+  never reported to the watchdog, which can act on HANG itself, and one sat for three hours.
 - bb-doctor's drive identity check reads every record the client holds for a letter, not the
   first: a machine where drives have been re-added or reinstalled keeps one record per drive that
   ever sat at that letter, and taking the first read a healthy drive as "known as D:, not D:".
