@@ -162,11 +162,14 @@ if proc_match -threadpush; then
         echo "HANG a push child has been alive ${child_age}m (threshold ${STALL_MIN}m) without finishing its chunk"
         exit 1
     fi
-elif [ -n "$log" ]; then
+elif [ -n "$log" ] && proc_match "bztransmit.exe"; then
     # No child at all, yet the pass says it is waiting for one. Its heartbeat
     # line carries how long it has waited, so the log's own age says nothing.
     # Only the last line counts: an old wait further up belongs to a pass that
-    # has since moved on.
+    # has since moved on. And only while a pass is alive: once the watchdog
+    # has killed it, its last heartbeat stays the last line of the log until
+    # the next pass writes, and it read as a HANG with nothing to stop for
+    # half an hour on 2026-09-24 while the real state was DOWN.
     wait_ms="$(tail -1 "$log" 2>/dev/null | sed -n 's/.*Some sub_threads busy for numMillis=\([0-9][0-9]*\).*/\1/p')"
     case "$wait_ms" in ''|*[!0-9]*) wait_ms="" ;; esac
     if [ -n "$wait_ms" ] && [ $(( wait_ms / 60000 )) -ge "$STALL_MIN" ]; then

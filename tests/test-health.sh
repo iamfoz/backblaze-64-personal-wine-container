@@ -145,6 +145,12 @@ rm -f "$LOCK"; mkproc "bzserv.exe" "bztransmit.exe -prepare_bzcombs"; procage 10
 printf '%s\n' "2026-09-20 20:34:17 696 - BzThread_WaitForAllToFinishAndProcessAllResults - Some sub_threads busy for numMillis=1800000, waiting..." > "$LOGF"
 ok "HANG" "$(run)" "pass waiting 30m for sub_threads with no push child = HANG"
 
+# 16b. the same last line with no pass alive is not a hang: the watchdog has
+#      killed it and the log keeps its last heartbeat until the next pass writes
+mkproc "bzserv.exe"
+ok "OK" "$(run)" "a dead pass's last heartbeat is not a hang"
+mkproc "bzserv.exe" "bztransmit.exe -prepare_bzcombs"; procage 101 90000
+
 # 17. the same wait below the threshold is a pass finishing a batch: OK
 printf '%s\n' "2026-09-20 20:34:17 696 - Some sub_threads busy for numMillis=300000, waiting..." > "$LOGF"
 ok "OK" "$(run)" "pass waiting 5m for sub_threads is not a hang"

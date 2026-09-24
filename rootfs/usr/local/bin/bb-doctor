@@ -201,8 +201,10 @@ if [ -f "${BBDIR}/bzserv.exe" ]; then
         if proc_match "bzserv.exe"; then
             OK "the Backblaze service (bzserv) is running"
         elif [ "$FIX" = 1 ]; then
+            # Bounded: a Wine helper can hang on start-up, and the doctor must
+            # not sit behind it the way the service watch once did.
             env PATH="/opt/wine/bin:${PATH}" WINEPREFIX="$PREFIX" WINEDEBUG=-all HOME=/config \
-                wine net start bzserv >/dev/null 2>&1
+                timeout -k 10 120 setsid wine net start bzserv >/dev/null 2>&1
             n=0
             while [ "$n" -lt 10 ] && ! proc_match "bzserv.exe"; do sleep 1; n=$((n+1)); done
             if proc_match "bzserv.exe"; then

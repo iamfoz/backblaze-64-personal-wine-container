@@ -258,15 +258,22 @@ bzserv_running() {
     return 1
 }
 
+# A Wine helper can hang on start-up (a "sc query" sat for 53 minutes on
+# 2026-09-24 and stalled the watch behind it), so every call here is bounded
+# and a hung one is killed with the processes it started.
+wine_bounded() {
+    timeout -k 10 "$1" setsid wine "$2" "$3" "$4" 2>/dev/null
+}
+
 # Clear the phantom first when the manager still shows it running, or the
 # start is ignored; then start. Output goes nowhere: the result is checked
 # by bzserv_running afterwards, and the service's own log has the detail.
 bzserv_start() {
-    if wine sc query bzserv 2>/dev/null | grep -q 'RUNNING'; then
-        wine net stop bzserv >/dev/null 2>&1
+    if wine_bounded 60 sc query bzserv | grep -q 'RUNNING'; then
+        wine_bounded 60 net stop bzserv >/dev/null
         sleep 5
     fi
-    wine net start bzserv >/dev/null 2>&1
+    wine_bounded 120 net start bzserv >/dev/null
 }
 
 ensure_bzserv() {

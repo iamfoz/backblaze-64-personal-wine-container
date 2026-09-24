@@ -32,6 +32,21 @@ chmod +x "$FX/bb-doctor"
 printf '#!/bin/sh\necho OK\n' > "$FX/bin/bb-health"
 printf '#!/bin/sh\nexit 0\n' > "$FX/bin/curl"
 chmod +x "$FX/bin/bb-health" "$FX/bin/curl"
+# The doctor bounds its Wine calls with coreutils timeout and util-linux setsid,
+# both in the image. A dev laptop may lack either; stand-ins that just run the
+# command keep the test about the doctor rather than the machine it runs on.
+if ! command -v setsid >/dev/null 2>&1; then
+    printf '#!/bin/sh\nexec "$@"\n' > "$FX/bin/setsid"; chmod +x "$FX/bin/setsid"
+fi
+if ! command -v timeout >/dev/null 2>&1; then
+    cat > "$FX/bin/timeout" <<'EOF'
+#!/bin/sh
+while [ $# -gt 0 ]; do case "$1" in -k) shift 2 ;; -*) shift ;; *) break ;; esac; done
+shift   # the duration
+exec "$@"
+EOF
+    chmod +x "$FX/bin/timeout"
+fi
 # On macOS (dev laptops) stat -c is BSD stat, so shim GNU-style stat -c %Y.
 if ! stat -c %Y "$FX" >/dev/null 2>&1; then
     cat > "$FX/bin/stat" <<'EOF'

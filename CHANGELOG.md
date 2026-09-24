@@ -39,6 +39,13 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Fixed
 
+- Every Wine call the service watch and bb-doctor's service repair make is bounded, and a hung
+  helper is killed with what it started: an `sc query` sat for 53 minutes on 24 September and
+  the watch waited behind it while the service stayed down.
+- bb-health's "pass waiting for children that no longer exist" rule requires a live pass. After
+  the watchdog killed such a pass, its last heartbeat stayed the last line of the transmit log
+  and read as a HANG with nothing to stop, while the real state, the service down, went
+  unreported.
 - The service watch in startapp checked bzserv through Wine's service manager, which went on
   reporting RUNNING for an hour after the process had died, so the watch saw nothing while
   bb-health said DOWN, and its starts were ignored because a start on a service the manager
