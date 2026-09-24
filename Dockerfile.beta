@@ -294,27 +294,10 @@ for name, anchor, add in inserts:
         sys.exit("bb-doctor: anchor for %s not found exactly once, refusing to guess" % name)
     src = src.replace(anchor, add + anchor, 1)
     print("bb-doctor: %s added" % name)
-replacements = [
-    ("RAM check with swap",
-     '''[ -n "${mt:-}" ] && { [ "$mt" -ge 12 ] && OK "${mt} GB host RAM" || WARN "${mt} GB host RAM - large file counts can peak at 4-5 GB in one process"; }
-''',
-     '''# Beta: low RAM with swap is a working configuration, not a warning. The peaks
-# that matter land in swap instead of ending in an out-of-memory kill, and not
-# everyone can add memory to the host. Without swap the warning stands.
-if [ -n "${mt:-}" ]; then
-    if [ "$mt" -ge 12 ]; then OK "${mt} GB host RAM"
-    elif [ "${st:-0}" -gt 0 ]; then OK "${mt} GB host RAM, with ${st} GB swap to absorb the peaks"
-    else WARN "${mt} GB host RAM and no swap - large file counts can peak at 4-5 GB in one process"; fi
-fi
-'''),
-    ("swap line folded into the RAM line",
-     '''if [ "${st:-0}" -gt 0 ]; then OK "${st} GB swap available - absorbs memory peaks"
-''',
-     '''# Beta: the RAM line above already names the swap when RAM is short, so this
-# line only repeats it when RAM is not.
-if [ "${st:-0}" -gt 0 ]; then [ "${mt:-12}" -ge 12 ] && OK "${st} GB swap available - absorbs memory peaks"
-'''),
-]
+# The RAM and swap logic used to be replaced here for the beta; it now lives in
+# bb-doctor itself (info on a large host, a warning on a small one without swap,
+# and a warning anywhere there is evidence of pressure), so nothing is replaced.
+replacements = []
 for name, old, new in replacements:
     if new in src:
         print("bb-doctor: %s already applied" % name)

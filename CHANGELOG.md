@@ -39,6 +39,13 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Fixed
 
+- bb-doctor no longer warns about missing swap on a large host. The client's passes peak at 4 to
+  6 GB, which a host with 16 GB or more absorbs, so there the line is an info line, a new kind
+  that keeps the run green and is counted in the summary; under 16 GB without swap it stays a
+  warning. Evidence of pressure warns on any host: out-of-memory kills counted against the
+  container by the kernel, Backblaze processes named as victims in the kernel log, the kernel's
+  memory-pressure figure for the last five minutes, or swap three quarters used with under 1 GB
+  of RAM left. From a user's report of a warning on a 62 GB host.
 - The service watch launches no Wine helper unless the service is down, and then two rather
   than three: the `sc query` that decided whether to stop first is gone, and a restart is a
   stop followed by a start. Wine helper launches on a schedule are the one thing that changed

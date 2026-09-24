@@ -2073,7 +2073,7 @@ TOOLS_HTML = """<!doctype html>
     white-space:pre-wrap;word-break:break-word;max-height:60vh;overflow:auto;}
   .ok{color:var(--good);} .warn{color:var(--warn);} .fail{color:var(--bad);font-weight:600;}
   .fixed{color:var(--good);font-weight:600;} .heading{color:var(--title);font-weight:600;}
-  .note{color:var(--dim);} .rule{color:var(--dim);}
+  .note{color:var(--dim);} .rule{color:var(--dim);} .info{color:var(--title);}
   /* bb-health's answer is a verdict, so it is shown in the card with a mark
      rather than in an output box: a tick, a warning sign or a cross, with the
      tool's own lines under it as the evidence. */
@@ -2145,6 +2145,7 @@ function clearErr(){ document.getElementById('err').hidden = true; }
 function cls(line){
   if(line.indexOf('  [ ok ] ') === 0) return 'ok';
   if(line.indexOf('  [warn] ') === 0) return 'warn';
+  if(line.indexOf('  [info] ') === 0) return 'info';
   if(line.indexOf('  [FAIL] ') === 0) return 'fail';
   if(line.indexOf('         -> fixed: ') === 0) return 'fixed';
   if(line.indexOf('         ') === 0) return 'note';

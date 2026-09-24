@@ -24,6 +24,10 @@ LOCK="$BZ/bzbackup/lock_bzfileid_4_hour_lock.lck"
 # WINEPREFIX. Stub the two external commands: bb-health answers OK so the
 # doctor's own check is what decides, and curl answers reachable instantly.
 sed -e "s#/proc/\[0-9\]\*/cmdline#$FX/proc/[0-9]*/cmdline#g" \
+    -e "s#^MEMINFO=.*#MEMINFO=$FX/meminfo#" \
+    -e "s#^CG_EVENTS=.*#CG_EVENTS=$FX/memory.events#" \
+    -e "s#^PRESSURE=/sys.*#PRESSURE=$FX/memory.pressure#" \
+    -e "s#^\[ -r \"\$PRESSURE\" \] || PRESSURE=.*#:#" \
     -e "s#\"/proc/\$p/cmdline\"#\"$FX/proc/\$p/cmdline\"#g" \
     -e "s#^stop_process() { kill \"\$1\" 2>/dev/null; }#stop_process() { rm -rf \"$FX/proc/\$1\"; }#" \
     -e "s#/proc/uptime#$FX/proc/uptime#g" \
@@ -121,6 +125,32 @@ locked "--fix keeps the lock when the failures are no longer being written"
 wedge; touch "$LOCK"
 run --fix >/dev/null
 locked "--fix keeps a lock younger than the grace window"
+
+# ---- host memory: info on a large host, warning on a small one, warning on pressure --
+meminfo(){ printf 'MemTotal: %d kB\nMemAvailable: %d kB\nSwapTotal: %d kB\nSwapFree: %d kB\n' $(($1*1048576)) $(($2*1048576)) $(($3*1048576)) $(($4*1048576)) > "$FX/meminfo"; }
+printf 'low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\n' > "$FX/memory.events"
+printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n' > "$FX/memory.pressure"
+mkproc "bzserv.exe"; rm -f "$LOCK"; : > "$LOGCUR"
+meminfo 62 40 0 0
+R="$(run)"; has "$R" "\[info\] no swap; the client's passes peak at 4 to 6 GB" "memory: a large host without swap gets an info line"
+has "$R" "ok, 1 info, " "memory: and the info is counted in the summary rather than as a warning"
+if grep -q "\[warn\] no swap" <<<"$R"; then echo "FAIL memory: the large-host swap line must not be a warning"; FAILED=$((FAILED+1)); else echo "PASS memory: the large-host swap line is not a warning"; fi
+meminfo 62 40 31 31
+has "$(run)" "\[ ok \] 31 GB swap available" "memory: a large host with swap is plain ok"
+meminfo 9 4 0 0
+has "$(run)" "\[warn\] 9 GB host RAM and no swap - a memory peak becomes an out-of-memory kill" "memory: a small host without swap is still a warning"
+meminfo 9 4 31 31
+has "$(run)" "\[ ok \] 9 GB host RAM, with 31 GB swap to absorb the peaks" "memory: a small host with swap is ok"
+meminfo 62 40 0 0
+printf 'low 0\nhigh 0\nmax 0\noom 2\noom_kill 2\n' > "$FX/memory.events"
+has "$(run)" "\[warn\] 2 processes in this container killed by the out-of-memory killer" "memory: out-of-memory kills in the container's accounting warn on any host"
+printf 'low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\n' > "$FX/memory.events"
+printf 'some avg10=5.00 avg60=4.00 avg300=3.50 total=1\nfull avg10=2.00 avg60=1.50 avg300=1.25 total=1\n' > "$FX/memory.pressure"
+has "$(run)" "\[warn\] memory pressure: every task stalled on memory for 1.2% of the last five minutes" "memory: the kernel's pressure figure warns on any host"
+printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n' > "$FX/memory.pressure"
+meminfo 9 0 8 1
+has "$(run)" "\[warn\] swap is three quarters used with under 1 GB of RAM available" "memory: nearly full swap with no RAM left warns"
+rm -f "$FX/meminfo"
 
 # ---- the three on-demand repairs: service, stuck pass, manifest ---------------------
 # The fixture's wine stub "starts" the service by putting a bzserv.exe entry in

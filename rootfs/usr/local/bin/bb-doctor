@@ -37,8 +37,11 @@ BZ="${PREFIX}dosdevices/c:/ProgramData/Backblaze/bzdata"
 BBDIR="${PREFIX}drive_c/Program Files/Backblaze"
 LOCK="${BZ}/bzbackup/lock_bzfileid_4_hour_lock.lck"
 
-ok=0; warn=0; bad=0; fixed=0
+ok=0; warn=0; bad=0; fixed=0; info=0
 OK()   { echo "  [ ok ] $*"; ok=$((ok+1)); }
+# A fact worth stating that is not a fault: it keeps the run green. A warning
+# nobody can act on is a warning everybody learns to read past.
+INFO() { echo "  [info] $*"; info=$((info+1)); }
 WARN() { echo "  [warn] $*"; warn=$((warn+1)); }
 BAD()  { echo "  [FAIL] $*"; bad=$((bad+1)); }
 FIXED(){ echo "         -> fixed: $*"; fixed=$((fixed+1)); }
@@ -284,11 +287,57 @@ echo
 
 # ---- Host resources ----------------------------------------------------------------
 echo "Host resources"
-mt="$(awk '/MemTotal/{printf "%d", $2/1048576}' /proc/meminfo 2>/dev/null)"
-st="$(awk '/SwapTotal/{printf "%d", $2/1048576}' /proc/meminfo 2>/dev/null)"
-[ -n "${mt:-}" ] && { [ "$mt" -ge 12 ] && OK "${mt} GB host RAM" || WARN "${mt} GB host RAM - large file counts can peak at 4-5 GB in one process"; }
-if [ "${st:-0}" -gt 0 ]; then OK "${st} GB swap available - absorbs memory peaks"
-else WARN "no swap - a memory peak becomes an out-of-memory kill, which is what leaves the stale lock behind"; fi
+# The client's pass peaks at 4 to 6 GB in one process, and on a small host that
+# peak becomes an out-of-memory kill, which is what leaves the stale lock
+# behind. Swap absorbs it. So swap is a warning to be without on a small host
+# and a fact on a large one: a 62 GB host does not need it and reporting it as
+# a fault taught people to read past the doctor. What can turn either into a
+# warning is evidence of pressure: out-of-memory kills counted against this
+# container's memory accounting, our own processes named in the kernel log,
+# or the kernel's pressure figure for memory over the last five minutes.
+MEMINFO=/proc/meminfo
+CG_EVENTS=/sys/fs/cgroup/memory.events
+PRESSURE=/sys/fs/cgroup/memory.pressure
+[ -r "$PRESSURE" ] || PRESSURE=/proc/pressure/memory
+mt="$(awk '/MemTotal/{printf "%d", $2/1048576}' "$MEMINFO" 2>/dev/null)"
+st="$(awk '/SwapTotal/{printf "%d", $2/1048576}' "$MEMINFO" 2>/dev/null)"
+sf="$(awk '/SwapFree/{printf "%d", $2/1048576}' "$MEMINFO" 2>/dev/null)"
+ma="$(awk '/MemAvailable/{printf "%d", $2/1048576}' "$MEMINFO" 2>/dev/null)"
+BIG_RAM=16
+if [ -n "${mt:-}" ]; then
+    if [ "$mt" -ge "$BIG_RAM" ]; then
+        OK "${mt} GB host RAM"
+        if [ "${st:-0}" -gt 0 ]; then OK "${st} GB swap available"
+        else INFO "no swap; the client's passes peak at 4 to 6 GB, which this host absorbs without it"; fi
+    elif [ "${st:-0}" -gt 0 ]; then
+        OK "${mt} GB host RAM, with ${st} GB swap to absorb the peaks"
+    else
+        WARN "${mt} GB host RAM and no swap - a memory peak becomes an out-of-memory kill, which is what leaves the stale lock behind"
+    fi
+fi
+# Pressure, whatever the size. oom_kill in memory.events counts processes of
+# this container killed by any out-of-memory killer, the host's included.
+oomk="$(awk '/^oom_kill /{print $2}' "$CG_EVENTS" 2>/dev/null)"
+case "$oomk" in ''|*[!0-9]*) oomk=0 ;; esac
+if [ "$oomk" -gt 0 ]; then
+    WARN "${oomk} process$([ "$oomk" = 1 ] || echo es) in this container killed by the out-of-memory killer since it started"
+    NOTE "a killed pass leaves the stale lock behind; more RAM, swap, or excluding the largest file sets is the lasting fix."
+fi
+# The kernel log names the victim. Readable in most containers; silent when not.
+ours="$(dmesg 2>/dev/null | grep -c -E "Killed process [0-9]+ \((bztransmit|bzserv|bzfilelist|bzbui)")"
+case "$ours" in ''|*[!0-9]*) ours=0 ;; esac
+[ "$ours" -gt 0 ] && [ "$oomk" = 0 ] \
+    && WARN "the kernel log shows ${ours} out-of-memory kill$([ "$ours" = 1 ] || echo s) of a Backblaze process since the host booted"
+# Pressure stall information: the share of the last five minutes in which every
+# task was stalled on memory. A per-mille figure keeps the arithmetic integer.
+pf="$(awk '/^full /{for(i=1;i<=NF;i++) if($i ~ /^avg300=/){split($i,a,"="); printf "%d", a[2]*10}}' "$PRESSURE" 2>/dev/null)"
+case "$pf" in ''|*[!0-9]*) pf=0 ;; esac
+if [ "$pf" -ge 10 ]; then
+    WARN "memory pressure: every task stalled on memory for $((pf / 10)).$((pf % 10))% of the last five minutes"
+fi
+if [ "${st:-0}" -gt 0 ] && [ "${sf:-0}" -le $(( st / 4 )) ] && [ "${ma:-99}" -lt 1 ]; then
+    WARN "swap is three quarters used with under 1 GB of RAM available - the next peak has nowhere to go"
+fi
 zomb="$(awk '/^State:/{print $2}' /proc/[0-9]*/status 2>/dev/null | grep -c Z)"
 [ "${zomb:-0}" -gt 50 ] && WARN "${zomb} zombie processes - run the container with --init to reap them" \
                         || OK "process table healthy (${zomb:-0} zombies)"
@@ -404,7 +453,7 @@ fi
 echo
 
 echo "-----------------------------------------------------------------"
-echo "${ok} ok, ${warn} warning(s), ${bad} problem(s)$([ "$fixed" -gt 0 ] && echo ", ${fixed} fixed")"
+echo "${ok} ok$([ "$info" -gt 0 ] && echo ", ${info} info"), ${warn} warning(s), ${bad} problem(s)$([ "$fixed" -gt 0 ] && echo ", ${fixed} fixed")"
 if [ "$bad" -gt 0 ] && [ "$FIX" = 0 ]; then
     echo "Re-run 'bb-doctor --fix' to repair what can be repaired safely."
 fi
