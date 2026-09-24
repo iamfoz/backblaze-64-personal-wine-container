@@ -343,8 +343,10 @@ def draw(scr,d,st):
     # first scan over a large set is when the client needs the most memory.
     add("SYSTEM","mem",
         gauge("Mem:",human(d["mem"][0]),human(d["mem"][1]),d["mem"][2],
-              note=("(%s)"%(d.get("memory_by_process") or [{"name":""}])[0]["name"]
-                    if d.get("memory_by_process") else "")) if d["mem"]
+              note=" ".join(x for x in (
+                  ("+%s cache"%human(d["mem"][3])) if len(d["mem"])>3 and d["mem"][3] is not None else "",
+                  ("(%s)"%(d.get("memory_by_process") or [{"name":""}])[0]["name"]
+                   if d.get("memory_by_process") else "")) if x)) if d["mem"]
             else txt([("Mem: n/a",NORM)]))
     add("SYSTEM","swap",
         gauge("Swap:",human(d["swap"][0]),human(d["swap"][1]),d["swap"][2]) if d["swap"]

@@ -39,6 +39,11 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Fixed
 
+- The memory figure on the Monitor, in the terminal monitor, in the API and in the metrics is now
+  the container's processes' own memory, with the page cache shown beside it. It used to follow
+  `docker stats`, which charges the cache for every file the client has read to the container;
+  a dedup scan over a large file set reads them all, and one user saw 36 GB there while the
+  host called most of it free. `memory.cache_bytes` and `bb64_memory_cache_bytes` carry the cache.
 - bb-doctor no longer warns about missing swap on a large host. The client's passes peak at 4 to
   6 GB, which a host with 16 GB or more absorbs, so there the line is an info line, a new kind
   that keeps the run green and is counted in the summary; under 16 GB without swap it stays a

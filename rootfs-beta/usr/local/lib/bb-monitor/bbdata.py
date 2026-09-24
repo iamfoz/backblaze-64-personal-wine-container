@@ -1315,21 +1315,39 @@ def memory_by_process(limit=5):
 
 
 def mem_info(host_total):
-    for cur, mx, stat, key in (
-        (CG2 + "/memory.current", CG2 + "/memory.max", CG2 + "/memory.stat", "inactive_file"),
-        (CG1 + "/memory.usage_in_bytes", CG1 + "/memory.limit_in_bytes", CG1 + "/memory.stat", "total_inactive_file"),
+    """(used, limit, percent, cache) for the container's cgroup, or None.
+
+    `used` is the processes' own memory (anon), not the cgroup's charge. The
+    charge includes the page cache for every file the client has read, and a
+    dedup scan over tens of terabytes reads them all: one user's container
+    showed 36 GB by that figure while its processes held a few, and the host
+    called the rest free. docker stats and Unraid's container column show the
+    charge minus inactive cache, which still counts recently read files. The
+    cache is returned as well so a page can say where the rest went.
+    """
+    for cur, mx, stat, anon_key, file_key, inactive_key in (
+        (CG2 + "/memory.current", CG2 + "/memory.max", CG2 + "/memory.stat", "anon", "file", "inactive_file"),
+        (CG1 + "/memory.usage_in_bytes", CG1 + "/memory.limit_in_bytes", CG1 + "/memory.stat",
+         "total_rss", "total_cache", "total_inactive_file"),
     ):
         u = read(cur).strip()
         if not u.isdigit():
             continue
-        m = re.search(r'^%s (\d+)' % key, read(stat), re.M)
-        used = max(0, int(u) - (int(m.group(1)) if m else 0))
+        st = read(stat)
+        def field(k):
+            m = re.search(r'^%s (\d+)' % k, st, re.M)
+            return int(m.group(1)) if m else None
+        anon, cache, inactive = field(anon_key), field(file_key), field(inactive_key)
+        if anon is not None:
+            used = anon
+        else:
+            used = max(0, int(u) - (inactive or 0))
         l = read(mx).strip()
         lim = int(l) if l.isdigit() else 0
         if not 0 < lim < (1 << 60):
             lim = host_total
         if lim > 0:
-            return (used, lim, used * 100.0 / lim)
+            return (used, lim, used * 100.0 / lim, cache)
     return None
 
 

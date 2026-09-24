@@ -964,6 +964,21 @@ ok('bb64_health_dismissed{kind="stale"} 0' in _metrics,
    'every kind gets both gauges, so neither series appears and disappears')
 
 print()
+# ---- container memory: the processes' own, with the cache beside it -------------
+# docker stats charges the page cache to the container, and a dedup scan reads
+# every file, so a user saw 36 GB there while the host called most of it free.
+_cg = os.path.join(FIX, "cg2"); os.makedirs(_cg, exist_ok=True)
+open(_cg + "/memory.current", "w").write("38654705664\n")            # 36 GiB charged
+open(_cg + "/memory.max", "w").write("max\n")
+open(_cg + "/memory.stat", "w").write("anon 6442450944\nfile 32212254720\ninactive_file 1073741824\n")
+_cg2_before = bbdata.CG2; bbdata.CG2 = _cg
+try:
+    _m = bbdata.mem_info(64 * 1024 ** 3)
+finally:
+    bbdata.CG2 = _cg2_before
+ok(_m is not None and _m[0] == 6442450944 and _m[3] == 32212254720 and _m[1] == 64 * 1024 ** 3,
+   "memory used is the processes' own 6 GiB, with the 30 GiB page cache reported beside it: %r" % (_m,))
+
 # ---- settings export and import -------------------------------------------------
 # One file for everything the container keeps for itself. Exported from one
 # store directory and imported into a fresh one, the second must hold the same

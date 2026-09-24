@@ -471,7 +471,9 @@ problem.
 ### `memory`, `swap`
 
 Container memory and host swap. Each one can be `null` where the platform does not report
-it.
+it. `memory.used_bytes` is the container's processes' own memory (the cgroup's anon figure),
+not the cgroup's whole charge; `memory.cache_bytes`, when present, is the page cache charged to
+the container, which `docker stats` adds on top and which a scan over a large file set fills.
 
 | Field | Type |
 |---|---|

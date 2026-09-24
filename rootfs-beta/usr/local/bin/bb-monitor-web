@@ -299,7 +299,8 @@ def snapshot_to_json(d):
         "rate_mbit_str": "~%d Mbit/s" % (r * 1048576 * 8 / 1e6),
         "chunks": d["chunks"],
         "session_str": human(d["sess"]),
-        "mem": {"used_str": human(mem[0]), "total_str": human(mem[1]), "pct": round(mem[2], 1)} if mem else None,
+        "mem": {"used_str": human(mem[0]), "total_str": human(mem[1]), "pct": round(mem[2], 1),
+                "cache_str": human(mem[3]) if len(mem) > 3 and mem[3] is not None else None} if mem else None,
         "memory_by_process": d.get("memory_by_process"),
         "swap": {"used_str": human(swap[0]), "total_str": human(swap[1]), "pct": round(swap[2], 1)} if swap else None,
         # Two places on this one gauge: see human(). The percent moves about
@@ -2419,7 +2420,7 @@ def api_v1_payload(d):
     def gauge(t):
         if not t:
             return None
-        used, total, pct = t
+        used, total, pct = t[0], t[1], t[2]     # mem carries a fourth value, the cache
         return {"used_bytes": used, "total_bytes": total, "pct": round(pct, 2)}
 
     files = []
@@ -2470,7 +2471,9 @@ def api_v1_payload(d):
         "session_bytes": d.get("sess"),
         "chunks_last_minute": d.get("chunks"),
         "uptime_seconds": int(time.time() - bbdata.START_TIME),
-        "memory": gauge(mem),
+        # cache_bytes is the page cache charged to the container, which is what
+        # docker stats adds on top of used_bytes and a dedup scan fills.
+        "memory": dict(gauge(mem) or {}, cache_bytes=mem[3]) if mem and len(mem) > 3 and mem[3] is not None else gauge(mem),
         "memory_by_process": d.get("memory_by_process"),
         "swap": gauge(swap),
         "backup": {"done_bytes": b.get("done"), "total_bytes": b.get("total"),
@@ -2782,7 +2785,8 @@ def metrics_text(api):
     ih = api.get("inherit") or {}
     g("inherit_pct", ih.get("pct"), "Percent of an inherit of the backup state done; absent when none is running")
     m = api.get("memory") or {}
-    g("memory_used_bytes", m.get("used_bytes"), "Container memory in use")
+    g("memory_used_bytes", m.get("used_bytes"), "Container memory in use by its processes (anon), not counting the page cache")
+    g("memory_cache_bytes", m.get("cache_bytes"), "Page cache charged to the container; what docker stats adds on top of used")
     g("memory_total_bytes", m.get("total_bytes"), "Container memory limit or host total")
     sw = api.get("swap") or {}
     g("swap_used_bytes", sw.get("used_bytes"), "Swap in use")
@@ -3684,9 +3688,13 @@ async function tick(){
                   (d.perf.large_kbit/1000).toFixed(1)+' Mbit/s</span>' : '']
       ]],
       ['System', [
+        // The cache goes inline, since it is the answer to "why does docker
+        // stats say more": the processes' own figure is the gauge, the cache
+        // is what the kernel charged for files the client has read.
         ['mem', gaugeHtml('Mem', d.mem, false,
                   d.memory_by_process && d.memory_by_process.length
-                    ? 'Largest: ' + esc(d.memory_by_process[0].name) : '')],
+                    ? 'Largest: ' + esc(d.memory_by_process[0].name) : '',
+                  d.mem && d.mem.cache_str ? '+ ' + esc(d.mem.cache_str) + ' cache' : '')],
         ['swap', gaugeHtml('Swap', d.swap, false)]
       ]]
     ];
