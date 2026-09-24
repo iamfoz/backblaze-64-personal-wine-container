@@ -189,7 +189,19 @@ if date +%s%N 2>/dev/null | grep -qE '^[0-9]{16,}$'; then
 else
   has "$DR" "D: read speed not measured (could not read .*, or no high-resolution clock)" "drives: without a high-resolution clock the read speed is not invented"
 fi
-has "$DR" "E: read speed not measured: no file over 64 MB within five levels" "drives: no large file means no measurement, said plainly"
+has "$DR" "E: read speed not measured: no file over 64 MB within 3 levels" "drives: no large file means no measurement, said plainly, three levels by default"
+# The depth setting: a file four levels down is missed at the default and found
+# with "until a file is found"; the conf file is what the Settings tab writes.
+mkdir -p "$FX/drive_e/a/b/c"; dd if=/dev/zero of="$FX/drive_e/a/b/c/deep.mkv" bs=1M count=0 seek=200 2>/dev/null
+DRS="$(cd "$FX" && sh -c 'PREFIX="$1"; BZ="$2"; OK(){ echo "[ok] $*"; }; WARN(){ echo "[warn] $*"; }; BAD(){ echo "[FAIL] $*"; }; NOTE(){ echo "  $*"; }; sed "s#/config/bb-api/doctor.json#$4#" "$3" > "$4.sh"; . "$4.sh"' _ "$PFX" "$BZ" "$DROP" "$FX/doctor.json" 2>&1)"
+has "$DRS" "E: read speed not measured: no file over 64 MB within 3 levels" "drives: a file four levels down is not found at the default depth"
+printf '{"read_depth": 3, "read_until_found": true}\n' > "$FX/doctor.json"
+DRS="$(cd "$FX" && sh -c 'PREFIX="$1"; BZ="$2"; OK(){ echo "[ok] $*"; }; WARN(){ echo "[warn] $*"; }; BAD(){ echo "[FAIL] $*"; }; NOTE(){ echo "  $*"; }; . "$4.sh"' _ "$PFX" "$BZ" "$DROP" "$FX/doctor.json" 2>&1)"
+if date +%s%N 2>/dev/null | grep -qE '^[0-9]{16,}$'; then has "$DRS" "E: reads at about [0-9]* MB/s" "drives: with until-found on, the deep file is measured"; fi
+printf '{"read_depth": 4, "read_until_found": false}\n' > "$FX/doctor.json"
+DRS="$(cd "$FX" && sh -c 'PREFIX="$1"; BZ="$2"; OK(){ echo "[ok] $*"; }; WARN(){ echo "[warn] $*"; }; BAD(){ echo "[FAIL] $*"; }; NOTE(){ echo "  $*"; }; . "$4.sh"' _ "$PFX" "$BZ" "$DROP" "$FX/doctor.json" 2>&1)"
+if date +%s%N 2>/dev/null | grep -qE '^[0-9]{16,}$'; then has "$DRS" "E: reads at about [0-9]* MB/s" "drives: a depth of four from the setting finds it too"; fi
+rm -f "$FX/doctor.json"; rm -rf "$FX/drive_e/a"
 has "$DR" "\[ok\] D: the client recognises this drive (id $KNOWN_D)" "drives: a stamp matching the client's record for that letter is recognised"
 has "$DR" "\[warn\] E: the client does not recognise this drive's identity" "drives: a stamp from another install is a warning"
 has "$DR" "record for E: is $KNOWN_E" "drives: and the note names the id the client has for that letter"

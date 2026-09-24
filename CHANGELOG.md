@@ -43,8 +43,11 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   than three: the `sc query` that decided whether to stop first is gone, and a restart is a
   stop followed by a start. Wine helper launches on a schedule are the one thing that changed
   on FozStore before the file errors and service deaths of 23 and 24 September began.
-- bb-doctor's read-speed sample looks five levels below a drive root rather than three, under a
-  twenty-second limit, since shares are often share/category/year/title/file.
+- How deep bb-doctor's read-speed sample looks for a large file is a setting: a bb-doctor panel
+  on the Settings tab holds the number of levels (three by default) and a switch to search until a
+  file is found, whatever the depth. The search is bounded in time either way, and the doctor's
+  note says how far it looked. Also `DOCTOR_READ_DEPTH` for the console. Travels in the settings
+  export.
 - Every Wine call the service watch and bb-doctor's service repair make is bounded, and a hung
   helper is killed with what it started: an `sc query` sat for 53 minutes on 24 September and
   the watch waited behind it while the service stayed down.

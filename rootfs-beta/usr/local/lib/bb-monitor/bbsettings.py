@@ -10,6 +10,7 @@
 #   quiet_hours     the windows and the switch
 #   warnings        dismissed warnings and hidden kinds
 #   recovery        the automatic-recovery switch, when set on the page
+#   doctor          bb-doctor's read-speed search depth
 #   client          the Backblaze client's own writable settings, as values;
 #                   import writes them back through bzcli one at a time
 #
@@ -38,11 +39,11 @@
 
 import base64, hashlib, hmac, json, os, time
 
-import bbapi, bbconfig, bbdismiss, bbnotify, bbquiet, bbrecover
+import bbapi, bbconfig, bbdismiss, bbdoctor, bbnotify, bbquiet, bbrecover
 
 FORMAT = "bb64-settings"
 VERSION = 1
-SECTIONS = ("api_keys", "notifications", "quiet_hours", "warnings", "recovery", "client")
+SECTIONS = ("api_keys", "notifications", "quiet_hours", "warnings", "recovery", "doctor", "client")
 SECRET_SECTIONS = ("api_keys", "notifications")
 
 KDF = {"name": "scrypt", "n": 1 << 15, "r": 8, "p": 1}
@@ -153,6 +154,7 @@ def export(passphrase=None, build=None):
     stored = bbrecover.load()
     if stored:
         doc["sections"]["recovery"] = {"watchdog": stored["enabled"]}
+    doc["sections"]["doctor"] = bbdoctor.load()
     client = _client_settings()
     if client:
         doc["sections"]["client"] = {"settings": client}
@@ -292,6 +294,9 @@ def import_(doc, passphrase=None, sections=None, write_client=None):
         if not isinstance(wd, bool):
             raise ValueError("recovery.watchdog must be true or false")
         plan.append(("recovery", lambda v=wd: (bbrecover.save(v), None)[1]))
+    if "doctor" in want and isinstance(secs.get("doctor"), dict):
+        bbdoctor.load()   # the store must be reachable; save() validates the values
+        plan.append(("doctor", lambda c=secs["doctor"]: (bbdoctor.save(c), None)[1]))
     if "client" in want and isinstance(secs.get("client"), dict):
         values = secs["client"].get("settings") or {}
         if not isinstance(values, dict):

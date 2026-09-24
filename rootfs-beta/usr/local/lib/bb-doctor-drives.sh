@@ -92,13 +92,30 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
     # one or two were ever busy (2026-09-22). 64 MB from a quarter of the way
     # into one large file, so a file the client just read is less likely to
     # come from cache; the figure is an upper bound on what the pass will see.
-    # Five levels down, bounded to twenty seconds: shares are often
-    # share/category/year/title/file, which three levels missed. find stops
-    # at the first match, so a large file near the top costs almost nothing.
-    _big="$(timeout 20 find "$_root" -maxdepth 5 -type f -size +67108864c 2>/dev/null | head -1)"
+    # How deep to look is a setting (Settings tab, or DOCTOR_READ_DEPTH):
+    # three levels by default, or until a file is found. Either way the search
+    # is bounded in time, because a share with millions of small files and no
+    # large one would otherwise hold the doctor for minutes; find stops at the
+    # first match, so a large file near the top costs almost nothing.
+    _rs_conf="/config/bb-api/doctor.json"
+    _rs_depth="${DOCTOR_READ_DEPTH:-3}"
+    _rs_until=""
+    if [ -r "$_rs_conf" ]; then
+        _rs_v="$(sed -n 's/.*"read_depth": *\([0-9][0-9]*\).*/\1/p' "$_rs_conf" | head -1)"
+        [ -n "$_rs_v" ] && _rs_depth="$_rs_v"
+        grep -q '"read_until_found": *true' "$_rs_conf" && _rs_until=1
+    fi
+    case "$_rs_depth" in ''|*[!0-9]*|0) _rs_depth=3 ;; esac
+    if [ -n "$_rs_until" ]; then
+        _big="$(timeout 60 find "$_root" -type f -size +67108864c 2>/dev/null | head -1)"
+        _rs_how="anywhere under ${_root} (60 s limit)"
+    else
+        _big="$(timeout 20 find "$_root" -maxdepth "$_rs_depth" -type f -size +67108864c 2>/dev/null | head -1)"
+        _rs_how="within ${_rs_depth} level$([ "$_rs_depth" = 1 ] || echo s) of ${_root} (20 s limit; the depth is a setting on the Settings tab)"
+    fi
     _fs="$(df -T "$_root" 2>/dev/null | awk 'NR==2{print $2}')"
     if [ -z "$_big" ]; then
-        NOTE "${_letter}: read speed not measured: no file over 64 MB within five levels of ${_root} (or the search hit its 20 s limit)"
+        NOTE "${_letter}: read speed not measured: no file over 64 MB ${_rs_how}"
     else
         _sz="$(stat -c %s "$_big" 2>/dev/null || echo 0)"
         _skip=$(( _sz / 4 / 1048576 ))

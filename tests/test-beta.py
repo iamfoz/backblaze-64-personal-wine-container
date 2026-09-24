@@ -976,9 +976,10 @@ def _point(dirpath):
     bbdismiss.STORE = dirpath + "/dismissed.json"; bbdismiss._cache = None
 _src = os.path.join(FIX, "xfer-src"); _dst = os.path.join(FIX, "xfer-dst")
 os.makedirs(_src); os.makedirs(_dst)
-import bbrecover
+import bbrecover, bbdoctor
 def _point_recover(dirpath):
     bbrecover.STORE = dirpath + "/watchdog.json"; bbrecover.STATE = dirpath + "/wd-state"
+    bbdoctor.STORE = dirpath + "/doctor.json"
 _point(_src); _point_recover(_src)
 ok(bbrecover.load() is None and bbrecover.state()["source"] == "variable", "with no stored switch the variable decides")
 bbrecover.save(True)
@@ -988,6 +989,13 @@ ok(open(bbrecover.STORE).read().strip() == '{"enabled": true}', "the store is on
 bbrecover.clear()
 ok(bbrecover.load() is None, "clearing hands the decision back to the variable")
 bbrecover.save(False)
+ok(bbdoctor.load() == {"read_depth": 3, "read_until_found": False}, "bb-doctor settings default to three levels, stop there")
+bbdoctor.save({"read_depth": 7, "read_until_found": True})
+ok(bbdoctor.load() == {"read_depth": 7, "read_until_found": True}, "and store what the page sets")
+try:
+    bbdoctor.save({"read_depth": 0}); ok(False, "a depth of zero is refused")
+except ValueError:
+    ok(True, "a depth of zero is refused")
 _rec, _secret = bbapi.create("laptop", ["read"])
 bbapi.set_enabled(False)
 bbnotify.save({"endpoints": [{"kind": "ntfy", "label": "phone", "url": "https://example.invalid/topic",
@@ -1038,6 +1046,7 @@ ok(any(a.startswith("api_keys") for a in _report["applied"]) and "client: 2 writ
    "the report says what was applied: %r" % _report["applied"])
 ok(_sealed["sections"]["recovery"] == {"watchdog": False} and bbrecover.load() == {"enabled": False},
    "the recovery switch travels and is restored")
+ok(bbdoctor.load() == {"read_depth": 7, "read_until_found": True}, "bb-doctor's settings travel and are restored")
 try:
     bbsettings.import_(json.loads(json.dumps(_sealed)), "wrong"); ok(False, "a wrong passphrase is refused")
 except ValueError as exc:

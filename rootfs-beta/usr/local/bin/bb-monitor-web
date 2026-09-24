@@ -30,6 +30,7 @@ import bbconfig
 import bbctl
 import bbdata
 import bbdismiss
+import bbdoctor
 import bbrecover
 import bbsettings
 import bbreport
@@ -980,6 +981,20 @@ SETTINGS_HTML = """<!doctype html>
   <div id="notices-err" class="err" hidden></div>
 </div>
 
+<h2>bb-doctor</h2>
+<div class="panel" id="doctor">
+  <p class="dim">The read-speed sample in bb-doctor's Source drives section reads 64 MB from the first
+  file over 64 MB it finds under each drive root. How far down it looks is a trade: three levels is
+  quick but misses a share laid out as share/category/year/title/file; searching until a file turns
+  up finds it, but on a share with millions of small files and no large one the search runs to its
+  sixty-second limit for every such drive.</p>
+  <label for="doc-depth">Look this many levels below each drive root</label>
+  <div class="row"><input type="number" id="doc-depth" min="1" max="32" style="width:6em"> <span class="dim">levels</span></div>
+  <div class="row"><label class="switch"><input type="checkbox" id="doc-until"> <span>Search until a file is found, whatever the depth</span></label></div>
+  <div class="row" style="margin-top:12px"><button id="doc-save">Save bb-doctor settings</button><span class="dim" id="doc-msg"></span></div>
+  <div id="doc-err" class="err" hidden></div>
+</div>
+
 <h2>Automatic recovery</h2>
 <div class="panel" id="recover">
   <p class="dim">The watchdog checks the backup every five minutes and acts on what bb-health reports:
@@ -1431,6 +1446,26 @@ try {
   var t = localStorage.getItem('bbMonitorTheme');
   if(t) document.documentElement.setAttribute('data-theme', t);
 } catch(e){}
+// ---- bb-doctor settings ----
+function renderDoctor(d){
+  document.getElementById('doc-depth').value = d.read_depth;
+  document.getElementById('doc-until').checked = !!d.read_until_found;
+  document.getElementById('doc-depth').disabled = !!d.read_until_found;
+}
+function loadDoctor(){
+  return fetch('manage/doctor', {cache:'no-store'}).then(function(r){ return r.json(); }).then(renderDoctor);
+}
+document.getElementById('doc-until').addEventListener('change', function(e){ document.getElementById('doc-depth').disabled = e.target.checked; });
+document.getElementById('doc-save').addEventListener('click', function(){
+  var err = document.getElementById('doc-err'), msg = document.getElementById('doc-msg');
+  err.hidden = true; msg.textContent = '';
+  post('manage/doctor', {read_depth: Number(document.getElementById('doc-depth').value || 3),
+                         read_until_found: document.getElementById('doc-until').checked}).then(function(res){
+    if(!res.ok){ err.textContent = res.body.error || 'Could not save.'; err.hidden = false; return; }
+    renderDoctor(res.body); msg.textContent = 'Saved.'; setTimeout(function(){ msg.textContent = ''; }, 1500);
+  });
+});
+
 // ---- automatic recovery ----
 function wdStateText(d){
   var src = d.source === 'setting' ? 'set here' : ('following ENABLE_WATCHDOG=' + (d.variable ? 'true' : 'false'));
@@ -1510,6 +1545,7 @@ loadNotify();
 loadQuiet();
 loadNotices();
 loadWatchdog();
+loadDoctor();
 setInterval(loadQuiet, 30000);
 setInterval(loadWatchdog, 30000);
 </script>
@@ -4392,6 +4428,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/manage/watchdog":
             self._json(200, dict(bbrecover.state(), schema=bbapi.SCHEMA))
             return True
+        if path == "/manage/doctor":
+            self._json(200, dict(bbdoctor.load(), schema=bbapi.SCHEMA))
+            return True
         if path == "/manage/notices":
             # What has been dismissed and what is hidden, with the table of
             # kinds, for the Settings tab. The Status tab does not need this
@@ -4655,6 +4694,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": str(exc)})
                 return
             self._json(200, {"schema": bbapi.SCHEMA, "config": conf, "state": _quiet.state(conf)})
+            return
+        if path == "/manage/doctor":
+            try:
+                conf = bbdoctor.save(body)
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(200, dict(conf, schema=bbapi.SCHEMA))
             return
         if path == "/manage/watchdog":
             if body.get("enabled") is None:
