@@ -265,14 +265,17 @@ wine_bounded() {
     timeout -k 10 "$1" setsid wine "$2" "$3" "$4" 2>/dev/null
 }
 
-# Clear the phantom first when the manager still shows it running, or the
-# start is ignored; then start. Output goes nowhere: the result is checked
-# by bzserv_running afterwards, and the service's own log has the detail.
+# Stop, then start. The stop clears the record the service manager keeps
+# when the process has died under it, which otherwise makes the start a
+# no-op; on a service that is already stopped it fails harmlessly. Two Wine
+# launches instead of three: the query that used to decide whether to stop
+# is the one helper that hung for 53 minutes, and this path only runs once
+# the process table has already said the service is gone. Output goes
+# nowhere: the result is checked by bzserv_running afterwards, and the
+# service's own log has the detail.
 bzserv_start() {
-    if wine_bounded 60 sc query bzserv | grep -q 'RUNNING'; then
-        wine_bounded 60 net stop bzserv >/dev/null
-        sleep 5
-    fi
+    wine_bounded 60 net stop bzserv >/dev/null
+    sleep 3
     wine_bounded 120 net start bzserv >/dev/null
 }
 

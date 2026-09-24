@@ -92,10 +92,13 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
     # one or two were ever busy (2026-09-22). 64 MB from a quarter of the way
     # into one large file, so a file the client just read is less likely to
     # come from cache; the figure is an upper bound on what the pass will see.
-    _big="$(find "$_root" -maxdepth 3 -type f -size +67108864c 2>/dev/null | head -1)"
+    # Five levels down, bounded to twenty seconds: shares are often
+    # share/category/year/title/file, which three levels missed. find stops
+    # at the first match, so a large file near the top costs almost nothing.
+    _big="$(timeout 20 find "$_root" -maxdepth 5 -type f -size +67108864c 2>/dev/null | head -1)"
     _fs="$(df -T "$_root" 2>/dev/null | awk 'NR==2{print $2}')"
     if [ -z "$_big" ]; then
-        NOTE "${_letter}: read speed not measured: no file over 64 MB within three levels of ${_root}"
+        NOTE "${_letter}: read speed not measured: no file over 64 MB within five levels of ${_root} (or the search hit its 20 s limit)"
     else
         _sz="$(stat -c %s "$_big" 2>/dev/null || echo 0)"
         _skip=$(( _sz / 4 / 1048576 ))

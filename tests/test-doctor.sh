@@ -189,7 +189,7 @@ if date +%s%N 2>/dev/null | grep -qE '^[0-9]{16,}$'; then
 else
   has "$DR" "D: read speed not measured (could not read .*, or no high-resolution clock)" "drives: without a high-resolution clock the read speed is not invented"
 fi
-has "$DR" "E: read speed not measured: no file over 64 MB" "drives: no large file means no measurement, said plainly"
+has "$DR" "E: read speed not measured: no file over 64 MB within five levels" "drives: no large file means no measurement, said plainly"
 has "$DR" "\[ok\] D: the client recognises this drive (id $KNOWN_D)" "drives: a stamp matching the client's record for that letter is recognised"
 has "$DR" "\[warn\] E: the client does not recognise this drive's identity" "drives: a stamp from another install is a warning"
 has "$DR" "record for E: is $KNOWN_E" "drives: and the note names the id the client has for that letter"
