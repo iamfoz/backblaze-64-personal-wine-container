@@ -275,7 +275,8 @@ It reports one of:
   chunk, or the pass has been waiting 20 minutes for children that no longer exist. The pass
   has no timeout for a lost child, so it waits forever.
 - `DOWN`: the client is up but its service, bzserv, is not running, so no pass can start. The
-  container restarts the service itself; this state shows that it had to.
+  container's service watch restarts it within five minutes; if it is still down half an hour
+  later the watchdog starts it itself. This state shows that one of them had to.
 
 The Settings tab's Backup and restore panel exports everything the container keeps for itself as
 one JSON file, and imports one: API keys, notification endpoints and events, quiet hours, warning
@@ -305,6 +306,10 @@ flagged.
 Set `ENABLE_WATCHDOG=true` to have the container fix both conditions itself. It checks
 every five minutes and takes the smallest action that clears the fault: deleting the stale
 lock for `WEDGE`, or killing the upload children and the pass for `HANG` so that bzserv starts a fresh pass.
+A `DOWN` is left to the service watch the first time; if the service is still down when the
+cooldown ends, the watchdog starts it with the same bounded `net start` the watch uses, so a
+watch that has died is not the only thing standing between a dead service and a backup that
+never resumes.
 Every action is logged, shown as a warning row on the Status tab's timeline, sent as an
 "Automatic recovery acted" notification and counted in the metrics. After detecting a fault it waits 30 minutes before acting
 again - whether or not the recovery succeeded - so a fault it cannot fix produces one

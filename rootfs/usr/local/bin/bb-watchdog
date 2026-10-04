@@ -7,6 +7,14 @@
 #          than a container restart, and bb-health has already confirmed no
 #          bztransmit has been running long enough to own the lock.
 #
+#   DOWN   Report it and leave the first restart to startapp's service watch,
+#          which runs every five minutes. If the service is still down when
+#          the cooldown ends, start it from here with the same bounded net
+#          stop and net start the watch uses. The watch is one bash loop; a
+#          build of 2026-09-28 broke it so that it looped instead of logging,
+#          and two hosts then sat DOWN for six and seven hours while this
+#          branch reported the state every half hour and did nothing about it.
+#
 #   HANG   Kill the push children and the backup pass that launched them.
 #          Killing the children alone used to be enough; since client 10.0.3
 #          the pass waits for a child's result file with no timeout, so a child
@@ -33,9 +41,9 @@ Recovers the backup automatically when bb-health reports a fault.
 BB-WATCHDOG [--version]
 
 Started by the container when ENABLE_WATCHDOG is true.  Clears a stale
-four-hour lock, or restarts a backup pass stuck on its upload children.
-Actions are written to
-the container log.
+four-hour lock, restarts a backup pass stuck on its upload children, and
+starts the Backblaze service when it has stayed down past one cooldown.
+Actions are written to the container log and the recovery log.
 
   ENABLE_WATCHDOG      Must be true, or the watchdog stays idle.
   WATCHDOG_INTERVAL    Seconds between checks.  Default 300.
@@ -56,6 +64,7 @@ INTERVAL="${WATCHDOG_INTERVAL:-300}"
 COOLDOWN_MIN="${COOLDOWN_MIN:-30}"
 STALL_MIN="${STALL_MIN:-20}"
 last_action=0
+down_seen=0        # a DOWN was acted on at the previous action, so it has persisted
 
 # All three must be plain positive integers. sleep rejects a suffixed value such
 # as "5 min" and returns immediately, which without validation turns this loop
@@ -87,6 +96,28 @@ proc_pids() {
     done
 }
 
+# The service, by the process table: Wine's service manager reported bzserv
+# RUNNING for an hour after the process had gone (2026-09-23).
+bzserv_up() { [ -n "$(proc_pids 'bzserv.exe')" ]; }
+
+# Every Wine helper is bounded and killed with the processes it started: an
+# "sc query" sat for 53 minutes on 2026-09-24. The stop clears the record the
+# service manager keeps for a process that died under it, without which the
+# start is a no-op; on a stopped service it fails harmlessly.
+wine_bounded() { timeout -k 10 "$1" setsid wine "$2" "$3" "$4" >/dev/null 2>&1; }
+start_bzserv() {
+    wine_bounded 60 net stop bzserv
+    sleep 3
+    wine_bounded 120 net start bzserv
+    n=0
+    while [ "$n" -lt 12 ]; do
+        bzserv_up && return 0
+        sleep 5
+        n=$((n + 1))
+    done
+    bzserv_up
+}
+
 cooling_down() {
     now=$(date +%s)
     [ $(( now - last_action )) -lt $(( COOLDOWN_MIN * 60 )) ]
@@ -110,7 +141,7 @@ while true; do
 
     status="$(bb-health 2>/dev/null)" || true
     case "$status" in
-        OK*|"") continue ;;
+        OK*|"") down_seen=0; continue ;;
     esac
 
     if cooling_down; then
@@ -125,6 +156,7 @@ while true; do
 
     case "$status" in
         WEDGE*)
+            down_seen=0
             lock="/config/wine/dosdevices/c:/ProgramData/Backblaze/bzdata/bzbackup/lock_bzfileid_4_hour_lock.lck"
             act "detected: ${status}"
             if rm -f "$lock" 2>/dev/null; then
@@ -134,6 +166,7 @@ while true; do
             fi
             ;;
         HANG*)
+            down_seen=0
             act "detected: ${status}"
             # Children first, then every other bztransmit, which is the pass
             # and any sidecar. The pass must go: it never gives up waiting for
@@ -168,10 +201,21 @@ while true; do
             fi
             ;;
         DOWN*)
-            # startapp watches the service itself and restarts it, with the
-            # environment the client was started under. Nothing to add here
-            # beyond making the state visible in this log.
-            act "detected: ${status} - the container restarts the service on its own; see the startapp log"
+            # startapp's service watch restarts the service within five
+            # minutes, with the environment the client was started under, so
+            # the first sighting is left to it. A second sighting one cooldown
+            # later means the watch did not manage it, or is not there.
+            if [ "$down_seen" -eq 0 ]; then
+                down_seen=1
+                act "detected: ${status} - the service watch restarts it; if it is still down in ${COOLDOWN_MIN}m the watchdog starts it"
+            else
+                act "detected: ${status} - still down after ${COOLDOWN_MIN}m, starting the service"
+                if start_bzserv; then
+                    act "recovered: started bzserv; a backup pass follows"
+                else
+                    act "could NOT start bzserv - see bzlogs/bzserv; next attempt in ${COOLDOWN_MIN}m"
+                fi
+            fi
             ;;
         *)
             say "unrecognised health status: ${status}"

@@ -243,6 +243,14 @@ def build_items():
     for i, p in enumerate(newest_logs(TLOG), start=1):
         items.append(("backblaze/bztransmit_%d.log" % i, "transfer log (most recent)",
                       lambda p=p: tail_file(p)))
+    # The service's own log: when bzserv dies it is the one place that may say
+    # why, and the question behind most "the backup stopped" reports.
+    for p in newest_logs(os.path.join(BZ, "bzlogs/bzserv"), count=1):
+        items.append(("backblaze/bzserv.log", "service log (most recent)", lambda p=p: tail_file(p)))
+    # What the container did about faults: the watchdog's, the service watch's
+    # and bb-doctor --fix's actions, one line each with a timestamp.
+    items.append(("container/recovery.log", "automatic recovery actions",
+                  lambda: tail_file("/config/bb-api/recovery.log")))
     return items
 
 # Only variables this project defines are shown by value; anything else could be a

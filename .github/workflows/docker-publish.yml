@@ -65,6 +65,8 @@ jobs:
         run: bash tests/test-health.sh
       - name: Test the doctor's lock repair gate
         run: bash tests/test-doctor.sh
+      - name: Test the watchdog starts a service that stays down
+        run: bash tests/test-watchdog.sh
       # The beta overlay: key scopes, the file-name gate on /api/v1, the settings
       # whitelist, the log parsers, quiet hours and notifications.
       - name: Test the beta monitor, API and notifications

@@ -11,6 +11,16 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 
 ### Added
 
+- The watchdog starts the Backblaze service itself when it has stayed down past one cooldown.
+  The first sighting of `DOWN` is still left to the service watch, which acts within five
+  minutes; a second sighting half an hour later means the watch did not manage it, and the
+  watchdog then runs the same bounded `net stop` and `net start`, polls the process table for
+  a minute and records the outcome. Two hosts sat `DOWN` for six and seven hours with the
+  broken watch of the 28 September build while the watchdog reported the state every half
+  hour, which is the gap this closes.
+- Diagnostic bundles now carry the recovery log (what the watchdog, the service watch and
+  `bb-doctor --fix` did, with timestamps) and the tail of the bzserv service log, which is the
+  one place that may say why the service stopped. Both go through the bundle's sanitiser.
 - Every recovery action the container takes for itself is now visible where people look: a
   warning-coloured row on the Status tab's timeline, an "Automatic recovery acted"
   notification event, a `recovery` list in the API and a `bb64_recovery_actions_24h` metric.
