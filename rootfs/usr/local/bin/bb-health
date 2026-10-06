@@ -51,7 +51,7 @@ usage() {
     cat <<'EOF'
 Reports whether the backup is running normally.
 
-BB-HEALTH [--version]
+BB-HEALTH [--version | --orphans]
 
 Displays one of:
 
@@ -61,6 +61,10 @@ Displays one of:
   WEDGE        A stale four-hour lock is blocking every pass.
 
 Exits with 0 for OK, otherwise 1.  Used by the container health check.
+
+With --orphans, lists Backblaze helper processes (bzfilelist, bztransmit)
+whose parent has exited and that have run on for STALL_MIN minutes since,
+one per line as "pid age-in-minutes name", and nothing when there are none.
 EOF
 }
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
@@ -131,6 +135,37 @@ oldest_proc_min() {
     done
     echo "$oldest"
 }
+
+# Helpers whose parent has gone. bzfilelist is started by the pass and
+# bztransmit by bzserv; when the parent exits first, the child is reparented to
+# the container's init, pid 1, and nothing waits for its result any more. A
+# scanner sat like that for eight and a half hours on 2026-10-06, blocked on a
+# wineserver reply, and a chunk child for four hours in September. Wine's own
+# services (wineserver, services.exe) are also children of pid 1 and are not
+# matched. One line per orphan older than STALL_MIN: "pid age name".
+orphans() {
+    up="$(cut -d. -f1 /proc/uptime 2>/dev/null)"
+    tick="$(getconf CLK_TCK 2>/dev/null)"
+    case "$up" in ''|*[!0-9]*) return 0 ;; esac
+    case "$tick" in ''|*[!0-9]*) tick=100 ;; esac
+    for c in /proc/[0-9]*/cmdline; do
+        [ -r "$c" ] || continue
+        cmd="$(tr '\0' ' ' < "$c" 2>/dev/null)"
+        case "$cmd" in *bzfilelist.exe*) name=bzfilelist.exe ;; *bztransmit.exe*) name=bztransmit.exe ;; *) continue ;; esac
+        set -- $(sed 's/^.*) //' "${c%/cmdline}/stat" 2>/dev/null)
+        [ "${2:-}" = 1 ] || continue
+        st="${20:-}"
+        case "$st" in ''|*[!0-9]*) continue ;; esac
+        age=$(( ( up - st / tick ) / 60 ))
+        [ "$age" -ge "$STALL_MIN" ] || continue
+        p="${c#*/proc/}"
+        echo "${p%/cmdline} $age $name"
+    done
+}
+if [ "${1:-}" = "--orphans" ]; then
+    orphans
+    exit 0
+fi
 
 # Age of a file in whole minutes, or empty if it cannot be read. This uses stat
 # and epoch arithmetic rather than find's -newermt date parsing. A stall check has

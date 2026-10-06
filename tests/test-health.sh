@@ -47,8 +47,9 @@ mkproc(){ rm -rf "$FX/proc"; mkdir -p "$FX/proc"; echo "$UP.00 $UP.00" > "$FX/pr
 # the 20th field after the comm). mkproc assigns pids from 100 in argument
 # order. Without a stat file the process age is unreadable, and bb-health must
 # treat it as old enough to own the lock (fail safe).
-procage(){ printf '%s (bztransmit.exe) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 %s 0\n' \
-  "$1" $(( (UP - $2) * 100 )) > "$FX/proc/$1/stat"; }
+# The third argument is the parent pid: 1 makes an orphan, otherwise a live parent.
+procage(){ printf '%s (bztransmit.exe) S %s 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 %s 0\n' \
+  "$1" "${3:-99}" $(( (UP - $2) * 100 )) > "$FX/proc/$1/stat"; }
 run(){ env "$@" "$FX/bb-health" 2>/dev/null | awk '{print $1}'; }
 old(){ touch -t 202601010000 "$1"; }
 # Set a file's mtime to AGE_S seconds ago (touch -t cannot express a relative
@@ -205,5 +206,14 @@ mkproc "bzbui.exe -noquiet"; procage 100 600
 ok "DOWN" "$(run)" "with no pass to stop the outage reads as DOWN"
 
 echo
+# 28. orphans: a helper reparented to pid 1 and past STALL_MIN is listed; a
+# young orphan, a live-parented helper and Wine's own pid-1 children are not.
+mkproc "bzfilelist.exe" "bztransmit.exe -threadpush foo.xml" "bzfilelist.exe" "wineserver" "bzserv.exe"
+procage 100 30000 1; procage 101 600 1; procage 102 30000; procage 103 30000 1; procage 104 30000 1
+ok "100 500 bzfilelist.exe" "$(env "$FX/bb-health" --orphans 2>/dev/null | tr '\n' ';' | sed 's/;$//')" \
+   "--orphans lists only the old helper whose parent has gone"
+ok "OK" "$(run)" "and an orphan alone does not change the health state"
+ok "" "$(env STALL_MIN=600 "$FX/bb-health" --orphans 2>/dev/null)" "a longer STALL_MIN keeps it off the list"
+
 echo "$FAILED failures"
 exit $(( FAILED > 0 ? 1 : 0 ))

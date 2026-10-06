@@ -24,7 +24,7 @@ sed -e 's#COOLDOWN_MIN \* 60#COOLDOWN_MIN * 1#' \
 chmod +x "$FX/bb-watchdog"
 cat > "$FX/bin/bb-health" <<EOS
 #!/bin/sh
-cat "$FX/health"
+case "\$1" in --orphans) cat "$FX/orphans" 2>/dev/null ;; *) cat "$FX/health" ;; esac
 EOS
 cat > "$FX/bin/wine" <<EOS
 #!/bin/sh
@@ -79,6 +79,16 @@ echo "OK" > "$FX/health"
 ( sleep 3; echo "DOWN the Backblaze service (bzserv) is not running" > "$FX/health" ) &
 run_watchdog 5
 ok '[ ! -f "$FX/wine.log" ]' "a DOWN after an OK is a first sighting: no Wine call"
+
+# 5. An orphan is stopped on sight, whatever the health state, and recorded.
+rm -f "$FX/wine.log" "$BB_RECOVERY_LOG"
+echo "OK" > "$FX/health"
+sleep 600 & ORPH=$!
+echo "$ORPH 500 bzfilelist.exe" > "$FX/orphans"
+run_watchdog 8
+ok '! kill -0 $ORPH 2>/dev/null' "an orphaned helper is stopped while the health state is OK"
+ok 'grep -q "recovered: stopped orphaned bzfilelist.exe \[$ORPH\], running 500m" "$BB_RECOVERY_LOG"' "and the stop is recorded with its age"
+rm -f "$FX/orphans"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

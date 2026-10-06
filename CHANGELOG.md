@@ -18,6 +18,12 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   comment markers; the rules the client wrote and hand edits are kept byte for byte, the previous
   file is kept beside it, and the managed rules travel in the settings export. From a forum
   user who was maintaining the file by hand.
+- Orphaned helper processes are stopped. A bzfilelist or bztransmit whose parent has exited is
+  reparented to the container's init and nothing waits for it; one scanner sat like that for
+  eight and a half hours on the test host, blocked on a wineserver reply, and a chunk child for
+  four hours in September. `bb-health --orphans` lists those older than `STALL_MIN`, the
+  watchdog stops them every cycle and records it, and `bb-doctor` warns about them and stops
+  them with `--fix`. Wine's own services, which are also children of init, are not matched.
 - The watchdog starts the Backblaze service itself when it has stayed down past one cooldown.
   The first sighting of `DOWN` is still left to the service watch, which acts within five
   minutes; a second sighting half an hour later means the watch did not manage it, and the

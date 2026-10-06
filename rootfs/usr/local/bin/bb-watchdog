@@ -15,6 +15,13 @@
 #          and two hosts then sat DOWN for six and seven hours while this
 #          branch reported the state every half hour and did nothing about it.
 #
+#   ORPHAN A bzfilelist or bztransmit whose parent exited and that has run on
+#          for STALL_MIN minutes since (bb-health --orphans). Nothing waits
+#          for it: the pass that started it is gone, and a fresh pass has its
+#          own. Stopped on sight, outside the cooldown, since each is a one-off
+#          and the backup is not at fault. A scanner sat like that for eight
+#          hours on 2026-10-06, blocked on a wineserver reply.
+#
 #   HANG   Kill the push children and the backup pass that launched them.
 #          Killing the children alone used to be enough; since client 10.0.3
 #          the pass waits for a child's result file with no timeout, so a child
@@ -41,8 +48,9 @@ Recovers the backup automatically when bb-health reports a fault.
 BB-WATCHDOG [--version]
 
 Started by the container when ENABLE_WATCHDOG is true.  Clears a stale
-four-hour lock, restarts a backup pass stuck on its upload children, and
-starts the Backblaze service when it has stayed down past one cooldown.
+four-hour lock, restarts a backup pass stuck on its upload children, stops
+helper processes left behind by a pass that exited, and starts the Backblaze
+service when it has stayed down past one cooldown.
 Actions are written to the container log and the recovery log.
 
   ENABLE_WATCHDOG      Must be true, or the watchdog stays idle.
@@ -138,6 +146,20 @@ while true; do
         echo disabled > /tmp/.bb-watchdog-state 2>/dev/null
         exit 0
     fi
+
+    # Orphans first, every cycle: not a health state, so not under the
+    # cooldown, and killing one cannot disturb a live pass.
+    bb-health --orphans 2>/dev/null | while read -r opid oage oname; do
+        [ -n "$opid" ] || continue
+        kill "$opid" 2>/dev/null
+        sleep 5
+        if kill -0 "$opid" 2>/dev/null; then kill -9 "$opid" 2>/dev/null; sleep 1; fi
+        if kill -0 "$opid" 2>/dev/null; then
+            act "could NOT stop orphaned ${oname} [${opid}] - restart the container"
+        else
+            act "recovered: stopped orphaned ${oname} [${opid}], running ${oage}m after the pass that started it exited"
+        fi
+    done
 
     status="$(bb-health 2>/dev/null)" || true
     case "$status" in

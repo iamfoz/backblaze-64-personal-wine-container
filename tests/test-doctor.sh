@@ -33,7 +33,7 @@ sed -e "s#/proc/\[0-9\]\*/cmdline#$FX/proc/[0-9]*/cmdline#g" \
     -e "s#/proc/uptime#$FX/proc/uptime#g" \
     "$SRC" > "$FX/bb-doctor"
 chmod +x "$FX/bb-doctor"
-printf '#!/bin/sh\necho OK\n' > "$FX/bin/bb-health"
+printf '#!/bin/sh\ncase "$1" in --orphans) cat "%s/orphans" 2>/dev/null ;; *) echo OK ;; esac\n' "$FX" > "$FX/bin/bb-health"
 printf '#!/bin/sh\nexit 0\n' > "$FX/bin/curl"
 chmod +x "$FX/bin/bb-health" "$FX/bin/curl"
 # The doctor bounds its Wine calls with coreutils timeout and util-linux setsid,
@@ -75,8 +75,9 @@ mkproc(){ rm -rf "$FX/proc"; mkdir -p "$FX/proc"; echo "$UP.00 $UP.00" > "$FX/pr
 # the 20th field after the comm). mkproc assigns pids from 100 in argument
 # order. Without a stat file the process age is unreadable, and the doctor must
 # treat it as old enough to own the lock (fail safe).
-procage(){ printf '%s (bztransmit.exe) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 %s 0\n' \
-  "$1" $(( (UP - $2) * 100 )) > "$FX/proc/$1/stat"; }
+# The third argument is the parent pid: 1 makes an orphan, otherwise a live parent.
+procage(){ printf '%s (bztransmit.exe) S %s 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 %s 0\n' \
+  "$1" "${3:-99}" $(( (UP - $2) * 100 )) > "$FX/proc/$1/stat"; }
 agef(){ perl -e 'my $t=time-$ARGV[1]; utime $t,$t,$ARGV[0]' "$1" "$2"; }
 spam(){ for i in $(seq 1 "$1"); do echo "10:00:0$i - Failed to grab fourHourLock lock (DoBackupPass.cpp:111)"; done; }
 # --fix actions are recorded through bb-record.sh into the recovery log the
@@ -177,7 +178,7 @@ has "$(run)" "re-run with --fix to stop the stuck pass" "hang: without --fix the
 [ -d "$FX/proc/101" ] && [ -d "$FX/proc/102" ] && echo "PASS hang: and nothing was stopped" || { echo "FAIL hang: processes stopped without --fix"; FAILED=$((FAILED+1)); }
 has "$(run --fix)" "fixed: stopped the stuck pass and 1 upload child" "hang: --fix stops the child and the pass"
 [ ! -d "$FX/proc/101" ] && [ ! -d "$FX/proc/102" ] && [ -d "$FX/proc/100" ] && echo "PASS hang: both bztransmit gone, bzserv untouched" || { echo "FAIL hang: wrong processes stopped"; FAILED=$((FAILED+1)); }
-printf '#!/bin/sh\necho OK\n' > "$FX/bin/bb-health"
+printf '#!/bin/sh\ncase "$1" in --orphans) cat "%s/orphans" 2>/dev/null ;; *) echo OK ;; esac\n' "$FX" > "$FX/bin/bb-health"
 mkdir -p "$PFX/drive_c/windows/system32" "$PFX/drive_c/windows/syswow64"
 rm -f "$PFX/drive_c/windows/system32/rundll32.exe.manifest" "$PFX/drive_c/windows/syswow64/rundll32.exe.manifest"
 has "$(run)" "\[warn\] supportedOS manifest missing in: system32 syswow64" "manifest: a missing manifest is reported"
@@ -285,5 +286,18 @@ if grep -q "deadbeef\|a279b04955a1845499e60219" <<<"$DF"; then echo "FAIL fix: n
 for L in d e f g h i j k l; do rm -f "${PFX}dosdevices/$L:"; done
 
 echo
+# Orphans: listed by bb-health --orphans (stubbed), warned about, and stopped only with --fix.
+mkproc "bzserv.exe" "bzfilelist.exe"
+echo "101 500 bzfilelist.exe" > "$FX/orphans"
+out="$(run)"
+has "$out" "1 orphaned Backblaze process(es) left by a pass that exited: bzfilelist.exe \[101\] 500m" "orphan: warned about with pid and age"
+[ -d "$FX/proc/101" ] && echo "PASS orphan: not stopped without --fix" || { echo "FAIL orphan: stopped without --fix"; FAILED=$((FAILED+1)); }
+out="$(run --fix)"
+has "$out" "fixed: stopped 1 orphaned process" "orphan: --fix stops it"
+[ -d "$FX/proc/101" ] && { echo "FAIL orphan: --fix left it running"; FAILED=$((FAILED+1)); } || echo "PASS orphan: --fix stopped the process"
+grep -q "doctor	stopped 1 orphaned" "$BB_RECOVERY_LOG" && echo "PASS orphan: the stop is in the recovery log" || { echo "FAIL orphan: not recorded"; FAILED=$((FAILED+1)); }
+rm -f "$FX/orphans"
+has "$(run)" "no orphaned Backblaze processes" "orphan: none means an ok line"
+
 echo "$FAILED failures"
 exit $(( FAILED > 0 ? 1 : 0 ))
