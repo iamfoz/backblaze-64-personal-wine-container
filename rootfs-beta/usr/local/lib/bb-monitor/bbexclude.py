@@ -4,12 +4,12 @@
 # applies each rule to every attached volume, which is what a user mapping
 # twenty Unraid disks wants: one rule excludes \Media\ on all of them, where the
 # GUI's folder exclusions have to be added disk by disk. The client writes the
-# file itself, with its own optional Windows rules, and regenerates it if it is
+# file itself, with its optional Windows rules, and regenerates it if it is
 # removed (its documentation: "Configure custom exclusions using XML").
 #
-# Rules made here live between two comment markers so the client's own rules
-# and anything edited by hand are kept byte for byte; only the block between
-# the markers is rewritten. The file's own format is the contract:
+# Rules made here live between two comment markers so the rules the client
+# wrote and anything edited by hand are kept byte for byte; only the block
+# between the markers is rewritten. The file's format is the contract:
 #
 #   <excludefname_rule plat="win" osVers="*" ruleIsOptional="t"
 #       skipFirstCharThenStartsWith=":\Media\" contains_1="*" contains_2="*"
@@ -18,8 +18,8 @@
 # A file matches a rule when every criterion matches; "*" skips one. The
 # first character of the path is the drive letter, so the prefix starts with
 # ":\". The client's documentation says the prefix is "*" or at least four
-# characters, and that it is the one criterion that prunes cheaply, so the
-# page asks for it first.
+# characters, and that the client tests it before the rest of a rule, so
+# the page asks for it first.
 
 import html, os, re, tempfile
 

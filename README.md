@@ -278,12 +278,12 @@ It reports one of:
   container's service watch restarts it within five minutes; if it is still down half an hour
   later the watchdog starts it itself. This state shows that one of them had to.
 
-The Settings tab's Exclusions panel manages rules in the client's own exclusions file,
+The Settings tab's Exclusions panel manages rules in the exclusions file the client keeps,
 `bzexcluderules_editable.xml`. The client applies each rule to every drive, so one rule excludes a
 folder on every disk you have mapped, where the client's Exclusions window needs the folder added
 drive by drive; a rule can also match an extension, the end of a path, or text the path contains or
-must not contain. The rules made here sit between two comment markers in the file, and the client's
-own rules and any hand edits are left byte for byte. The client reads the file at the start of each
+must not contain. The rules made here sit between two comment markers in the file, and the rules the
+client wrote and any hand edits are left untouched. The client reads the file at the start of each
 pass. The managed rules travel in the settings export.
 
 The Settings tab's Backup and restore panel exports everything the container keeps for itself as

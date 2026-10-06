@@ -12,10 +12,10 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 ### Added
 
 - An Exclusions panel on the Settings tab that creates, edits and deletes rules in the client's
-  own `bzexcluderules_editable.xml`. One rule there excludes a folder, an extension or a path
-  pattern on every mapped drive at once, which is what a backup spread over twenty Unraid disks
+  `bzexcluderules_editable.xml`. One rule there excludes a folder on every mapped drive at once,
+  or files by extension or by path, which is what a backup spread over twenty Unraid disks
   needs and what the client's Exclusions window cannot do in one step. The rules sit between two
-  comment markers; the client's own rules and hand edits are kept byte for byte, the previous
+  comment markers; the rules the client wrote and hand edits are kept byte for byte, the previous
   file is kept beside it, and the managed rules travel in the settings export. From a forum
   user who was maintaining the file by hand.
 - The watchdog starts the Backblaze service itself when it has stayed down past one cooldown.

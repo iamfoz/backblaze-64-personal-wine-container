@@ -999,16 +999,16 @@ SETTINGS_HTML = """<!doctype html>
 
 <h2>Exclusions</h2>
 <div class="panel" id="exclusions">
-  <p class="dim">Rules in the client's own exclusions file, <code>bzexcluderules_editable.xml</code>.
+  <p class="dim">Rules in the exclusions file the client keeps, <code>bzexcluderules_editable.xml</code>.
   The client applies each rule to every drive, so one rule here excludes a folder on every disk
   you have mapped, where the client's Exclusions window needs it added drive by drive. A file is
   excluded when it matches every criterion of a rule; leave a criterion empty to skip it. The
-  client reads the file at the start of each backup pass. Rules the client wrote itself, and any
-  made by hand, are left as they are.</p>
+  client reads the file at the start of each backup pass. Rules the client wrote, and any made
+  by hand, are left as they are.</p>
   <div id="exc-list"></div>
   <h3 id="exc-form-title">Add a rule</h3>
   <label for="exc-path">Folder path, after the drive letter</label>
-  <div class="row"><input type="text" id="exc-path" placeholder=":\\Media\\" style="width:22em"> <span class="dim">prunes cheaply; at least four characters, or empty for any folder</span></div>
+  <div class="row"><input type="text" id="exc-path" placeholder=":\\Media\\" style="width:22em"> <span class="dim">tested first, so a miss skips the rest of the rule; at least four characters, or empty for any folder</span></div>
   <label for="exc-ext">File extension</label>
   <div class="row"><input type="text" id="exc-ext" placeholder="iso" style="width:8em"> <span class="dim">the part after the last dot</span></div>
   <label for="exc-ends">Path ends with</label>
@@ -1512,7 +1512,7 @@ function renderExclusions(d){
   if(!d.present){
     box.innerHTML = '<p class="dim">The client has not written its exclusions file yet. It appears after the first backup pass; rules can be added then.</p>';
   } else if(!d.rules.length){
-    box.innerHTML = '<p class="dim">No rules made here' + (d.other ? '; ' + d.other + ' from the client itself in the file' : '') + '.</p>';
+    box.innerHTML = '<p class="dim">No rules made here' + (d.other ? '; ' + d.other + ' written by the client' : '') + '.</p>';
   } else {
     box.innerHTML = '<table><thead><tr><th>Folder</th><th>Extension</th><th>Ends with</th><th>Contains</th><th>Not</th><th></th></tr></thead><tbody>' +
       d.rules.map(function(r){
@@ -1522,7 +1522,7 @@ function renderExclusions(d){
                '</td><td>' + excCell(r.endsWith) + '</td><td>' + c + '</td><td>' + excCell(r.doesNotContain) +
                '</td><td><button class="lnk exc-edit" data-i="' + r.index + '">Edit</button> <button class="lnk exc-del" data-i="' + r.index + '">Delete</button></td></tr>';
       }).join('') + '</tbody></table>' +
-      (d.other ? '<p class="dim">Plus ' + d.other + ' rules from the client itself in the file, left as they are.</p>' : '');
+      (d.other ? '<p class="dim">Plus ' + d.other + ' rules written by the client, left as they are.</p>' : '');
   }
   var editing = !!d.present;
   ['exc-path','exc-ext','exc-ends','exc-c1','exc-c2','exc-not','exc-save'].forEach(function(id){ document.getElementById(id).disabled = !editing; });
