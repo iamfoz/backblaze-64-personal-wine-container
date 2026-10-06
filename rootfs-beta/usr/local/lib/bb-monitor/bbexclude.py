@@ -75,7 +75,7 @@ def load():
 
 
 def normalise(rule):
-    """One rule as the page sends it, checked and in the client's own form.
+    """One rule as the page sends it, checked and in the form the client reads.
     Raises ValueError with a message for the page."""
     if not isinstance(rule, dict):
         raise ValueError("a rule must be an object")
