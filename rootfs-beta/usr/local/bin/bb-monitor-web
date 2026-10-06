@@ -31,6 +31,7 @@ import bbctl
 import bbdata
 import bbdismiss
 import bbdoctor
+import bbexclude
 import bbrecover
 import bbsettings
 import bbreport
@@ -996,6 +997,30 @@ SETTINGS_HTML = """<!doctype html>
   <div id="doc-err" class="err" hidden></div>
 </div>
 
+<h2>Exclusions</h2>
+<div class="panel" id="exclusions">
+  <p class="dim">Rules in the client's own exclusions file, <code>bzexcluderules_editable.xml</code>.
+  The client applies each rule to every drive, so one rule here excludes a folder on every disk
+  you have mapped, where the client's Exclusions window needs it added drive by drive. A file is
+  excluded when it matches every criterion of a rule; leave a criterion empty to skip it. The
+  client reads the file at the start of each backup pass. Rules the client wrote itself, and any
+  made by hand, are left as they are.</p>
+  <div id="exc-list"></div>
+  <h3 id="exc-form-title">Add a rule</h3>
+  <label for="exc-path">Folder path, after the drive letter</label>
+  <div class="row"><input type="text" id="exc-path" placeholder=":\\Media\\" style="width:22em"> <span class="dim">prunes cheaply; at least four characters, or empty for any folder</span></div>
+  <label for="exc-ext">File extension</label>
+  <div class="row"><input type="text" id="exc-ext" placeholder="iso" style="width:8em"> <span class="dim">the part after the last dot</span></div>
+  <label for="exc-ends">Path ends with</label>
+  <div class="row"><input type="text" id="exc-ends" placeholder="\\thumbs.db" style="width:22em"></div>
+  <label for="exc-c1">Path contains</label>
+  <div class="row"><input type="text" id="exc-c1" placeholder="\\cache\\" style="width:22em"> <span class="dim">and also</span> <input type="text" id="exc-c2" style="width:14em"></div>
+  <label for="exc-not">Path does not contain</label>
+  <div class="row"><input type="text" id="exc-not" style="width:22em"></div>
+  <div class="row" style="margin-top:12px"><button id="exc-save">Add rule</button> <button id="exc-cancel" hidden>Cancel</button><span class="dim" id="exc-msg"></span></div>
+  <div id="exc-err" class="err" hidden></div>
+</div>
+
 <h2>Automatic recovery</h2>
 <div class="panel" id="recover">
   <p class="dim">The watchdog checks the backup every five minutes and acts on what bb-health reports:
@@ -1475,6 +1500,77 @@ document.getElementById('doc-save').addEventListener('click', function(){
   });
 });
 
+// ---- exclusions ----
+var EXC = {rules: []}, EXC_EDIT = null;
+var EXC_FIELDS = {path: 'skipFirstCharThenStartsWith', ext: 'hasFileExtension', ends: 'endsWith',
+                  c1: 'contains_1', c2: 'contains_2', not: 'doesNotContain'};
+function excShow(v){ return v === '*' ? '' : v; }
+function excCell(v){ return v === '*' ? '<span class="dim">any</span>' : '<code>' + esc(v) + '</code>'; }
+function renderExclusions(d){
+  EXC = d;
+  var box = document.getElementById('exc-list');
+  if(!d.present){
+    box.innerHTML = '<p class="dim">The client has not written its exclusions file yet. It appears after the first backup pass; rules can be added then.</p>';
+  } else if(!d.rules.length){
+    box.innerHTML = '<p class="dim">No rules made here' + (d.other ? '; ' + d.other + ' from the client itself in the file' : '') + '.</p>';
+  } else {
+    box.innerHTML = '<table><thead><tr><th>Folder</th><th>Extension</th><th>Ends with</th><th>Contains</th><th>Not</th><th></th></tr></thead><tbody>' +
+      d.rules.map(function(r){
+        var c = r.contains_1 === '*' && r.contains_2 === '*' ? excCell('*')
+              : [r.contains_1, r.contains_2].filter(function(v){ return v !== '*'; }).map(function(v){ return '<code>' + esc(v) + '</code>'; }).join(' + ');
+        return '<tr><td>' + excCell(r.skipFirstCharThenStartsWith) + '</td><td>' + excCell(r.hasFileExtension) +
+               '</td><td>' + excCell(r.endsWith) + '</td><td>' + c + '</td><td>' + excCell(r.doesNotContain) +
+               '</td><td><button class="lnk exc-edit" data-i="' + r.index + '">Edit</button> <button class="lnk exc-del" data-i="' + r.index + '">Delete</button></td></tr>';
+      }).join('') + '</tbody></table>' +
+      (d.other ? '<p class="dim">Plus ' + d.other + ' rules from the client itself in the file, left as they are.</p>' : '');
+  }
+  var editing = !!d.present;
+  ['exc-path','exc-ext','exc-ends','exc-c1','exc-c2','exc-not','exc-save'].forEach(function(id){ document.getElementById(id).disabled = !editing; });
+}
+function loadExclusions(){
+  return fetch('manage/exclusions', {cache:'no-store'}).then(function(r){ return r.json(); }).then(renderExclusions);
+}
+function excForm(){
+  var rule = {};
+  Object.keys(EXC_FIELDS).forEach(function(k){ rule[EXC_FIELDS[k]] = document.getElementById('exc-' + k).value; });
+  return rule;
+}
+function excFill(r){
+  Object.keys(EXC_FIELDS).forEach(function(k){ document.getElementById('exc-' + k).value = r ? excShow(r[EXC_FIELDS[k]]) : ''; });
+}
+function excMode(index){
+  EXC_EDIT = index;
+  document.getElementById('exc-err').hidden = true;
+  document.getElementById('exc-form-title').textContent = index === null ? 'Add a rule' : 'Edit rule';
+  document.getElementById('exc-save').textContent = index === null ? 'Add rule' : 'Save rule';
+  document.getElementById('exc-cancel').hidden = index === null;
+}
+function excPost(body){
+  var err = document.getElementById('exc-err'), msg = document.getElementById('exc-msg');
+  err.hidden = true; msg.textContent = '';
+  return post('manage/exclusions', body).then(function(res){
+    if(!res.ok){ err.textContent = res.body.error || 'Could not save.'; err.hidden = false; return false; }
+    renderExclusions(res.body); msg.textContent = 'Saved; applies from the next backup pass.';
+    setTimeout(function(){ msg.textContent = ''; }, 4000);
+    return true;
+  });
+}
+document.getElementById('exc-save').addEventListener('click', function(){
+  var body = EXC_EDIT === null ? {action: 'add', rule: excForm()} : {action: 'update', index: EXC_EDIT, rule: excForm()};
+  excPost(body).then(function(ok){ if(ok){ excFill(null); excMode(null); } });
+});
+document.getElementById('exc-cancel').addEventListener('click', function(){ excFill(null); excMode(null); });
+document.getElementById('exc-list').addEventListener('click', function(e){
+  var b = e.target.closest('button'); if(!b) return;
+  var i = Number(b.getAttribute('data-i'));
+  var r = EXC.rules.filter(function(x){ return x.index === i; })[0];
+  if(!r) return;
+  if(b.classList.contains('exc-edit')){ excFill(r); excMode(i); document.getElementById('exc-path').focus(); }
+  else if(b.classList.contains('exc-del')){
+    if(confirm('Delete this rule? Files it excluded are backed up again from the next pass.')) excPost({action: 'delete', index: i});
+  }
+});
+
 // ---- automatic recovery ----
 function wdStateText(d){
   var src = d.source === 'setting' ? 'set here' : ('following ENABLE_WATCHDOG=' + (d.variable ? 'true' : 'false'));
@@ -1555,6 +1651,7 @@ loadQuiet();
 loadNotices();
 loadWatchdog();
 loadDoctor();
+loadExclusions();
 setInterval(loadQuiet, 30000);
 setInterval(loadWatchdog, 30000);
 setInterval(loadNotices, 30000);
@@ -4455,6 +4552,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/manage/doctor":
             self._json(200, dict(bbdoctor.load(), schema=bbapi.SCHEMA))
             return True
+        if path == "/manage/exclusions":
+            self._json(200, dict(bbexclude.load(), schema=bbapi.SCHEMA))
+            return True
         if path == "/manage/notices":
             # What has been dismissed and what is hidden, with the table of
             # kinds, for the Settings tab. The Status tab does not need this
@@ -4726,6 +4826,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": str(exc)})
                 return
             self._json(200, dict(conf, schema=bbapi.SCHEMA))
+            return
+        if path == "/manage/exclusions":
+            # One rule at a time: add, update or delete by index. The file is
+            # the client's, so every write re-reads it first and rewrites only
+            # the managed block; see bbexclude.
+            action = body.get("action")
+            try:
+                if action == "add":
+                    out = bbexclude.add(body.get("rule") or {})
+                elif action == "update":
+                    out = bbexclude.update(body.get("index"), body.get("rule") or {})
+                elif action == "delete":
+                    out = bbexclude.delete(body.get("index"))
+                else:
+                    raise ValueError("action must be add, update or delete")
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(200, dict(out, schema=bbapi.SCHEMA))
             return
         if path == "/manage/watchdog":
             if body.get("enabled") is None:

@@ -1108,11 +1108,67 @@ def _point(dirpath):
     bbdismiss.STORE = dirpath + "/dismissed.json"; bbdismiss._cache = None
 _src = os.path.join(FIX, "xfer-src"); _dst = os.path.join(FIX, "xfer-dst")
 os.makedirs(_src); os.makedirs(_dst)
-import bbrecover, bbdoctor
+import bbrecover, bbdoctor, bbexclude
 def _point_recover(dirpath):
     bbrecover.STORE = dirpath + "/watchdog.json"; bbrecover.STATE = dirpath + "/wd-state"
     bbdoctor.STORE = dirpath + "/doctor.json"
+    bbexclude.FILE = dirpath + "/bzexcluderules_editable.xml"
+
+# ---- the client's XML exclusion rules -------------------------------------------------------
+# The file is the client's: its own rules and hand edits stay byte for byte, and only the
+# block between the two markers is rewritten.
+_CLIENT_XML = ('<?xml version="1.0" encoding="UTF-8" ?>\n<bzexclusions>\n'
+               '<!-- This block is for Internet Explorer history and cache files -->\n'
+               '<excludefname_rule plat="win" osVers="*"  ruleIsOptional="t" skipFirstCharThenStartsWith=":\\Users\\" '
+               'contains_1="*" contains_2="*" doesNotContain="*" endsWith="\\cookies\\index.dat" hasFileExtension="dat" />\n'
+               '</bzexclusions>\n')
+bbexclude.FILE = os.path.join(FIX, "bzexcluderules_editable.xml")
+ok(bbexclude.load() == {"present": False, "rules": [], "other": 0, "file": bbexclude.FILE},
+   "no file yet: nothing to list, and the page is told so")
+try:
+    bbexclude.add({"skipFirstCharThenStartsWith": ":\\Media\\"}); ok(False, "a rule cannot be added before the client wrote the file")
+except ValueError as exc:
+    ok("first backup pass" in str(exc), "a rule cannot be added before the client wrote the file: %s" % exc)
+with open(bbexclude.FILE, "w") as fh:
+    fh.write(_CLIENT_XML)
+_x = bbexclude.add({"skipFirstCharThenStartsWith": "D:\\Media\\", "hasFileExtension": ".iso"})
+ok(_x["rules"] == [{"skipFirstCharThenStartsWith": ":\\Media\\", "contains_1": "*", "contains_2": "*",
+                    "doesNotContain": "*", "endsWith": "*", "hasFileExtension": "iso", "index": 0}] and _x["other"] == 1,
+   "a drive letter is dropped and a leading dot on the extension too; the client's rule is counted, not touched: %r" % _x["rules"])
+_txt = open(bbexclude.FILE).read()
+ok(_txt.startswith(_CLIENT_XML.replace("</bzexclusions>\n", "")) and _txt.endswith("</bzexclusions>\n")
+   and bbexclude.BEGIN in _txt and _txt.count("<excludefname_rule") == 2,
+   "the client's text is kept byte for byte and the managed block sits inside the closing tag")
+ok('skipFirstCharThenStartsWith=":\\Media\\" contains_1="*" contains_2="*" doesNotContain="*" endsWith="*" hasFileExtension="iso" />' in _txt
+   and 'plat="win" osVers="*" ruleIsOptional="t"' in _txt, "the rule is written in the client's own form")
+ok(os.path.exists(bbexclude.FILE + ".bb64-bak"), "the previous file is kept beside it")
+_x = bbexclude.add({"skipFirstCharThenStartsWith": "cache", "contains_1": "a&b <c>"})
+ok(_x["rules"][1]["skipFirstCharThenStartsWith"] == ":\\cache" and _x["rules"][1]["contains_1"] == "a&b <c>"
+   and 'contains_1="a&amp;b &lt;c&gt;"' in open(bbexclude.FILE).read(),
+   "a bare folder gets the drive prefix and attribute values are escaped on the way out and back")
+_x = bbexclude.update(0, {"skipFirstCharThenStartsWith": ":\\Media\\", "endsWith": "\\thumbs.db"})
+ok(_x["rules"][0]["endsWith"] == "\\thumbs.db" and _x["rules"][0]["hasFileExtension"] == "*" and len(_x["rules"]) == 2,
+   "an update replaces the rule at that index")
+_x = bbexclude.delete(0)
+ok(len(_x["rules"]) == 1 and _x["rules"][0]["skipFirstCharThenStartsWith"] == ":\\cache" and _x["rules"][0]["index"] == 0,
+   "a delete renumbers what is left")
+ok(bbexclude.load()["other"] == 1 and open(bbexclude.FILE).read().count("cookies") == 1,
+   "through all of that the client's rule is still there, once")
+for bad, why in (({}, "every criterion"), ({"skipFirstCharThenStartsWith": "a"}, "four characters"),
+                 ({"hasFileExtension": "a b"}, "no spaces"), ({"endsWith": 'x"y'}, "quote"),
+                 ({"contains_1": 5}, "text")):
+    try:
+        bbexclude.normalise(bad); ok(False, "refused: %r" % bad)
+    except ValueError as exc:
+        ok(why in str(exc), "refused: %r (%s)" % (bad, exc))
+try:
+    bbexclude.delete(7); ok(False, "a delete past the end is refused")
+except ValueError:
+    ok(True, "a delete past the end is refused")
 _point(_src); _point_recover(_src)
+with open(bbexclude.FILE, "w") as fh:
+    fh.write(_CLIENT_XML)
+bbexclude.add({"skipFirstCharThenStartsWith": ":\\Media\\", "hasFileExtension": "iso"})
 ok(bbrecover.load() is None and bbrecover.state()["source"] == "variable", "with no stored switch the variable decides")
 bbrecover.save(True)
 ok(bbrecover.load() == {"enabled": True} and bbrecover.state()["source"] == "setting" and bbrecover.state()["enabled"],
@@ -1158,6 +1214,8 @@ ok(_sealed["sections"]["client"]["settings"] == {"num_backup_threads": "6", "net
    "the client's writable settings travel as values")
 
 _point(_dst); _point_recover(_dst)
+with open(bbexclude.FILE, "w") as fh:
+    fh.write(_CLIENT_XML)
 _written = []
 _report = bbsettings.import_(json.loads(json.dumps(_sealed)), "hunter2",
                              write_client=lambda k, v: (_written.append((k, v)) or (True, "set")))
@@ -1179,6 +1237,11 @@ ok(any(a.startswith("api_keys") for a in _report["applied"]) and "client: 2 writ
 ok(_sealed["sections"]["recovery"] == {"watchdog": False} and bbrecover.load() == {"enabled": False},
    "the recovery switch travels and is restored")
 ok(bbdoctor.load() == {"read_depth": 7, "read_until_found": True}, "bb-doctor's settings travel and are restored")
+ok(_sealed["sections"]["exclusions"] == {"rules": [{"skipFirstCharThenStartsWith": ":\\Media\\", "contains_1": "*", "contains_2": "*",
+                                                      "doesNotContain": "*", "endsWith": "*", "hasFileExtension": "iso"}]}
+   and [r["hasFileExtension"] for r in bbexclude.load()["rules"]] == ["iso"]
+   and bbexclude.load()["other"] == 1 and "cookies" in open(bbexclude.FILE).read(),
+   "the managed exclusion rules travel and are restored into the destination's own file, around the client's rules")
 try:
     bbsettings.import_(json.loads(json.dumps(_sealed)), "wrong"); ok(False, "a wrong passphrase is refused")
 except ValueError as exc:
