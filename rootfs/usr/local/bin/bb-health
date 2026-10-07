@@ -150,9 +150,11 @@ orphans() {
     case "$tick" in ''|*[!0-9]*) tick=100 ;; esac
     for c in /proc/[0-9]*/cmdline; do
         [ -r "$c" ] || continue
-        cmd="$(tr '\0' ' ' < "$c" 2>/dev/null)"
+        # Braced, so a process that exits between the listing and the read
+        # does not print the shell's own redirection error.
+        cmd="$({ tr '\0' ' ' < "$c"; } 2>/dev/null)"
         case "$cmd" in *bzfilelist.exe*) name=bzfilelist.exe ;; *bztransmit.exe*) name=bztransmit.exe ;; *) continue ;; esac
-        set -- $(sed 's/^.*) //' "${c%/cmdline}/stat" 2>/dev/null)
+        set -- $({ sed 's/^.*) //' "${c%/cmdline}/stat"; } 2>/dev/null)
         [ "${2:-}" = 1 ] || continue
         st="${20:-}"
         case "$st" in ''|*[!0-9]*) continue ;; esac
