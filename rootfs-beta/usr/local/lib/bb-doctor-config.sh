@@ -182,12 +182,28 @@ else
         # config-exclusion check below already treats the JSON side this way).
         _cfg_which="$(printf '%s\n' "$_cfg_pairs" \
             | awk -F'\t' -v want="${_cfg_letter}:\\" 'tolower($1)==tolower(want){print $2; exit}')"
+        # A drive with no filter entry is backed up when it is in the client's
+        # own volume list, the <bzvolume mountPointPath="X:\"> records in
+        # bzinfo.xml: the client writes a per-drive filter only to override the
+        # default, so D: carries one from its first setup and a disk added
+        # later does not. On 2026-10-07 five newly mapped disks were in that
+        # list and being scanned while this check still said "no selection
+        # entry" for each; absent from the list is the state that means the
+        # window's tick was never saved.
+        _cfg_listed=0
+        grep -qi "<bzvolume [^>]*mountPointPath=\"${_cfg_letter}:\\\\\"" "$BZ/bzinfo.xml" 2>/dev/null && _cfg_listed=1
         case "$_cfg_which" in
             all)  OK "${_cfg_disp}: the client is set to back this drive up" ;;
             none) BAD "${_cfg_disp}: the client is set NOT to back this drive up"
                   NOTE "this is what produces \"No files are selected\". Check the drive in the"
                   NOTE "client's own Settings window." ;;
-            *)    WARN "${_cfg_disp}: the client has no selection entry for this drive" ;;
+            *)    if [ "$_cfg_listed" = 1 ]; then
+                      OK "${_cfg_disp}: in the client's volume list, backed up by default"
+                  else
+                      WARN "${_cfg_disp}: not in the client's volume list, so it is not scanned"
+                      NOTE "tick it in the client's Settings window and press OK while the backup is paused;"
+                      NOTE "a save made while a pass is transmitting is abandoned."
+                  fi ;;
         esac
 
         # Does this drive's mount hold /config? Found by comparing resolved real

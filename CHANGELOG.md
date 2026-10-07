@@ -18,6 +18,12 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   comment markers; the rules the client wrote and hand edits are kept byte for byte, the previous
   file is kept beside it, and the managed rules travel in the settings export. From a forum
   user who was maintaining the file by hand.
+- bb-doctor's drive selection check reads the client's own volume list. A drive is backed up
+  when it is among the `<bzvolume mountPointPath>` records in `bzinfo.xml`; the per-drive filter
+  entry the check used to look for is written only to override the default, so five newly added
+  disks read as "no selection entry" while the client was scanning them. A drive missing from the
+  list is now the warning, with the fix: tick it and press OK while the backup is paused, since a
+  save made while a pass is transmitting is abandoned by the client with a line in its own log.
 - bb-doctor names the directories the client's scanner could not open, with the reason, read
   from the scanner's own log: a character Windows does not allow in a name, trailing dots, or
   ownership the container user cannot read through. A disk's file list stops at the first such
