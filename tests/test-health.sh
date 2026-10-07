@@ -206,12 +206,16 @@ mkproc "bzbui.exe -noquiet"; procage 100 600
 ok "DOWN" "$(run)" "with no pass to stop the outage reads as DOWN"
 
 echo
-# 28. orphans: a helper reparented to pid 1 and past STALL_MIN is listed; a
-# young orphan, a live-parented helper and Wine's own pid-1 children are not.
-mkproc "bzfilelist.exe" "bztransmit.exe -threadpush foo.xml" "bzfilelist.exe" "wineserver" "bzserv.exe"
-procage 100 30000 1; procage 101 600 1; procage 102 30000; procage 103 30000 1; procage 104 30000 1
-ok "100 500 bzfilelist.exe" "$(env "$FX/bb-health" --orphans 2>/dev/null | tr '\n' ';' | sed 's/;$//')" \
-   "--orphans lists only the old helper whose parent has gone"
+# 28. orphans: a bztransmit reparented to pid 1 and past STALL_MIN is listed; a
+# young orphan, a live-parented one, Wine's own pid-1 children and a scanner
+# (which the client runs detached, for hours) are not.
+# The old orphan is a pass, not a push child: an old push child is a HANG in
+# its own right, which is the right answer and a different test.
+mkproc "bztransmit.exe -prepare_bzcombs" "bztransmit.exe -threadpush bar.xml" "bztransmit.exe -prepare_bzcombs" "wineserver" "bzserv.exe" "bzfilelist.exe"
+procage 100 30000 1; procage 101 600 1; procage 102 30000; procage 103 30000 1; procage 104 30000 1; procage 105 30000 1
+echo "line" > "$LOGF"
+ok "100 500 bztransmit.exe" "$(env "$FX/bb-health" --orphans 2>/dev/null | tr '\n' ';' | sed 's/;$//')" \
+   "--orphans lists only the old bztransmit whose parent has gone, never a scanner"
 ok "OK" "$(run)" "and an orphan alone does not change the health state"
 ok "" "$(env STALL_MIN=600 "$FX/bb-health" --orphans 2>/dev/null)" "a longer STALL_MIN keeps it off the list"
 

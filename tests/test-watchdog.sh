@@ -84,10 +84,10 @@ ok '[ ! -f "$FX/wine.log" ]' "a DOWN after an OK is a first sighting: no Wine ca
 rm -f "$FX/wine.log" "$BB_RECOVERY_LOG"
 echo "OK" > "$FX/health"
 sleep 600 & ORPH=$!
-echo "$ORPH 500 bzfilelist.exe" > "$FX/orphans"
+echo "$ORPH 500 bztransmit.exe" > "$FX/orphans"
 run_watchdog 8
 ok '! kill -0 $ORPH 2>/dev/null' "an orphaned helper is stopped while the health state is OK"
-ok 'grep -q "recovered: stopped orphaned bzfilelist.exe \[$ORPH\], running 500m" "$BB_RECOVERY_LOG"' "and the stop is recorded with its age"
+ok 'grep -q "recovered: stopped orphaned bztransmit.exe \[$ORPH\], running 500m" "$BB_RECOVERY_LOG"' "and the stop is recorded with its age"
 rm -f "$FX/orphans"
 
 echo "$pass passed, $fail failed"

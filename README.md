@@ -317,10 +317,11 @@ lock for `WEDGE`, or killing the upload children and the pass for `HANG` so that
 A `DOWN` is left to the service watch the first time; if the service is still down when the
 cooldown ends, the watchdog starts it with the same bounded `net start` the watch uses, so a
 watch that has died is not the only thing standing between a dead service and a backup that
-never resumes. Every cycle it also stops orphans: a bzfilelist or bztransmit whose parent has
-exited and that has run on for `STALL_MIN` minutes since. Nothing waits for such a process, the
-fresh pass has its own, and one blocked on a wineserver reply sat for eight hours on a live host
-before anyone looked. `bb-health --orphans` lists them, and `bb-doctor --fix` stops them.
+never resumes. Every cycle it also stops orphans: a bztransmit whose parent has exited and that
+has run on for `STALL_MIN` minutes since, such as a chunk child whose pass died. Nothing waits
+for such a process and the fresh pass has its own. The scanner, bzfilelist, is never treated as
+one: the client runs it detached from the pass that started it, and a scan of several disks runs
+for hours with no parent. `bb-health --orphans` lists them, and `bb-doctor --fix` stops them.
 Every action is logged, shown as a warning row on the Status tab's timeline, sent as an
 "Automatic recovery acted" notification and counted in the metrics. After detecting a fault it waits 30 minutes before acting
 again - whether or not the recovery succeeded - so a fault it cannot fix produces one

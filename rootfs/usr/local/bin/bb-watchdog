@@ -15,12 +15,13 @@
 #          and two hosts then sat DOWN for six and seven hours while this
 #          branch reported the state every half hour and did nothing about it.
 #
-#   ORPHAN A bzfilelist or bztransmit whose parent exited and that has run on
-#          for STALL_MIN minutes since (bb-health --orphans). Nothing waits
-#          for it: the pass that started it is gone, and a fresh pass has its
-#          own. Stopped on sight, outside the cooldown, since each is a one-off
-#          and the backup is not at fault. A scanner sat like that for eight
-#          hours on 2026-10-06, blocked on a wineserver reply.
+#   ORPHAN A bztransmit whose parent exited and that has run on for
+#          STALL_MIN minutes since (bb-health --orphans). Nothing waits for
+#          it: the pass that started it is gone, and a fresh pass has its own.
+#          Stopped on sight, outside the cooldown, since each is a one-off and
+#          the backup is not at fault. Never bzfilelist: the client runs its
+#          scans detached from the pass, and a first version of this rule
+#          killed every scan at twenty minutes (2026-10-07).
 #
 #   HANG   Kill the push children and the backup pass that launched them.
 #          Killing the children alone used to be enough; since client 10.0.3

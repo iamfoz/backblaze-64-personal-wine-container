@@ -289,10 +289,10 @@ for L in d e f g h i j k l; do rm -f "${PFX}dosdevices/$L:"; done
 
 echo
 # Orphans: listed by bb-health --orphans (stubbed), warned about, and stopped only with --fix.
-mkproc "bzserv.exe" "bzfilelist.exe"
-echo "101 500 bzfilelist.exe" > "$FX/orphans"
+mkproc "bzserv.exe" "bztransmit.exe -threadpush foo.xml"
+echo "101 500 bztransmit.exe" > "$FX/orphans"
 out="$(run)"
-has "$out" "1 orphaned Backblaze process(es) left by a pass that exited: bzfilelist.exe \[101\] 500m" "orphan: warned about with pid and age"
+has "$out" "1 orphaned Backblaze process(es) left by a pass that exited: bztransmit.exe \[101\] 500m" "orphan: warned about with pid and age"
 [ -d "$FX/proc/101" ] && echo "PASS orphan: not stopped without --fix" || { echo "FAIL orphan: stopped without --fix"; FAILED=$((FAILED+1)); }
 out="$(run --fix)"
 has "$out" "fixed: stopped 1 orphaned process" "orphan: --fix stops it"
