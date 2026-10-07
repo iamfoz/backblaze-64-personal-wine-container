@@ -449,12 +449,17 @@ thread count, stalls, and whether Backblaze is reachable.
 With `--fix` it repairs what can be repaired safely: the reported Windows version,
 the supportedOS manifest, missing drive links, missing skin aliases, a stale lock left behind
 by an out-of-memory kill, a stopped Backblaze service, a pass stuck waiting for a lost upload
-child, and a drive stamp (`.bzvol/bzvol_id.xml`) whose volume id or computer
+child, helper processes left behind by a pass that exited, and a drive stamp (`.bzvol/bzvol_id.xml`) whose volume id or computer
 identity differs from the client's own record, restored to the value the client wrote with the
 previous stamp kept beside it. Repairs are idempotent and are skipped whenever the diagnosis is
 ambiguous; the stamp repair is the one that touches the backup's identity, and it writes only a
 value the client itself recorded, never a guess: a tool that "fixes" a misdiagnosis is worse than
-one that just reports. Anything it will not fix on its own (too little RAM, no swap,
+one that just reports. It also names the directories the client's scanner could not open, from the
+scanner's own log, with the reason: a quote or another character Windows does not allow in a name,
+trailing dots, or ownership the container user cannot read through. Linux allows all of these and
+Windows does not; a disk's file list stops at the first such directory and nothing after it is
+backed up, which otherwise shows only as "producing file lists" for hours. The Monitor raises the
+same as a warning. Anything it will not fix on its own (too little RAM, no swap,
 a full disk, a wedged transfer) is reported with what to do about it.
 
 On the beta image the Tools tab of the web interface runs `bb-doctor`, `bb-health` and

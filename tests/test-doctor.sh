@@ -57,6 +57,8 @@ if ! stat -c %Y "$FX" >/dev/null 2>&1; then
 #!/usr/bin/env bash
 if [ "$1" = "-c" ] && [ "$2" = "%Y" ]; then
     perl -e 'my @s=stat($ARGV[0]) or exit 1; print $s[9],"\n"' "$3"
+elif [ "$1" = "-c" ] && [ "$2" = "%d:%i" ]; then
+    perl -e 'my @s=stat($ARGV[0]) or exit 1; print "$s[0]:$s[1]\n"' "$3"
 else
     exec /usr/bin/stat "$@"
 fi
@@ -298,6 +300,30 @@ has "$out" "fixed: stopped 1 orphaned process" "orphan: --fix stops it"
 grep -q "doctor	stopped 1 orphaned" "$BB_RECOVERY_LOG" && echo "PASS orphan: the stop is in the recovery log" || { echo "FAIL orphan: not recorded"; FAILED=$((FAILED+1)); }
 rm -f "$FX/orphans"
 has "$(run)" "no orphaned Backblaze processes" "orphan: none means an ok line"
+
+# ---- directories the scanner could not open --------------------------------
+mkdir -p "$BZ/bzlogs/bzfilelist" "${PFX}dosdevices"
+ln -sfn "$FX/drive_d" "${PFX}dosdevices/d:"; mkdir -p "$FX/drive_d/Senary/Joe \"Fingers\" Webster" "$FX/drive_d/Music/Father of All..."
+printf '2026-10-07 13:15:29 1820 - WARNING: GetListOfFileInfosInDir (processId=1820) FindFirstFile_C failed, dirPat=D:\\Senary\\Joe "Fingers" Webster\\*, GetLastError=123\nx 1820 - FindFirstFile_C failed, dirPat=D:\\Music\\Father of All...\\*, GetLastError=3, and_a_lastError_of_3_means ERROR_PATH_NOT_FOUND\nx 1820 - FindFirstFile_C failed, dirPat=D:\\assets\\Horizontal\\*, GetLastError=5\n' > "$BZ/bzlogs/bzfilelist/bzfilelist07.log"
+out="$(run)"
+has "$out" "\[warn\] 2 directories the scanner cannot open; a disk's file list stops at the first" "scan: the directories still present are warned about, the removed one is not counted"
+has "$out" 'D:\\Senary\\Joe "Fingers" Webster - a character Windows does not allow' "scan: the quoted name with its reason"
+has "$out" 'Father of All... - trailing dots or spaces' "scan: the trailing dots with theirs"
+mv "$FX/drive_d/Senary/Joe \"Fingers\" Webster" "$FX/drive_d/Senary/Joe Fingers Webster"; mv "$FX/drive_d/Music/Father of All..." "$FX/drive_d/Music/Father of All"
+has "$(run)" "\[ ok \] 3 directories the scanner could not open have since been renamed or removed" "scan: after the renames the doctor says so"
+rm -f "$BZ/bzlogs/bzfilelist/bzfilelist07.log"
+: > "$BZ/bzlogs/bzfilelist/bzfilelist08.log"
+has "$(run)" "the scanner opened every directory it tried" "scan: a clean log is an ok line"
+
+# ---- the config drop-in: the config directory reached through a mapped pool ----
+# Same directory, two mounts: a bind of a path inside the pool as /config and the
+# pool itself as Y:. Resolved paths differ; device and inode do not.
+CDROP="$HERE/../rootfs-beta/usr/local/lib/bb-doctor-config.sh"
+mkdir -p "$FX/pool/appdata/Backblaze64/wine" "$FX/pool/other"
+CF="$(env PATH="$FX/bin:$PATH" sh -c 'eval "$(sed -n "/^    _cfg_find_config_in() {/,/^    \\}/p" "$1")"; _cfg_find_config_in "$2" "$(stat -c %d:%i "$3")"' _ "$CDROP" "$FX/pool" "$FX/pool/appdata/Backblaze64")"
+[ "$CF" = "$FX/pool/appdata/Backblaze64" ] && echo "PASS config: the config directory is found under the pool by inode" || { echo "FAIL config: got '$CF'"; FAILED=$((FAILED+1)); }
+CF="$(env PATH="$FX/bin:$PATH" sh -c 'eval "$(sed -n "/^    _cfg_find_config_in() {/,/^    \\}/p" "$1")"; _cfg_find_config_in "$2" "$(stat -c %d:%i "$3")"' _ "$CDROP" "$FX/pool/other" "$FX/pool/appdata/Backblaze64")"
+[ -z "$CF" ] && echo "PASS config: and not under a drive that does not hold it" || { echo "FAIL config: found '$CF' under the wrong root"; FAILED=$((FAILED+1)); }
 
 echo "$FAILED failures"
 exit $(( FAILED > 0 ? 1 : 0 ))

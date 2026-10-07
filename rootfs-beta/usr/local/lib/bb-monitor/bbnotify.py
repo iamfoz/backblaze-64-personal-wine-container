@@ -114,6 +114,8 @@ EVENTS = (
      "No pass has completed within the limit set in the client's own settings.", True),
     ("lostlock",      "Passes losing the four-hour lock",
      "Every backup pass aborts at the transmit step. Seen with client 10.0.3.1075 under Wine.", True),
+    ("scanstop",      "Scan stopped at a directory",
+     "The scanner cannot open a directory, so that disk's file list ends there. bb-doctor names it.", True),
     ("stalled",       "Backup stalled",
      "bb-health reports a HANG, a WEDGE or a DOWN.", True),
     ("client_paused", "Paused by the client",
@@ -342,6 +344,7 @@ def conditions(api, health=None):
         "frozen": "frozen" in kinds,
         "skipped_total": int(sk.get("total") or 0),
         "stale": "stale" in kinds,
+        "scanstop": "scanstop" in kinds,
         "stalled": hv.startswith("HANG") or hv.startswith("WEDGE") or hv.startswith("DOWN"),
         "client_paused": bool(api.get("paused")) and pl.get("who") == "client",
         "completion": bool(api.get("completion")),
@@ -373,7 +376,7 @@ def observe(api, conf=None, deliver=None, now=None):
     thr = conf["skipped_threshold"]
     cur_flags = {
         "frozen": cur["frozen"], "skipped": cur["skipped_total"] >= thr,
-        "stale": cur["stale"], "stalled": cur["stalled"],
+        "stale": cur["stale"], "stalled": cur["stalled"], "scanstop": cur["scanstop"],
         "client_paused": cur["client_paused"], "completion": cur["completion"],
     }
     if prev is not None:

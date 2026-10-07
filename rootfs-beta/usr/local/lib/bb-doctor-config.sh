@@ -145,7 +145,23 @@ else
     # Where /config really sits, so the loop check below can ask whether a mapped
     # drive covers it. Resolved once: readlink -f is not free and every drive in
     # the loop is compared against the same target.
-    _cfg_config_real="$(readlink -f /config 2>/dev/null)"
+    # The directory under a drive root that is the config directory itself,
+    # by device and inode, a few levels down at most; empty when none.
+    _cfg_find_config_in() {
+        for _cfg_c in $(find "$1" -maxdepth 4 -xdev -type d -inum "${2#*:}" 2>/dev/null | tr ' ' '\001'); do
+            _cfg_c="$(printf '%s' "$_cfg_c" | tr '\001' ' ')"
+            [ "$(stat -c %d:%i "$_cfg_c" 2>/dev/null)" = "$2" ] && { printf '%s' "$_cfg_c"; return 0; }
+        done
+        return 0
+    }
+    _cfg_config_dir="${CONFIG_DIR:-/config}"
+    _cfg_config_real="$(readlink -f "$_cfg_config_dir" 2>/dev/null)"
+    # Device and inode as well: a pool mapped as a drive and the config
+    # directory bound from a path inside that pool are the same directory
+    # through two mounts, and no amount of path resolution shows it. On the
+    # test host the cache pool became Y: with /config at Y:\appdata\Backblaze64
+    # and the path comparison read "not inside any mapped drive".
+    _cfg_config_id="$(stat -c %d:%i "$_cfg_config_dir" 2>/dev/null)"
     _cfg_config_winpath=""
 
     _cfg_drives=0
@@ -188,10 +204,32 @@ else
                     ;;
             esac
         fi
+        if [ -z "$_cfg_config_winpath" ] && [ -n "$_cfg_config_id" ] && [ -n "$_cfg_root" ]; then
+            _cfg_hit="$(_cfg_find_config_in "$_cfg_root" "$_cfg_config_id")"
+            if [ -n "$_cfg_hit" ]; then
+                _cfg_rel="${_cfg_hit#"$_cfg_root"/}"
+                _cfg_config_winpath="${_cfg_letter}:\\$(printf '%s' "$_cfg_rel" | tr '/' '\\')\\"
+            fi
+        fi
     done
     [ "$_cfg_drives" = 0 ] && WARN "no drives mapped: the drive selection check has nothing to look at"
 
     # -- The container's own config directory must not be a backup target ---------
+    # The client's XML rules exclude too: a rule whose folder prefix covers the
+    # directory and that sets no other criterion excludes it on every drive.
+    # That is the rule the Settings tab's Exclusions panel makes for it.
+    _cfg_xml_excluded=0
+    if [ -n "$_cfg_config_winpath" ] && [ -r "$BZ/bzexcluderules_editable.xml" ]; then
+        _cfg_noletter="$(printf '%s' "$_cfg_config_winpath" | cut -c2- | tr 'A-Z' 'a-z')"
+        for _cfg_pfx in $(grep -o '<excludefname_rule[^>]*/>' "$BZ/bzexcluderules_editable.xml" 2>/dev/null \
+                | grep 'contains_1="\*"' | grep 'contains_2="\*"' | grep 'doesNotContain="\*"' \
+                | grep 'endsWith="\*"' | grep 'hasFileExtension="\*"' \
+                | sed -n 's/.*skipFirstCharThenStartsWith="\([^"]*\)".*/\1/p' | tr 'A-Z' 'a-z' | tr ' ' '\001'); do
+            _cfg_pfx="$(printf '%s' "$_cfg_pfx" | tr '\001' ' ')"
+            [ "$_cfg_pfx" = "*" ] && continue
+            case "$_cfg_noletter" in "$_cfg_pfx"*) _cfg_xml_excluded=1 ;; esac
+        done
+    fi
     if [ -z "$_cfg_config_winpath" ]; then
         OK "the container's own config directory is not inside any mapped drive"
     else
@@ -209,6 +247,8 @@ $_cfg_pairs
 CFGEOF
         if [ "$_cfg_excluded" = 1 ]; then
             OK "the container's own config directory is excluded from backup"
+        elif [ "$_cfg_xml_excluded" = 1 ]; then
+            OK "the container's own config directory is excluded from backup by an XML rule"
         else
             BAD "the container's own config directory is inside a backed-up drive and is not excluded"
             # bb-doctor's OK/BAD/WARN/NOTE all print via echo, and dash's echo treats a

@@ -700,6 +700,29 @@ finally:
     bbdata.tail_log = _tail
 ok("lostlock" in kinds, "health() raises lostlock from the transmit log: %r" % kinds)
 
+# The scanner's own log names the directories it could not open. A disk's file
+# list ends at the first, so the Monitor warns while one still exists under
+# that name, and stops once it has been renamed (the test host, 2026-10-07).
+_scanlog = ('2026-10-07 13:15:29.584       1820 - WARNING: GetListOfFileInfosInDir (processId=1820) FindFirstFile_C failed, '
+            'dirPat=D:\\Senary\\Beating The "Butt" On Your Own\\*, GetLastError=123\n'
+            'x - FindFirstFile_C failed, dirPat=G:\\Music\\Father of All...\\*, GetLastError=3, and_a_lastError_of_3_means ERROR_PATH_NOT_FOUND\n'
+            'x - FindFirstFile_C failed, dirPat=G:\\Music\\Father of All...\\*, GetLastError=3\n')
+ok(bbdata.scan_stops(_scanlog, exists=lambda w: True) == [('D:\\Senary\\Beating The "Butt" On Your Own', "123"),
+                                                         ("G:\\Music\\Father of All...", "3")],
+   "scan_stops parses the path and the error from the scanner's lines, once per directory")
+ok(bbdata.scan_stops(_scanlog, exists=lambda w: w.startswith("G:")) == [("G:\\Music\\Father of All...", "3")],
+   "a directory renamed since is a fix already made and is left out")
+_slt = bbdata._scan_log_tail
+bbdata._scan_log_tail = lambda limit=0: _scanlog
+_isd = bbdata._win_isdir
+bbdata._win_isdir = lambda w: True
+try:
+    _sk = dict(bbdata.health())
+finally:
+    bbdata._scan_log_tail = _slt; bbdata._win_isdir = _isd
+ok("scanstop" in _sk and "2 directories" in _sk["scanstop"], "health() raises scanstop from the scan log: %r" % _sk.get("scanstop"))
+ok(bbdata.scan_stops("") == [] and "scanstop" not in dict(bbdata.health()), "and not without failures")
+
 # Nothing automatic runs bzcli before startapp.sh has launched the client:
 # starting bzcli first boots Wine, and the boot starts a backup pass under the
 # monitor's environment while the installer may still be running.

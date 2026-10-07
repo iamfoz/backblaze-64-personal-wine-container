@@ -171,6 +171,9 @@ WARNING_KINDS = (
     ("frozen",    "Safety freeze", "Backblaze has frozen the backup. Nothing is deleted.", "frozen", True),
     ("lostlock",  "Passes losing the four-hour lock",
                   "Every backup pass aborts at the transmit step.", "lostlock", True),
+    ("scanstop",  "Scan stopped at a directory",
+                  "The scanner cannot open a directory, so that disk's file list ends there and files "
+                  "after it are not backed up. bb-doctor names the directories.", "scanstop", True),
     ("stale",     "No completed backup",
                   "No pass has completed within the limit set in the client's own settings.", "stale", False),
     ("skipped",   "Files skipped", "The client has given up on files.", "skipped", False),

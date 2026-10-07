@@ -18,6 +18,17 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   comment markers; the rules the client wrote and hand edits are kept byte for byte, the previous
   file is kept beside it, and the managed rules travel in the settings export. From a forum
   user who was maintaining the file by hand.
+- bb-doctor names the directories the client's scanner could not open, with the reason, read
+  from the scanner's own log: a character Windows does not allow in a name, trailing dots, or
+  ownership the container user cannot read through. A disk's file list stops at the first such
+  directory and nothing after it is backed up, and until now the only sign was "producing file
+  lists" for hours. On the test host every scan since 5 October had stopped at a directory with
+  quotes in its name. The Monitor raises a "Scan stopped at a directory" warning while one still
+  exists, and the notifier has an event for it. Directories renamed since are reported as fixed.
+- bb-doctor finds the container's config directory inside a mapped drive by device and inode,
+  not only by path, so a pool mapped as a drive with the config bound from inside it is caught;
+  the path comparison read "not inside any mapped drive" on the test host. An XML exclusion rule
+  covering the directory counts as excluded, which is what the Exclusions panel makes for it.
 - Orphaned helper processes are stopped. A bzfilelist or bztransmit whose parent has exited is
   reparented to the container's init and nothing waits for it; one scanner sat like that for
   eight and a half hours on the test host, blocked on a wineserver reply, and a chunk child for

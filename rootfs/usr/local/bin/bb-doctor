@@ -443,6 +443,51 @@ if [ -n "$orphans" ]; then
 else
     OK "no orphaned Backblaze processes"
 fi
+# Directories the scanner could not open. Each disk gets its own file list,
+# and a directory the client cannot open ends that list where it stands, so
+# everything the walk would have reached afterwards is never backed up and
+# nothing says so: the GUI reads "producing file lists" and retries hours
+# later. Found on the test host on 2026-10-07: two names with quotes, two with
+# trailing dots, two owned by root with mode 700, and every scan since the 5th
+# had stopped at the first of them. Linux allows all of these; Windows does
+# not, and Wine enforces its rules on open. The newest two scan logs are read,
+# and a directory that no longer exists under that name is reported as fixed.
+_sc_logs="$(ls -t "$BZ/bzlogs/bzfilelist"/*.log 2>/dev/null | head -2)"
+if [ -n "$_sc_logs" ]; then
+    _sc_fail="$(cat $_sc_logs 2>/dev/null | grep -o 'FindFirstFile_C failed, dirPat=.*GetLastError=[0-9]*' \
+        | sed 's/^FindFirstFile_C failed, dirPat=//; s/\\\*, GetLastError=/	/' | awk -F'	' '!seen[$1]++')"
+    _sc_open=0; _sc_gone=0; _sc_lines=""
+    while IFS="$(printf '\t')" read -r _sc_win _sc_code; do
+        [ -n "$_sc_win" ] || continue
+        _sc_letter="$(printf '%s' "$_sc_win" | cut -c1 | tr 'A-Z' 'a-z')"
+        _sc_rel="$(printf '%s' "$_sc_win" | cut -c4- | tr '\\' '/')"
+        case "$_sc_code" in
+            123) _sc_why='a character Windows does not allow in a name (quote, * ? < > |)' ;;
+            3)   _sc_why='trailing dots or spaces in the name, which Windows strips' ;;
+            5)   _sc_why='the container user cannot read it (owner or permissions)' ;;
+            *)   _sc_why="error ${_sc_code}" ;;
+        esac
+        if [ -d "${PREFIX}dosdevices/${_sc_letter}:/${_sc_rel}" ]; then
+            _sc_open=$((_sc_open+1))
+            [ "$_sc_open" -le 8 ] && _sc_lines="${_sc_lines}$(printf '%s' "$_sc_win" | sed 's/\\/\\\\/g') - ${_sc_why}
+"
+        else
+            _sc_gone=$((_sc_gone+1))
+        fi
+    done <<SCEOF
+$_sc_fail
+SCEOF
+    if [ "$_sc_open" -gt 0 ]; then
+        WARN "$_sc_open director$([ "$_sc_open" = 1 ] && echo y || echo ies) the scanner cannot open; a disk's file list stops at the first, so files after it are not backed up:"
+        printf '%s' "$_sc_lines" | while IFS= read -r _sc_l; do [ -n "$_sc_l" ] && NOTE "$_sc_l"; done
+        [ "$_sc_open" -gt 8 ] && NOTE "and $((_sc_open-8)) more; see bzlogs/bzfilelist"
+        NOTE "rename the directory, or fix its ownership, and the next scan runs through."
+    elif [ "$_sc_gone" -gt 0 ]; then
+        OK "$_sc_gone director$([ "$_sc_gone" = 1 ] && echo y || echo ies) the scanner could not open have since been renamed or removed; the next scan confirms"
+    else
+        OK "the scanner opened every directory it tried"
+    fi
+fi
 # Count live push threads rather than files. The bzthread directory keeps
 # hundreds of old instruction XMLs, so counting files warns on every transmit.
 tp=0

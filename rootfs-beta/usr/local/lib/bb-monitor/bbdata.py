@@ -24,6 +24,7 @@ from collections import deque
 # ---- config (identical to bb-monitor) ------------------------------------
 BZ = "/config/wine/dosdevices/c:/ProgramData/Backblaze/bzdata"
 LOGDIR = BZ + "/bzlogs/bztransmit"
+FLOGDIR = BZ + "/bzlogs/bzfilelist"
 BZSTAT_TOTAL = BZ + "/bzreports/bzstat_totalbackup.xml"
 BZSTAT_REMAIN = BZ + "/bzreports/bzstat_remainingbackup.xml"
 TDIR = BZ + "/bzthread"
@@ -414,6 +415,45 @@ def _chunk_map():
     return name, out, len(out)
 
 
+_SCANFAIL = re.compile(r"FindFirstFile_C failed, dirPat=(.*?)\\\*, GetLastError=(\d+)")
+
+
+def _scan_log_tail(limit=512 * 1024):
+    try:
+        fs = [os.path.join(FLOGDIR, f) for f in os.listdir(FLOGDIR) if f.endswith(".log")]
+        if not fs:
+            return ""
+        p = max(fs, key=os.path.getmtime)
+        with open(p, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - limit))
+            return fh.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def _win_isdir(win):
+    if len(win) < 3 or win[1] != ":":
+        return False
+    return os.path.isdir("/config/wine/dosdevices/%s:/%s" % (win[0].lower(), win[3:].replace("\\", "/")))
+
+
+def scan_stops(text=None, exists=None):
+    """[(windows path, error code)] for directories the scanner could not open
+    and that still exist under that name. A disk's file list ends at the first
+    of them, so files after it are never backed up; bb-doctor has the detail.
+    Read from the newest scan log; a renamed or removed directory is a fix
+    already made and is left out."""
+    if text is None:
+        text = _scan_log_tail()
+    if exists is None:
+        exists = _win_isdir
+    seen = {}
+    for m in _SCANFAIL.finditer(text):
+        seen[m.group(1)] = m.group(2)
+    return [(w, c) for w, c in seen.items() if exists(w)]
+
+
 def health(data=None):
     """Conditions worth warning about, from the client's own records.
 
@@ -444,6 +484,11 @@ def health(data=None):
     if sk and sk["total"]:
         out.append(("skipped", "%d files skipped and not backed up (%s)"
                                 % (sk["total"], sk["top_reason"].replace("_", " ").lower())))
+    stops = scan_stops()
+    if stops:
+        out.append(("scanstop", "The scanner cannot open %d director%s, so a disk's file list stops there and files "
+                                "after it are not backed up; bb-doctor names them"
+                                % (len(stops), "y" if len(stops) == 1 else "ies")))
     lost = lost_lock()
     if lost:
         out.append(("lostlock", "The client lost its four-hour lock %d times since a pass last got "
