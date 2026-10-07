@@ -30,7 +30,8 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   directory and nothing after it is backed up, and until now the only sign was "producing file
   lists" for hours. On the test host every scan since 5 October had stopped at a directory with
   quotes in its name. The Monitor raises a "Scan stopped at a directory" warning while one still
-  exists, and the notifier has an event for it. Directories renamed since are reported as fixed.
+  exists, and the notifier has an event for it. Directories renamed since, or made readable by
+  the container user since, are reported as fixed.
 - bb-doctor finds the container's config directory inside a mapped drive by device and inode,
   not only by path, so a pool mapped as a drive with the config bound from inside it is caught;
   the path comparison read "not inside any mapped drive" on the test host. An XML exclusion rule

@@ -464,10 +464,18 @@ if [ -n "$_sc_logs" ]; then
         case "$_sc_code" in
             123) _sc_why='a character Windows does not allow in a name (quote, * ? < > |)' ;;
             3)   _sc_why='trailing dots or spaces in the name, which Windows strips' ;;
+            4)   _sc_why='Windows error 4, too many open files; or a leading space in the name' ;;
             5)   _sc_why='the container user cannot read it (owner or permissions)' ;;
-            *)   _sc_why="error ${_sc_code}" ;;
+            *)   _sc_why="Windows error ${_sc_code}" ;;
         esac
-        if [ -d "${PREFIX}dosdevices/${_sc_letter}:/${_sc_rel}" ]; then
+        _sc_path="${PREFIX}dosdevices/${_sc_letter}:/${_sc_rel}"
+        # A permissions failure is fixed when the container user can read the
+        # directory now; the log line outlives a chown by a day or two. The
+        # client runs as USER_ID (the base image's "app"), 1000 by default.
+        if [ "$_sc_code" = 5 ] && [ -d "$_sc_path" ] && command -v su-exec >/dev/null 2>&1 \
+           && su-exec "${USER_ID:-1000}:${GROUP_ID:-1000}" sh -c 'test -r "$1" && test -x "$1"' _ "$_sc_path" 2>/dev/null; then
+            _sc_gone=$((_sc_gone+1))
+        elif [ -d "$_sc_path" ]; then
             _sc_open=$((_sc_open+1))
             [ "$_sc_open" -le 8 ] && _sc_lines="${_sc_lines}$(printf '%s' "$_sc_win" | sed 's/\\/\\\\/g') - ${_sc_why}
 "
@@ -478,12 +486,12 @@ if [ -n "$_sc_logs" ]; then
 $_sc_fail
 SCEOF
     if [ "$_sc_open" -gt 0 ]; then
-        WARN "$_sc_open director$([ "$_sc_open" = 1 ] && echo y || echo ies) the scanner cannot open; a disk's file list stops at the first, so files after it are not backed up:"
+        WARN "$_sc_open director$([ "$_sc_open" = 1 ] && echo y || echo ies) the scanner cannot open, so nothing inside them is backed up:"
         printf '%s' "$_sc_lines" | while IFS= read -r _sc_l; do [ -n "$_sc_l" ] && NOTE "$_sc_l"; done
         [ "$_sc_open" -gt 8 ] && NOTE "and $((_sc_open-8)) more; see bzlogs/bzfilelist"
         NOTE "rename the directory, or fix its ownership, and the next scan runs through."
     elif [ "$_sc_gone" -gt 0 ]; then
-        OK "$_sc_gone director$([ "$_sc_gone" = 1 ] && echo y || echo ies) the scanner could not open have since been renamed or removed; the next scan confirms"
+        OK "$_sc_gone director$([ "$_sc_gone" = 1 ] && echo y || echo ies) the scanner could not open have since been renamed, removed or made readable; the next scan confirms"
     else
         OK "the scanner opened every directory it tried"
     fi
