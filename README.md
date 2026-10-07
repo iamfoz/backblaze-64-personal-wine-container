@@ -194,6 +194,7 @@ container cannot be changed, but you are free to use any port on the host side.
 A minimum of 2 volumes need to be mounted to the container
 
   * /config - This is where Wine and Backblaze will be installed
+  * Backup drives - map folders that hold files, not a ZFS pool's root: the client does not cross a mount point inside a drive, and each share on an Unraid ZFS pool is a dataset of its own, so `/mnt/cache` as a drive backs up nothing while `/mnt/cache/<share>` works. bb-doctor flags this.
   * Backup drives - these are the locations you wish to backup, any volume that is mounted as /drive_**driveletter** (from d up to z) will be mounted automatically for use in Backblaze with their equivalent letter, for example /drive_d will be mounted as D:. Mount these **read-write** - Backblaze creates a `.bzvol` folder in each drive's root, so a read-only mount will fail (the volume can't be tracked or its backup state inherited).
 
 You can mount drives with different paths, but these will need to be mounted manually within wine using the following method

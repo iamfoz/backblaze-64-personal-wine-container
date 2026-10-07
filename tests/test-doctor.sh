@@ -325,5 +325,20 @@ CF="$(env PATH="$FX/bin:$PATH" sh -c 'eval "$(sed -n "/_cfg_find_config_in()/,/^
 CF="$(env PATH="$FX/bin:$PATH" sh -c 'eval "$(sed -n "/_cfg_find_config_in()/,/^    _cfg_config_dir=/p" "$1" | sed "\$d")"; _cfg_find_config_in "$2" "$(stat -c %d:%i "$3")"' _ "$CDROP" "$FX/pool/other" "$FX/pool/appdata/Backblaze64")"
 [ -z "$CF" ] && echo "PASS config: and not under a drive that does not hold it" || { echo "FAIL config: found '$CF' under the wrong root"; FAILED=$((FAILED+1)); }
 
+# ---- the drives drop-in: folders that are separate filesystems -----------------
+# A ZFS pool mapped at its root: every share is a dataset of its own, and the
+# client does not cross mount points. Device numbers come from a .fakedev file
+# here, since a test cannot mount anything.
+mkdrive m ""; mkdir -p "$FX/drive_m/FozStore" "$FX/drive_m/appdata"
+echo 5 > "$FX/drive_m/.fakedev"; echo 7 > "$FX/drive_m/FozStore/.fakedev"; echo 8 > "$FX/drive_m/appdata/.fakedev"
+mkdrive n ""; mkdir -p "$FX/drive_n/media" "$FX/drive_n/backups"
+echo 5 > "$FX/drive_n/.fakedev"; echo 5 > "$FX/drive_n/media/.fakedev"; echo 9 > "$FX/drive_n/backups/.fakedev"
+DRM="$(cd "$FX" && sh -c 'PREFIX="$1"; BZ="$2"; OK(){ echo "[ok] $*"; }; WARN(){ echo "[warn] $*"; }; BAD(){ echo "[FAIL] $*"; }; NOTE(){ echo "  $*"; }; sed "s#^_dev() {.*#_dev() { cat \"\$1/.fakedev\" 2>/dev/null; }#" "$3" > "$4"; . "$4"' _ "$PFX" "$BZ" "$DROP" "$FX/drives-fakedev.sh" 2>&1)"
+has "$DRM" "M: every folder under .* is a separate filesystem, so the client backs up nothing on this drive: FozStore appdata\|M: every folder under .* is a separate filesystem, so the client backs up nothing on this drive: appdata FozStore" "mounts: a pool of datasets mapped at its root fails"
+has "$DRM" "N: 1 folder(s) under .* are separate filesystems and the client skips them: backups" "mounts: one dataset among ordinary folders is a warning"
+has "$DRM" "Map each one as a drive of its own\|map each one as a drive of its own" "mounts: with the fix"
+grep -q "D: .*separate filesystem" <<<"$DRM" && { echo "FAIL mounts: a drive with no mounts was flagged"; FAILED=$((FAILED+1)); } || echo "PASS mounts: a drive with no mounts is not flagged"
+rm -rf "$FX/drive_m" "$FX/drive_n" "${PFX}dosdevices/m:" "${PFX}dosdevices/n:"
+
 echo "$FAILED failures"
 exit $(( FAILED > 0 ? 1 : 0 ))

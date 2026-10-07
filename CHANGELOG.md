@@ -18,6 +18,11 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   comment markers; the rules the client wrote and hand edits are kept byte for byte, the previous
   file is kept beside it, and the managed rules travel in the settings export. From a forum
   user who was maintaining the file by hand.
+- bb-doctor fails a drive whose top-level folders are all separate filesystems, and warns when
+  some are. The client does not cross a mount point inside a drive, and a ZFS pool on Unraid keeps
+  each share and appdata as a dataset of its own, so mapping the pool's root backs up nothing: on
+  the test host the cache pool mapped as Y: produced an empty file list. The fix it names is to map
+  each dataset, such as `/mnt/cache/<share>`, as a drive of its own.
 - bb-doctor's drive selection check reads the client's own volume list. A drive is backed up
   when it is among the `<bzvolume mountPointPath>` records in `bzinfo.xml`; the per-drive filter
   entry the check used to look for is written only to override the default, so five newly added

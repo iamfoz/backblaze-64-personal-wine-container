@@ -34,6 +34,8 @@ _stamp_repair() {
     printf '%s\n' "$_sr_new" > "$_sr_file" || return 1
     grep -q "${_sr_attr}=\"${_sr_val}\"" "$_sr_file"
 }
+# Device number of a path; a function so the test suite can stand in for it.
+_dev() { stat -c %d "$1" 2>/dev/null; }
 for _link in "${PREFIX}dosdevices"/[d-z]:; do
     [ -L "$_link" ] || continue
     _root="$(readlink -f "$_link" 2>/dev/null)"
@@ -82,6 +84,36 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
         NOTE "  chown -R $(id -u):$(id -g) '<that folder>'"
     else
         OK "${_letter}: ${_root} readable, ${_seen} top-level entr$([ "$_seen" = 1 ] && echo y || echo ies) sampled"
+    fi
+
+    # -- Folders that are separate filesystems -------------------------------------
+    # The client does not cross a mount point inside a drive: to it that is
+    # another volume attached there. A ZFS pool on Unraid keeps each share and
+    # appdata as a dataset of its own, so mapping the pool's root maps nothing
+    # but mount points. On the test host the cache pool as Y: produced a
+    # 101-byte file list for a pool full of files (2026-10-07). Compared by
+    # device number; .bzvol is skipped, being the client's own.
+    _rdev="$(_dev "$_root")"
+    _mnts=""; _mn=0; _top=0
+    for _e in "$_root"/* "$_root"/.[!.]*; do
+        [ -d "$_e" ] || continue
+        case "$(basename "$_e")" in .bzvol) continue ;; esac
+        _top=$((_top+1))
+        [ "$_top" -gt 60 ] && break
+        _edev="$(_dev "$_e")"
+        if [ -n "$_rdev" ] && [ -n "$_edev" ] && [ "$_edev" != "$_rdev" ]; then
+            _mn=$((_mn+1))
+            [ "$_mn" -le 5 ] && _mnts="${_mnts} $(basename "$_e")"
+        fi
+    done
+    if [ "$_mn" -gt 0 ]; then
+        if [ "$_mn" = "$_top" ]; then
+            BAD "${_letter}: every folder under ${_root} is a separate filesystem, so the client backs up nothing on this drive:${_mnts}"
+        else
+            WARN "${_letter}: ${_mn} folder(s) under ${_root} are separate filesystems and the client skips them:${_mnts}"
+        fi
+        NOTE "the client does not cross mount points. Map each one as a drive of its own instead of"
+        NOTE "the parent (a ZFS pool's datasets, for example /mnt/cache/<share> rather than /mnt/cache)."
     fi
 
     # -- Read speed: how fast the client's parent can stage chunks -----------------
