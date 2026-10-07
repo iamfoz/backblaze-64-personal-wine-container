@@ -320,9 +320,9 @@ has "$(run)" "the scanner opened every directory it tried" "scan: a clean log is
 # pool itself as Y:. Resolved paths differ; device and inode do not.
 CDROP="$HERE/../rootfs-beta/usr/local/lib/bb-doctor-config.sh"
 mkdir -p "$FX/pool/appdata/Backblaze64/wine" "$FX/pool/other"
-CF="$(env PATH="$FX/bin:$PATH" sh -c 'eval "$(sed -n "/^    _cfg_find_config_in() {/,/^    \\}/p" "$1")"; _cfg_find_config_in "$2" "$(stat -c %d:%i "$3")"' _ "$CDROP" "$FX/pool" "$FX/pool/appdata/Backblaze64")"
+CF="$(env PATH="$FX/bin:$PATH" sh -c 'eval "$(sed -n "/_cfg_find_config_in()/,/^    _cfg_config_dir=/p" "$1" | sed "\$d")"; _cfg_find_config_in "$2" "$(stat -c %d:%i "$3")"' _ "$CDROP" "$FX/pool" "$FX/pool/appdata/Backblaze64")"
 [ "$CF" = "$FX/pool/appdata/Backblaze64" ] && echo "PASS config: the config directory is found under the pool by inode" || { echo "FAIL config: got '$CF'"; FAILED=$((FAILED+1)); }
-CF="$(env PATH="$FX/bin:$PATH" sh -c 'eval "$(sed -n "/^    _cfg_find_config_in() {/,/^    \\}/p" "$1")"; _cfg_find_config_in "$2" "$(stat -c %d:%i "$3")"' _ "$CDROP" "$FX/pool/other" "$FX/pool/appdata/Backblaze64")"
+CF="$(env PATH="$FX/bin:$PATH" sh -c 'eval "$(sed -n "/_cfg_find_config_in()/,/^    _cfg_config_dir=/p" "$1" | sed "\$d")"; _cfg_find_config_in "$2" "$(stat -c %d:%i "$3")"' _ "$CDROP" "$FX/pool/other" "$FX/pool/appdata/Backblaze64")"
 [ -z "$CF" ] && echo "PASS config: and not under a drive that does not hold it" || { echo "FAIL config: found '$CF' under the wrong root"; FAILED=$((FAILED+1)); }
 
 echo "$FAILED failures"
