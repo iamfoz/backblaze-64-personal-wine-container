@@ -41,16 +41,13 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   not only by path, so a pool mapped as a drive with the config bound from inside it is caught;
   the path comparison read "not inside any mapped drive" on the test host. An XML exclusion rule
   covering the directory counts as excluded, which is what the Exclusions panel makes for it.
-- Orphaned bztransmit processes are stopped. A chunk child whose pass has died, or a pass whose
-  bzserv has died, is reparented to the container's init and nothing waits for it; one sat like
-  that for four hours in September. `bb-health --orphans` lists those older than `STALL_MIN`,
-  the watchdog stops them every cycle and records it, and `bb-doctor` warns about them and stops
-  them with `--fix`. The scanner, bzfilelist, is never matched: the client runs it detached and
-  the pass that started it exits within minutes, so a scanner with no parent is a long scan in
-  progress. The first build of this rule, live for most of 7 October, treated it as an orphan
-  and killed every scan at twenty minutes, which left the backup looping on "producing file
-  lists"; if you ran that build, the next scan after this one completes on its own. Wine's own
-  services, also children of init, are not matched either.
+- Removed: the orphan rule added on 6 October, which stopped Backblaze processes whose parent was
+  the container's init. Wine starts every Windows process with a double fork, so every Wine
+  process has init as its parent from the moment it starts: the live pass, its upload children,
+  bzserv and the scanner alike. The rule therefore stopped working processes, first scans of
+  several disks at twenty minutes and then a live upload process, which hung the pass waiting
+  for it. If you ran builds from 6 to 8 October with Automatic recovery on, update; nothing it
+  stopped was lost, the client redoes the work.
 - The watchdog starts the Backblaze service itself when it has stayed down past one cooldown.
   The first sighting of `DOWN` is still left to the service watch, which acts within five
   minutes; a second sighting half an hour later means the watch did not manage it, and the

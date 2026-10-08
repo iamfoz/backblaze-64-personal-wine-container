@@ -51,7 +51,7 @@ usage() {
     cat <<'EOF'
 Reports whether the backup is running normally.
 
-BB-HEALTH [--version | --orphans]
+BB-HEALTH [--version]
 
 Displays one of:
 
@@ -61,12 +61,6 @@ Displays one of:
   WEDGE        A stale four-hour lock is blocking every pass.
 
 Exits with 0 for OK, otherwise 1.  Used by the container health check.
-
-With --orphans, lists bztransmit processes whose parent has exited and that
-have run on for STALL_MIN minutes since, one per line as "pid age-in-minutes
-name", and nothing when there are none. bzfilelist is never listed: the
-client starts a scan and lets the pass that started it exit, so a scanner
-with no parent is the normal shape of a long scan.
 EOF
 }
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
@@ -137,42 +131,6 @@ oldest_proc_min() {
     done
     echo "$oldest"
 }
-
-# bztransmit processes whose parent has gone: a chunk child whose pass died
-# (four hours, September) or a pass whose bzserv died. Reparented to the
-# container's init, pid 1, nothing waits for them. bzfilelist is deliberately
-# NOT matched: the client runs the scanner detached, the pass that launched it
-# exits within minutes ("could not find file for selected drive ... bailing
-# out") and later passes poll for the list. A scan of several disks runs for
-# hours with no parent, and a first version of this rule killed every one of
-# them at twenty minutes (2026-10-07), which left the backup looping on
-# "producing file lists". Wine's own services are children of pid 1 too and
-# are not matched. One line per orphan older than STALL_MIN: "pid age name".
-orphans() {
-    up="$(cut -d. -f1 /proc/uptime 2>/dev/null)"
-    tick="$(getconf CLK_TCK 2>/dev/null)"
-    case "$up" in ''|*[!0-9]*) return 0 ;; esac
-    case "$tick" in ''|*[!0-9]*) tick=100 ;; esac
-    for c in /proc/[0-9]*/cmdline; do
-        [ -r "$c" ] || continue
-        # Braced, so a process that exits between the listing and the read
-        # does not print the shell's own redirection error.
-        cmd="$({ tr '\0' ' ' < "$c"; } 2>/dev/null)"
-        case "$cmd" in *bztransmit.exe*) name=bztransmit.exe ;; *) continue ;; esac
-        set -- $({ sed 's/^.*) //' "${c%/cmdline}/stat"; } 2>/dev/null)
-        [ "${2:-}" = 1 ] || continue
-        st="${20:-}"
-        case "$st" in ''|*[!0-9]*) continue ;; esac
-        age=$(( ( up - st / tick ) / 60 ))
-        [ "$age" -ge "$STALL_MIN" ] || continue
-        p="${c#*/proc/}"
-        echo "${p%/cmdline} $age $name"
-    done
-}
-if [ "${1:-}" = "--orphans" ]; then
-    orphans
-    exit 0
-fi
 
 # Age of a file in whole minutes, or empty if it cannot be read. This uses stat
 # and epoch arithmetic rather than find's -newermt date parsing. A stall check has

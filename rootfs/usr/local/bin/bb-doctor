@@ -423,26 +423,6 @@ case "$status" in
         fi ;;
     *) WARN "could not determine backup health" ;;
 esac
-# Helpers left behind by a pass that exited: bb-health --orphans lists them.
-# Nothing waits for them, and one blocked on a wineserver reply sat for eight
-# hours on a live host before anyone looked.
-orphans="$(bb-health --orphans 2>/dev/null | grep -E '^[0-9]+ [0-9]+ bz' || true)"
-if [ -n "$orphans" ]; then
-    n=$(printf '%s\n' "$orphans" | wc -l | tr -d ' ')
-    WARN "$n orphaned Backblaze process(es) left by a pass that exited:$(printf '%s\n' "$orphans" | awk '{printf " %s [%s] %sm", $3, $1, $2}')"
-    if [ "$FIX" = 1 ]; then
-        for p in $(printf '%s\n' "$orphans" | awk '{print $1}'); do stop_process "$p"; done
-        sleep 3
-        left=""
-        for p in $(printf '%s\n' "$orphans" | awk '{print $1}'); do [ -r "/proc/$p/cmdline" ] && left="$left $p"; done
-        for p in $left; do kill -9 "$p" 2>/dev/null; done
-        FIXED "stopped $n orphaned process(es) - nothing was waiting for them"
-    else
-        NOTE "re-run with --fix to stop them, or set ENABLE_WATCHDOG=true, which does this on its own."
-    fi
-else
-    OK "no orphaned Backblaze processes"
-fi
 # Directories the scanner could not open. Each disk gets its own file list,
 # and a directory the client cannot open ends that list where it stands, so
 # everything the walk would have reached afterwards is never backed up and

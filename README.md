@@ -318,11 +318,7 @@ lock for `WEDGE`, or killing the upload children and the pass for `HANG` so that
 A `DOWN` is left to the service watch the first time; if the service is still down when the
 cooldown ends, the watchdog starts it with the same bounded `net start` the watch uses, so a
 watch that has died is not the only thing standing between a dead service and a backup that
-never resumes. Every cycle it also stops orphans: a bztransmit whose parent has exited and that
-has run on for `STALL_MIN` minutes since, such as a chunk child whose pass died. Nothing waits
-for such a process and the fresh pass has its own. The scanner, bzfilelist, is never treated as
-one: the client runs it detached from the pass that started it, and a scan of several disks runs
-for hours with no parent. `bb-health --orphans` lists them, and `bb-doctor --fix` stops them.
+never resumes.
 Every action is logged, shown as a warning row on the Status tab's timeline, sent as an
 "Automatic recovery acted" notification and counted in the metrics. After detecting a fault it waits 30 minutes before acting
 again - whether or not the recovery succeeded - so a fault it cannot fix produces one
@@ -451,7 +447,7 @@ thread count, stalls, and whether Backblaze is reachable.
 With `--fix` it repairs what can be repaired safely: the reported Windows version,
 the supportedOS manifest, missing drive links, missing skin aliases, a stale lock left behind
 by an out-of-memory kill, a stopped Backblaze service, a pass stuck waiting for a lost upload
-child, helper processes left behind by a pass that exited, and a drive stamp (`.bzvol/bzvol_id.xml`) whose volume id or computer
+child, and a drive stamp (`.bzvol/bzvol_id.xml`) whose volume id or computer
 identity differs from the client's own record, restored to the value the client wrote with the
 previous stamp kept beside it. Repairs are idempotent and are skipped whenever the diagnosis is
 ambiguous; the stamp repair is the one that touches the backup's identity, and it writes only a

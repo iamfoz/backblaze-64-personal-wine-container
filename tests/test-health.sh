@@ -47,7 +47,7 @@ mkproc(){ rm -rf "$FX/proc"; mkdir -p "$FX/proc"; echo "$UP.00 $UP.00" > "$FX/pr
 # the 20th field after the comm). mkproc assigns pids from 100 in argument
 # order. Without a stat file the process age is unreadable, and bb-health must
 # treat it as old enough to own the lock (fail safe).
-# The third argument is the parent pid: 1 makes an orphan, otherwise a live parent.
+# The third argument is the parent pid; a live parent when omitted.
 procage(){ printf '%s (bztransmit.exe) S %s 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 %s 0\n' \
   "$1" "${3:-99}" $(( (UP - $2) * 100 )) > "$FX/proc/$1/stat"; }
 run(){ env "$@" "$FX/bb-health" 2>/dev/null | awk '{print $1}'; }
@@ -206,18 +206,5 @@ mkproc "bzbui.exe -noquiet"; procage 100 600
 ok "DOWN" "$(run)" "with no pass to stop the outage reads as DOWN"
 
 echo
-# 28. orphans: a bztransmit reparented to pid 1 and past STALL_MIN is listed; a
-# young orphan, a live-parented one, Wine's own pid-1 children and a scanner
-# (which the client runs detached, for hours) are not.
-# The old orphan is a pass, not a push child: an old push child is a HANG in
-# its own right, which is the right answer and a different test.
-mkproc "bztransmit.exe -prepare_bzcombs" "bztransmit.exe -threadpush bar.xml" "bztransmit.exe -prepare_bzcombs" "wineserver" "bzserv.exe" "bzfilelist.exe"
-procage 100 30000 1; procage 101 600 1; procage 102 30000; procage 103 30000 1; procage 104 30000 1; procage 105 30000 1
-echo "line" > "$LOGF"
-ok "100 500 bztransmit.exe" "$(env "$FX/bb-health" --orphans 2>/dev/null | tr '\n' ';' | sed 's/;$//')" \
-   "--orphans lists only the old bztransmit whose parent has gone, never a scanner"
-ok "OK" "$(run)" "and an orphan alone does not change the health state"
-ok "" "$(env STALL_MIN=600 "$FX/bb-health" --orphans 2>/dev/null)" "a longer STALL_MIN keeps it off the list"
-
 echo "$FAILED failures"
 exit $(( FAILED > 0 ? 1 : 0 ))
