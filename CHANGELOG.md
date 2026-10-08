@@ -41,6 +41,16 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   not only by path, so a pool mapped as a drive with the config bound from inside it is caught;
   the path comparison read "not inside any mapped drive" on the test host. An XML exclusion rule
   covering the directory counts as excluded, which is what the Exclusions panel makes for it.
+- The watchdog restarts the Backblaze service before leaked file handles exhaust Wine's open-file
+  limit, and bb-doctor reports wineserver's open files against that limit. Client 10.0.3.1075's
+  service opens its `Backup.sql` database every few seconds and never closes it; on the test host
+  that was 120 handles a minute. At wineserver's 40,960 limit nothing in the prefix can open a file:
+  upload children cannot start and the pass hangs on them, the scanner fails with Windows error 4,
+  and the service dies on "unable to open database file". This is the daily bzserv death seen
+  since 1075, and the hung pass that came before it. The restart comes at 85% (`FD_RESTART_PCT`),
+  is recorded on the timeline, and releases every leaked handle; `bb-doctor --fix` does the same
+  on demand. The README now advises keeping `/config` on `/mnt/cache` on Unraid, so a leak cannot
+  exhaust shfs for the rest of the server. From issue #13, with thanks for the measurements.
 - The Status section's drive bars are in drive-letter order, lined up in one grid, and the backup
   gauge and the drive bars each have a line of their own. Sorted by size, the drives reordered
   themselves whenever one was added or remapped, and in the same flow as everything else every

@@ -194,6 +194,7 @@ container cannot be changed, but you are free to use any port on the host side.
 A minimum of 2 volumes need to be mounted to the container
 
   * /config - This is where Wine and Backblaze will be installed
+  * Config folder on Unraid - prefer `/mnt/cache/appdata/<name>` to `/mnt/user/appdata/<name>`. Every file Wine holds open is also open in Unraid's shfs, which shares one open-file limit with everything else on `/mnt/user`, so a handle leak in the client can make other containers fail.
   * Backup drives - map folders that hold files, not a ZFS pool's root: the client does not cross a mount point inside a drive, and each share on an Unraid ZFS pool is a dataset of its own, so `/mnt/cache` as a drive backs up nothing while `/mnt/cache/<share>` works. bb-doctor flags this.
   * Backup drives - these are the locations you wish to backup, any volume that is mounted as /drive_**driveletter** (from d up to z) will be mounted automatically for use in Backblaze with their equivalent letter, for example /drive_d will be mounted as D:. Mount these **read-write** - Backblaze creates a `.bzvol` folder in each drive's root, so a read-only mount will fail (the volume can't be tracked or its backup state inherited).
 
@@ -318,7 +319,11 @@ lock for `WEDGE`, or killing the upload children and the pass for `HANG` so that
 A `DOWN` is left to the service watch the first time; if the service is still down when the
 cooldown ends, the watchdog starts it with the same bounded `net start` the watch uses, so a
 watch that has died is not the only thing standing between a dead service and a backup that
-never resumes.
+never resumes. Every cycle it also checks Wine's open files: client 10.0.3.1075's service leaks a
+handle on its `Backup.sql` database every few seconds, and at wineserver's limit nothing in the
+prefix can open a file, so upload children cannot start and the service itself dies. At 85% of
+the limit the watchdog restarts the service, which releases every leaked handle; on a busy host
+that is every few hours. Pinning `BACKBLAZE_VERSION=10.0.1.1069` avoids the leak altogether.
 Every action is logged, shown as a warning row on the Status tab's timeline, sent as an
 "Automatic recovery acted" notification and counted in the metrics. After detecting a fault it waits 30 minutes before acting
 again - whether or not the recovery succeeded - so a fault it cannot fix produces one
@@ -336,6 +341,7 @@ very slow uplink where more than 20 minutes between transmit-log writes is norma
 |`LOCK_FAILS`| Recent "Failed to grab fourHourLock" log lines required to corroborate a `WEDGE` | `5` |
 |`LOCK_GRACE_MIN`| Minutes a `bztransmit` must have been running before it is assumed to own the lock | `2` |
 |`WATCHDOG_INTERVAL`| Seconds between watchdog health checks | `300` |
+|`FD_RESTART_PCT`| The watchdog restarts the Backblaze service when Wine's open files reach this percentage of the limit, to release the handles client 10.0.3.1075 leaks | `85` |
 |`COOLDOWN_MIN`| Minutes the watchdog waits after acting before it may act again (raised automatically if set at or below `STALL_MIN`) | `30` |
 
 All six take plain whole numbers; anything else falls back to the default.

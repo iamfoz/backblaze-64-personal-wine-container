@@ -66,6 +66,24 @@ proc_pids() {
     done
 }
 
+# wineserver's open files: "count limit backup_sql". Under Wine every handle
+# a Windows process holds is an fd in wineserver, so this is the whole prefix's
+# budget. Client 10.0.3.1075's bzserv opens bzbackup/Backup.sql every ten
+# seconds and never closes it (issue #13): 120 a minute on the test host on
+# 2026-10-08. At the limit nothing in the prefix can open a file: upload
+# children cannot start, so the pass hangs on them, the scanner fails with
+# Windows error 4, and bzserv itself dies on "unable to open database file".
+wineserver_fds() {
+    for _w in $(proc_pids 'bin/wineserver'); do
+        _n=$(ls "/proc/$_w/fd" 2>/dev/null | wc -l)
+        _l=$(awk '/^Max open files/{print $4}' "/proc/$_w/limits" 2>/dev/null)
+        _s=$(ls -l "/proc/$_w/fd" 2>/dev/null | grep -c 'Backup\.sql')
+        case "$_l" in ''|*[!0-9]*) _l=0 ;; esac
+        echo "$_n $_l $_s"
+        return 0
+    done
+}
+
 # One process, by pid. A function so the test suite can stand in for it.
 stop_process() { kill "$1" 2>/dev/null; }
 
@@ -338,6 +356,27 @@ if [ "$pf" -ge 10 ]; then
 fi
 if [ "${st:-0}" -gt 0 ] && [ "${sf:-0}" -le $(( st / 4 )) ] && [ "${ma:-99}" -lt 1 ]; then
     WARN "swap is three quarters used with under 1 GB of RAM available - the next peak has nowhere to go"
+fi
+set -- $(wineserver_fds)
+if [ "${2:-0}" -gt 0 ]; then
+    _fpct=$(( ${1:-0} * 100 / $2 ))
+    if [ "$_fpct" -ge 75 ]; then
+        WARN "wineserver has $1 of $2 files open (${_fpct}%) - at the limit nothing in the prefix can open a file"
+        [ "${3:-0}" -gt $(( ${1:-0} / 2 )) ] && NOTE "$3 of them are on Backup.sql: client 10.0.3.1075 leaks a handle on it every few seconds (issue #13)."
+        if [ "$FIX" = 1 ]; then
+            timeout -k 10 60 setsid wine net stop bzserv >/dev/null 2>&1; sleep 3
+            timeout -k 10 120 setsid wine net start bzserv >/dev/null 2>&1; sleep 10
+            set -- $(wineserver_fds)
+            FIXED "restarted bzserv to release leaked file handles - wineserver now has ${1:-?} open"
+        else
+            NOTE "re-run with --fix to restart bzserv, which releases them; the watchdog does this on its own at 85%."
+            NOTE "pinning BACKBLAZE_VERSION=10.0.1.1069 avoids the leak altogether."
+        fi
+    elif [ "${3:-0}" -gt 1000 ]; then
+        INFO "wineserver has $1 of $2 files open, $3 on Backup.sql: the 10.0.3.1075 handle leak (issue #13). The watchdog restarts bzserv at 85%."
+    else
+        OK "wineserver has $1 of $2 files open"
+    fi
 fi
 zomb="$(awk '/^State:/{print $2}' /proc/[0-9]*/status 2>/dev/null | grep -c Z)"
 [ "${zomb:-0}" -gt 50 ] && WARN "${zomb} zombie processes - run the container with --init to reap them" \

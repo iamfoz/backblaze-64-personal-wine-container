@@ -19,6 +19,7 @@ export BB_RECOVERY_LOG="$FX/recovery.log"
 sed -e 's#COOLDOWN_MIN \* 60#COOLDOWN_MIN * 1#' \
     -e "s#^bzserv_up() {.*#bzserv_up() { [ -f \"$FX/bzserv-up\" ]; }#" \
     -e "s#^SWITCH=.*#SWITCH=$FX/config/bb-api/watchdog.json#" \
+    -e "s#^wineserver_fds() {#wineserver_fds() { cat \"$FX/fds\" 2>/dev/null; return 0; }; _real_fds() {#" \
     -e "s#^\. /usr/local/lib/bb-record.sh.*#. $HERE/../rootfs/usr/local/lib/bb-record.sh#" \
     "$SRC" > "$FX/bb-watchdog"
 chmod +x "$FX/bb-watchdog"
@@ -79,6 +80,21 @@ echo "OK" > "$FX/health"
 ( sleep 3; echo "DOWN the Backblaze service (bzserv) is not running" > "$FX/health" ) &
 run_watchdog 5
 ok '[ ! -f "$FX/wine.log" ]' "a DOWN after an OK is a first sighting: no Wine call"
+
+# 5. wineserver near its open-file limit: bzserv is restarted to release the
+# leaked handles, whatever the health state, and once per cooldown.
+rm -f "$FX/wine.log" "$BB_RECOVERY_LOG"
+echo "OK" > "$FX/health"; touch "$FX/start-works"
+echo "35500 40960 34000" > "$FX/fds"
+run_watchdog 8
+ok 'grep -q "wine net stop bzserv" "$FX/wine.log" && grep -q "wine net start bzserv" "$FX/wine.log"' "at 86% of the limit bzserv is stopped and started"
+ok 'grep -q "detected: wineserver has 35500 of 40960 files open (34000 on Backup.sql)" "$BB_RECOVERY_LOG"' "and the reason is recorded with the counts"
+ok '[ "$(grep -c "wine net start" "$FX/wine.log")" -eq 1 ]' "once, not once per interval"
+rm -f "$FX/wine.log" "$BB_RECOVERY_LOG"
+echo "30000 40960 28000" > "$FX/fds"
+run_watchdog 4
+ok '[ ! -f "$FX/wine.log" ]' "below the threshold nothing is restarted"
+rm -f "$FX/fds"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

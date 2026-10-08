@@ -31,6 +31,7 @@ sed -e "s#/proc/\[0-9\]\*/cmdline#$FX/proc/[0-9]*/cmdline#g" \
     -e "s#\"/proc/\$p/cmdline\"#\"$FX/proc/\$p/cmdline\"#g" \
     -e "s#^stop_process() { kill \"\$1\" 2>/dev/null; }#stop_process() { rm -rf \"$FX/proc/\$1\"; }#" \
     -e "s#/proc/uptime#$FX/proc/uptime#g" \
+    -e "s#^wineserver_fds() {#wineserver_fds() { cat \"$FX/fds\" 2>/dev/null; return 0; }; _real_fds() {#" \
     "$SRC" > "$FX/bb-doctor"
 chmod +x "$FX/bb-doctor"
 printf '#!/bin/sh\necho OK\n' > "$FX/bin/bb-health"
@@ -288,6 +289,17 @@ if grep -q "deadbeef\|a279b04955a1845499e60219" <<<"$DF"; then echo "FAIL fix: n
 for L in d e f g h i j k l; do rm -f "${PFX}dosdevices/$L:"; done
 
 echo
+# ---- wineserver's open files (issue #13) --------------------------------------
+echo "800 40960 400" > "$FX/fds"
+has "$(run)" "\[ ok \] wineserver has 800 of 40960 files open" "fds: a normal count is an ok line"
+echo "5000 40960 4200" > "$FX/fds"
+has "$(run)" "\[info\] wineserver has 5000 of 40960 files open, 4200 on Backup.sql" "fds: a growing Backup.sql count is named"
+echo "33000 40960 31000" > "$FX/fds"
+out="$(run)"
+has "$out" "\[warn\] wineserver has 33000 of 40960 files open (80%)" "fds: three quarters of the limit warns"
+has "$out" "31000 of them are on Backup.sql" "fds: and names the leak"
+rm -f "$FX/fds"
+
 # ---- directories the scanner could not open --------------------------------
 mkdir -p "$BZ/bzlogs/bzfilelist" "${PFX}dosdevices"
 ln -sfn "$FX/drive_d" "${PFX}dosdevices/d:"; mkdir -p "$FX/drive_d/Senary/Joe \"Fingers\" Webster" "$FX/drive_d/Music/Father of All..."

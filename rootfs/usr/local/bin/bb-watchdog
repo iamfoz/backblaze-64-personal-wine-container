@@ -15,6 +15,14 @@
 #          and two hosts then sat DOWN for six and seven hours while this
 #          branch reported the state every half hour and did nothing about it.
 #
+#   FDS    Restart bzserv when wineserver's open files pass FD_RESTART_PCT
+#          (85) percent of its limit. Client 10.0.3.1075 leaks a handle on
+#          Backup.sql every few seconds (issue #13); at the limit nothing in
+#          the prefix can open a file and bzserv dies on its own, taking the
+#          pass with it. A controlled restart first releases every leaked
+#          handle. Checked every cycle, whatever the health state, with its own
+#          cooldown so a limit set too low cannot restart in a loop.
+#
 #   HANG   Kill the push children and the backup pass that launched them.
 #          Killing the children alone used to be enough; since client 10.0.3
 #          the pass waits for a child's result file with no timeout, so a child
@@ -41,13 +49,16 @@ Recovers the backup automatically when bb-health reports a fault.
 BB-WATCHDOG [--version]
 
 Started by the container when ENABLE_WATCHDOG is true.  Clears a stale
-four-hour lock, restarts a backup pass stuck on its upload children, and
-starts the Backblaze service when it has stayed down past one cooldown.
+four-hour lock, restarts a backup pass stuck on its upload children, starts
+the Backblaze service when it has stayed down past one cooldown, and restarts
+it before leaked file handles exhaust Wine's open-file limit.
 Actions are written to the container log and the recovery log.
 
   ENABLE_WATCHDOG      Must be true, or the watchdog stays idle.
   WATCHDOG_INTERVAL    Seconds between checks.  Default 300.
   COOLDOWN_MIN         Minutes to wait after acting.  Default 30.
+  FD_RESTART_PCT       Restart bzserv at this percentage of wineserver's
+                       open-file limit.  Default 85.
 EOF
 }
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
@@ -62,6 +73,10 @@ fi
 
 INTERVAL="${WATCHDOG_INTERVAL:-300}"
 COOLDOWN_MIN="${COOLDOWN_MIN:-30}"
+FD_RESTART_PCT="${FD_RESTART_PCT:-85}"
+case "$FD_RESTART_PCT" in ''|*[!0-9]*) FD_RESTART_PCT=85 ;; esac
+[ "$FD_RESTART_PCT" -lt 10 ] && FD_RESTART_PCT=10
+last_fd_restart=0
 STALL_MIN="${STALL_MIN:-20}"
 last_action=0
 down_seen=0        # a DOWN was acted on at the previous action, so it has persisted
@@ -118,6 +133,24 @@ start_bzserv() {
     bzserv_up
 }
 
+# wineserver's open files: "count limit backup_sql". Under Wine every handle
+# a Windows process holds is an fd in wineserver, so this is the whole prefix's
+# budget. Client 10.0.3.1075's bzserv opens bzbackup/Backup.sql every ten
+# seconds and never closes it (issue #13): 120 a minute on the test host on
+# 2026-10-08. At the limit nothing in the prefix can open a file: upload
+# children cannot start, so the pass hangs on them, the scanner fails with
+# Windows error 4, and bzserv itself dies on "unable to open database file".
+wineserver_fds() {
+    for _w in $(proc_pids 'bin/wineserver'); do
+        _n=$(ls "/proc/$_w/fd" 2>/dev/null | wc -l)
+        _l=$(awk '/^Max open files/{print $4}' "/proc/$_w/limits" 2>/dev/null)
+        _s=$(ls -l "/proc/$_w/fd" 2>/dev/null | grep -c 'Backup\.sql')
+        case "$_l" in ''|*[!0-9]*) _l=0 ;; esac
+        echo "$_n $_l $_s"
+        return 0
+    done
+}
+
 cooling_down() {
     now=$(date +%s)
     [ $(( now - last_action )) -lt $(( COOLDOWN_MIN * 60 )) ]
@@ -137,6 +170,20 @@ while true; do
         say "switched off from Settings - stopping"
         echo disabled > /tmp/.bb-watchdog-state 2>/dev/null
         exit 0
+    fi
+
+    # Open files first, every cycle: a leak is not a health state, and the
+    # restart that clears it must come before the limit, not after.
+    set -- $(wineserver_fds)
+    if [ "${2:-0}" -gt 0 ] && [ $(( ${1:-0} * 100 )) -ge $(( $2 * FD_RESTART_PCT )) ] \
+       && [ $(( $(date +%s) - last_fd_restart )) -ge $(( COOLDOWN_MIN * 60 )) ]; then
+        last_fd_restart=$(date +%s)
+        act "detected: wineserver has $1 of $2 files open ($3 on Backup.sql) - restarting bzserv to release them"
+        if start_bzserv; then
+            act "recovered: restarted bzserv; wineserver now has $(wineserver_fds | cut -d' ' -f1) files open"
+        else
+            act "could NOT restart bzserv - see bzlogs/bzserv; the service watch will try again"
+        fi
     fi
 
     status="$(bb-health 2>/dev/null)" || true
