@@ -1,0 +1,135 @@
+ntdll: Cache how case sensitivity is decided per device on Linux.
+
+get_dir_case_sensitivity_stat() runs after every failed exact-name lookup. On
+Linux it opened the directory, tried the ext4 case-folding ioctl, called
+fstatfs() and, on FUSE, stat()ed ".ciopfs", every time. On a FUSE file system
+each of those is a round trip to the daemon: on Unraid's shfs, fstatfs() takes
+about 21 ms over a share spread across disks, and a backup scan measured it at
+half its wall time (2,418 calls in 30 s, 13.2 s).
+
+Only file systems with per-directory case folding (ext4, f2fs, tmpfs,
+bcachefs) need the directory itself; everything else answers for the whole
+device. Cache the decision per st_dev, take ciopfs from the mount table's
+"fuse.ciopfs" type rather than a marker probe, and open the directory only
+where the ioctl is needed.
+
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -1248,6 +1248,80 @@
+ }
+ #endif
+ 
++#ifdef __linux__
++enum { CASE_MODE_SENSITIVE, CASE_MODE_INSENSITIVE, CASE_MODE_PER_DIR };
++
++static pthread_mutex_t case_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
++static struct { dev_t dev; int mode; } case_cache[64];
++static unsigned int case_cache_next;
++
++/* whether the FUSE file system mounted from this device is ciopfs, which is
++ * case insensitive; the subtype is only in the mount table */
++static int is_ciopfs_device( dev_t dev )
++{
++    char line[1024];
++    unsigned int maj, min;
++    int ret = 0;
++    FILE *f = fopen( "/proc/self/mountinfo", "r" );
++
++    if (!f) return 0;
++    while (!ret && fgets( line, sizeof(line), f ))
++    {
++        char *sep;
++        if (sscanf( line, "%*u %*u %u:%u", &maj, &min ) != 2) continue;
++        if (maj != (unsigned int)major( dev ) || min != (unsigned int)minor( dev )) continue;
++        if ((sep = strstr( line, " - " ))) ret = !strncmp( sep + 3, "fuse.ciopfs ", 12 );
++    }
++    fclose( f );
++    return ret;
++}
++
++/* how case sensitivity is decided on the device holding root_fd/dir */
++static int linux_case_mode( int root_fd, const char *dir, dev_t dev )
++{
++    struct statfs stfs;
++    unsigned int i;
++    int fd, mode = CASE_MODE_SENSITIVE;
++
++    mutex_lock( &case_cache_mutex );
++    for (i = 0; i < ARRAY_SIZE(case_cache); i++)
++    {
++        if (case_cache[i].dev != dev || !dev) continue;
++        mode = case_cache[i].mode;
++        mutex_unlock( &case_cache_mutex );
++        return mode;
++    }
++    mutex_unlock( &case_cache_mutex );
++
++    if ((fd = openat( root_fd, dir, O_RDONLY | O_NONBLOCK )) == -1) return CASE_MODE_PER_DIR;
++    if (fstatfs( fd, &stfs ) == -1)
++    {
++        close( fd );
++        return CASE_MODE_PER_DIR;
++    }
++    close( fd );
++    switch (stfs.f_type)
++    {
++    case 0xef53:      /* EXT4_SUPER_MAGIC (and ext2/ext3) */
++    case 0xf2f52010:  /* F2FS_SUPER_MAGIC */
++    case 0x01021994:  /* TMPFS_MAGIC */
++    case 0xca451a4e:  /* BCACHEFS_SUPER_MAGIC */
++        mode = CASE_MODE_PER_DIR;  /* case folding is a per-directory flag */
++        break;
++    case 0x65735546:  /* FUSE_SUPER_MAGIC */
++        mode = is_ciopfs_device( dev ) ? CASE_MODE_INSENSITIVE : CASE_MODE_SENSITIVE;
++        break;
++    }
++
++    mutex_lock( &case_cache_mutex );
++    case_cache[case_cache_next].dev = dev;
++    case_cache[case_cache_next].mode = mode;
++    case_cache_next = (case_cache_next + 1) % ARRAY_SIZE(case_cache);
++    mutex_unlock( &case_cache_mutex );
++    return mode;
++}
++#endif
++
+ /***********************************************************************
+  *           get_dir_case_sensitivity_stat
+  *
+@@ -1307,24 +1381,24 @@
+ 
+ #elif defined(__linux__)
+     BOOLEAN sens = TRUE;
+-    struct statfs stfs;
+     struct stat st;
+-    int fd, flags;
++    int fd, flags, mode;
++
++    /* Most file systems answer for the whole device, so the answer is cached
++     * per device and the directory is not even opened again. Only file
++     * systems with per-directory case folding need the ioctl every time. On a
++     * FUSE file system each fstatfs() is a round trip to the daemon, and
++     * Unraid's shfs takes about 21 ms over a share spread across disks; done
++     * on every failed lookup, that was half the wall time of a backup scan. */
++    if (fstatat( root_fd, dir, &st, 0 ) == -1) return TRUE;
++    mode = linux_case_mode( root_fd, dir, st.st_dev );
++    if (mode == CASE_MODE_SENSITIVE) return TRUE;
++    if (mode == CASE_MODE_INSENSITIVE) return FALSE;
+ 
+     if ((fd = openat( root_fd, dir, O_RDONLY | O_NONBLOCK )) == -1)
+         return TRUE;
+-
+     if (ioctl( fd, EXT2_IOC_GETFLAGS, &flags ) != -1 && (flags & EXT4_CASEFOLD_FL))
+-    {
+-        sens = FALSE;
+-    }
+-    else if (fstatfs( fd, &stfs ) == 0 &&                          /* CIOPFS is case insensitive.  Instead of */
+-             stfs.f_type == 0x65735546 /* FUSE_SUPER_MAGIC */ &&   /* parsing mtab to discover if the FUSE FS */
+-             fstatat( fd, ".ciopfs", &st, AT_NO_AUTOMOUNT ) == 0)  /* is CIOPFS, look for .ciopfs in the dir. */
+-    {
+         sens = FALSE;
+-    }
+-
+     close( fd );
+     return sens;
+ #else

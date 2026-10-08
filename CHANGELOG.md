@@ -41,6 +41,12 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   not only by path, so a pool mapped as a drive with the config bound from inside it is caught;
   the path comparison read "not inside any mapped drive" on the test host. An XML exclusion rule
   covering the directory counts as excluded, which is what the Exclusions panel makes for it.
+- A sixth Wine patch makes scans and pass preparation much faster on FUSE file systems such as
+  Unraid user shares. After every failed exact-name lookup Wine checked whether the directory was
+  case sensitive, calling fstatfs() each time; on shfs that call takes about 21 ms, and a user's
+  trace measured it at half the wall time of a pass. The answer is now cached per device. Mapping
+  disks and pools rather than `/mnt/user` remains the faster setup, since shfs is slower at every
+  other call too. From a forum user's strace measurements, with thanks.
 - The beta moves to Wine 11.19 and carries a fifth Wine patch that fixes the file-handle leak at
   its source. wineserver kept every closed descriptor on a locked file open, because a classic
   POSIX lock belongs to the whole server process and closing any descriptor drops all of them.
