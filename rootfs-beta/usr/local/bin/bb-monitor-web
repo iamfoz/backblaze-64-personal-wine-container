@@ -2991,9 +2991,18 @@ INDEX_HTML = """<!doctype html>
        letter-spacing:.06em;padding-top:1px;}
   .srow-items{display:flex;flex-wrap:wrap;gap:6px 26px;flex:1 1 0;min-width:0;align-items:baseline;}
   .sline{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:6px 26px;align-items:baseline;}
-  /* The drive bars in fixed columns, so a figure growing a digit moves nothing. */
-  .sline-drives{display:grid;grid-template-columns:repeat(auto-fill,minmax(25em,1fr));gap:6px 26px;}
-  .sline-drives .gauge{justify-content:space-between;}
+  /* The drive bars in one grid: letter, sizes, bar and percentage are columns,
+     two drives a row, so every bar starts at the same place. */
+  .vgrid{display:grid;grid-template-columns:repeat(2,max-content max-content 120px max-content);
+         gap:6px 10px;align-items:center;white-space:nowrap;}
+  .vgrid .vrow{display:contents;}
+  .vgrid .vs,.vgrid .vp{text-align:right;}
+  .vgrid .vp{margin-right:26px;}
+  @media (max-width:700px){
+    .vgrid{grid-template-columns:max-content max-content 1fr max-content;}
+    .vgrid .vp{margin-right:6px;}
+    .vgrid .track{width:auto;}
+  }
   .stat{white-space:nowrap;}
   @media (max-width:560px){
     .srow{gap:2px;}
@@ -3289,10 +3298,17 @@ function rateTitle(d){
 // bars would repeat the overall one exactly.
 function perVolumeHtml(vols){
   if(!vols || vols.length < 2) return '';
-  return vols.map(function(v){
-    return gaugeHtml(String(v.path).replace(/\\\\$/, '') + (v.detached ? ' (old)' : ''), {used_str: v.used_str, total_str: v.total_str, pct: v.pct}, true,
-                     v.remaining_files != null ? v.remaining_files.toLocaleString() + ' files left' : '', '', 2);
-  }).join('');
+  // One grid for every drive: letter, sizes, bar and percentage are columns,
+  // so the bars line up whatever width the figures beside them take.
+  return '<div class="vgrid">' + vols.map(function(v){
+    var cls = v.pct>=67 ? '' : (v.pct>=34 ? 'warn' : 'bad');
+    var tip = v.remaining_files != null ? ' title="' + v.remaining_files.toLocaleString() + ' files left"' : '';
+    return '<span class="vrow gauge ' + cls + '"' + tip + '>' +
+      '<span class="vl">' + esc(String(v.path).replace(/\\\\$/, '')) + (v.detached ? ' (old)' : '') + '</span>' +
+      '<span class="vs">' + esc(v.used_str) + '/' + esc(v.total_str) + '</span>' +
+      '<span class="track"><span class="fill" style="width:' + Math.min(100, v.pct) + '%"></span></span>' +
+      '<span class="vp">' + v.pct.toFixed(2) + '%</span></span>';
+  }).join('') + '</div>';
 }
 // The datacentre the account is assigned to. The client reports it outright, so
 // that reading is preferred over the pod the monitor infers from the sockets the
