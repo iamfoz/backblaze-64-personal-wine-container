@@ -41,6 +41,12 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   not only by path, so a pool mapped as a drive with the config bound from inside it is caught;
   the path comparison read "not inside any mapped drive" on the test host. An XML exclusion rule
   covering the directory counts as excluded, which is what the Exclusions panel makes for it.
+- The Status section's drive bars are in drive-letter order, in fixed columns, and the backup
+  gauge and the drive bars each have a line of their own. Sorted by size, the drives reordered
+  themselves whenever one was added or remapped, and in the same flow as everything else every
+  change in the ETA's width moved the drives and the rest of the section. A letter that has
+  carried two volumes, as a remap leaves it, shows the current one first and the older one
+  marked "(old)". Labels drop the trailing backslash.
 - Removed: the orphan rule added on 6 October, which stopped Backblaze processes whose parent was
   the container's init. Wine starts every Windows process with a double fork, so every Wine
   process has init as its parent from the moment it starts: the live pass, its upload children,

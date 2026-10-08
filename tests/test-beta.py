@@ -700,6 +700,27 @@ finally:
     bbdata.tail_log = _tail
 ok("lostlock" in kinds, "health() raises lostlock from the transmit log: %r" % kinds)
 
+# Drives by letter, not by size, and a letter that has carried two volumes (a
+# remap gives the drive a new identity) shows the newer first, the older marked.
+def _vol(g, hexmp, seen):
+    return '<bzvolume bzVolumeGuid="%s" mountPointPathHex="%s" lastTimeVolumeWasSeenAttachedGmtMillis="%d" />' % (g, hexmp, seen)
+_files = {
+    bbdata.BZSTAT_TOTAL: "".join('<bzvolume bzVolumeGuid="%s" pervol_sel_for_backup_numbytes="%d" pervol_sel_for_backup_numfiles="10" />' % (g, n)
+                                 for g, n in (("vH", 900), ("vD", 500), ("vYold", 10), ("vE", 700), ("vYnew", 300))),
+    bbdata.BZSTAT_REMAIN: "",
+    bbdata.BZ + "/bzvolumes.xml": "".join((_vol("vH", "483a5c", 5), _vol("vD", "443a5c", 5), _vol("vYold", "593a5c", 1),
+                                          _vol("vE", "453a5c", 5), _vol("vYnew", "593a5c", 9))),
+}
+_rd = bbdata.read
+bbdata.read = lambda path: _files.get(path, "")
+try:
+    _pv = bbdata.per_volume()
+finally:
+    bbdata.read = _rd
+ok([(v["path"], v["detached"]) for v in _pv] == [("D:\\", False), ("E:\\", False), ("H:\\", False), ("Y:\\", False), ("Y:\\", True)],
+   "drives come in letter order, the older volume on a reused letter last and marked: %r" % [(v["path"], v["detached"]) for v in _pv])
+ok(_pv[3]["total"] == 300, "and the current Y: is the one seen attached most recently")
+
 # The scanner's own log names the directories it could not open. A disk's file
 # list ends at the first, so the Monitor warns while one still exists under
 # that name, and stops once it has been renamed (the test host, 2026-10-07).

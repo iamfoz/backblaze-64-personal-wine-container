@@ -374,7 +374,7 @@ def snapshot_to_json(d):
         "compress_saved": human(d["compress_saved"]) if d.get("compress_saved") else None,
         # Which drive is holding the backup up, and how big what is left is
         # against what has gone. Both come from files already read.
-        "per_volume": ([{"path": v["path"], "pct": round(v["pct"], 2),
+        "per_volume": ([{"path": v["path"], "pct": round(v["pct"], 2), "detached": bool(v.get("detached")),
                           "used_str": human(v["done"], 2), "total_str": human(v["total"], 2),
                           "remaining_files": v["remaining_files"]}
                          for v in d["per_volume"]] if d.get("per_volume") else None),
@@ -2990,6 +2990,10 @@ INDEX_HTML = """<!doctype html>
   .srow-label{flex:0 0 5.5em;color:var(--dim);font-size:11px;text-transform:uppercase;
        letter-spacing:.06em;padding-top:1px;}
   .srow-items{display:flex;flex-wrap:wrap;gap:6px 26px;flex:1 1 0;min-width:0;align-items:baseline;}
+  .sline{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:6px 26px;align-items:baseline;}
+  /* The drive bars in fixed columns, so a figure growing a digit moves nothing. */
+  .sline-drives{display:grid;grid-template-columns:repeat(auto-fill,minmax(25em,1fr));gap:6px 26px;}
+  .sline-drives .gauge{justify-content:space-between;}
   .stat{white-space:nowrap;}
   @media (max-width:560px){
     .srow{gap:2px;}
@@ -3286,7 +3290,7 @@ function rateTitle(d){
 function perVolumeHtml(vols){
   if(!vols || vols.length < 2) return '';
   return vols.map(function(v){
-    return gaugeHtml(v.path, {used_str: v.used_str, total_str: v.total_str, pct: v.pct}, true,
+    return gaugeHtml(String(v.path).replace(/\\\\$/, '') + (v.detached ? ' (old)' : ''), {used_str: v.used_str, total_str: v.total_str, pct: v.pct}, true,
                      v.remaining_files != null ? v.remaining_files.toLocaleString() + ' files left' : '', '', 2);
   }).join('');
 }
@@ -3813,10 +3817,14 @@ async function tick(){
         ['swap', gaugeHtml('Swap', d.swap, false)]
       ]]
     ];
+    var OWN_LINE = {backup: true, drives: true};
     var grid = document.getElementById('status-grid');
     grid.innerHTML = rows.map(function(row){
+      // The backup gauge and the drive bars each take a line of their own. In
+      // the flow with everything else, every change in the ETA's width moved
+      // the drives and everything after them to a different place.
       var items = row[1].filter(function(it){ return it[1] && shown(it[0]); })
-                        .map(function(it){ return it[1]; }).join('');
+                        .map(function(it){ return OWN_LINE[it[0]] ? '<div class="sline sline-' + it[0] + '">' + it[1] + '</div>' : it[1]; }).join('');
       if(!items) return '';
       return '<div class="srow"><span class="srow-label">'+row[0]+'</span>' +
              '<span class="srow-items">'+items+'</span></div>';

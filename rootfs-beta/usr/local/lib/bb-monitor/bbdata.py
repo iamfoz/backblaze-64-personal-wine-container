@@ -1986,9 +1986,13 @@ def per_volume():
     # the head is the part that differs. Two guids on a live container shared
     # their last six characters and differed by the fourth.
     paths = {}
+    seen = {}
     for a in re.findall(r'<bzvolume ([^/]*)/>', read(BZ + "/bzvolumes.xml")):
         g = re.search(r'bzVolumeGuid="([^"]*)"', a)
         mp = re.search(r'mountPointPathHex="([0-9a-f]*)"', a)
+        ls = re.search(r'lastTimeVolumeWasSeenAttachedGmtMillis="(\d+)"', a)
+        if g and ls:
+            seen[g.group(1)] = int(ls.group(1))
         if g and mp:
             try:
                 paths[g.group(1)] = bytes.fromhex(mp.group(1)).decode("utf-8", "replace")
@@ -2004,8 +2008,17 @@ def per_volume():
         out.append({"guid": guid, "path": paths.get(guid) or (guid[:10] + "\u2026"),
                     "total": total, "done": done, "remaining": rbytes,
                     "pct": done / total * 100.0,
-                    "total_files": tfiles, "remaining_files": rfiles})
-    out.sort(key=lambda v: v["total"], reverse=True)
+                    "total_files": tfiles, "remaining_files": rfiles,
+                    "seen": seen.get(guid, 0)})
+    # By drive letter, as the drives are known. Sorted by size they reordered
+    # themselves whenever a drive was added or remapped, and read as random.
+    # A letter that has carried more than one volume (a remap gives the drive a
+    # new identity) keeps the one seen attached most recently first, and the
+    # older ones are marked so a second "Y:" bar is not a puzzle.
+    out.sort(key=lambda v: (v["path"].upper(), -v["seen"]))
+    for i, v in enumerate(out):
+        v["detached"] = i > 0 and out[i - 1]["path"].upper() == v["path"].upper()
+        del v["seen"]
     return out or None
 
 
