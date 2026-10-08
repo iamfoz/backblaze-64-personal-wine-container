@@ -1,0 +1,114 @@
+server: Use open file description locks so a closed fd can be closed.
+
+A POSIX lock belongs to the whole wineserver process, so closing any fd on an
+inode drops every lock on it, and inode_add_closed_fd() therefore keeps a
+closed fd open until the inode has no locks left. A file that always carries a
+lock never gets there. Backblaze 10.0.3.1075 keeps its SQLite database
+(WAL mode) open on one connection and opens and closes a second one every few
+seconds; each close went onto the inode's pending list, 120 fds a minute on a
+live container, until wineserver reached its open-file limit and nothing in
+the prefix could open a file.
+
+OFD locks (Linux 3.15+) belong to the open file description, as a Windows lock
+belongs to its handle, so closing one fd cannot drop a lock held through
+another and the fd can be closed at once. Where the kernel lacks them the
+behaviour is unchanged.
+
+--- a/server/fd.c
++++ b/server/fd.c
+@@ -260,6 +260,17 @@
+ 
+ static file_pos_t max_unix_offset = OFF_T_MAX;
+ 
++/* Whether Unix locks are open file description locks: -1 not yet known, 0 for
++ * classic POSIX locks, 1 for OFD locks (Linux 3.15 and later). A POSIX lock
++ * belongs to the whole server process, so closing any fd on an inode drops
++ * every lock on it, and a closed fd has to stay open until the inode has no
++ * locks left. A file that always has a lock on it, such as a SQLite database
++ * in WAL mode kept open by one connection while another opens and closes it,
++ * then collects closed fds without bound until the server runs out. An OFD
++ * lock belongs to its open file description, as a Windows lock belongs to its
++ * handle, so a closed fd can be closed at once. */
++static int ofd_locks = -1;
++
+ #define DUMP_LONG_LONG(val) do { \
+     if (sizeof(val) > sizeof(unsigned long) && (val) > ~0UL) \
+         fprintf( stderr, "%lx%08lx", (unsigned long)((unsigned long long)(val) >> 32), (unsigned long)(val) ); \
+@@ -1155,7 +1166,8 @@
+ /* add fd to the inode list of file descriptors to close */
+ static void inode_add_closed_fd( struct inode *inode, struct closed_fd *fd )
+ {
+-    if (!list_empty( &inode->locks ))
++    /* with OFD locks closing this fd cannot drop a lock held through another */
++    if (ofd_locks != 1 && !list_empty( &inode->locks ))
+     {
+         list_add_head( &inode->closed, &fd->entry );
+     }
+@@ -1216,8 +1228,27 @@
+ static int set_unix_lock( struct fd *fd, file_pos_t start, file_pos_t end, int type )
+ {
+     struct flock fl;
++    int setlk = F_SETLK, getlk = F_GETLK;
+ 
+     if (!fd->fs_locks) return 1;  /* no fs locks possible for this fd */
++#ifdef F_OFD_SETLK
++    if (ofd_locks == -1)
++    {
++        /* only EINVAL says the kernel has no OFD locks; any other error is
++         * about this file system, which the lock call itself handles below */
++        memset( &fl, 0, sizeof(fl) );
++        fl.l_type   = F_RDLCK;
++        fl.l_whence = SEEK_SET;
++        ofd_locks = fcntl( fd->unix_fd, F_OFD_GETLK, &fl ) != -1 || errno != EINVAL;
++    }
++    if (ofd_locks == 1)
++    {
++        setlk = F_OFD_SETLK;
++        getlk = F_OFD_GETLK;
++    }
++#else
++    ofd_locks = 0;
++#endif
+     for (;;)
+     {
+         if (start == end) return 1;  /* can't set zero-byte lock */
+@@ -1225,15 +1256,16 @@
+         fl.l_type   = type;
+         fl.l_whence = SEEK_SET;
+         fl.l_start  = start;
++        fl.l_pid    = 0;  /* required by OFD locks */
+         if (!end || end > max_unix_offset) fl.l_len = 0;
+         else fl.l_len = end - start;
+-        if (fcntl( fd->unix_fd, F_SETLK, &fl ) != -1) return 1;
++        if (fcntl( fd->unix_fd, setlk, &fl ) != -1) return 1;
+ 
+         switch(errno)
+         {
+         case EACCES:
+             /* check whether locks work at all on this file system */
+-            if (fcntl( fd->unix_fd, F_GETLK, &fl ) != -1)
++            if (fcntl( fd->unix_fd, getlk, &fl ) != -1)
+             {
+                 set_error( STATUS_FILE_LOCK_CONFLICT );
+                 return 0;
+@@ -1306,9 +1338,12 @@
+ 
+     /* count the number of locks overlapping the specified area */
+ 
++    /* with OFD locks only this fd's own locks are on its description; a hole
++     * left for another fd's lock would stay locked here and conflict later */
+     LIST_FOR_EACH_ENTRY( lock, &fd->inode->locks, struct file_lock, inode_entry )
+     {
+         if (lock->start == lock->end) continue;
++        if (ofd_locks == 1 && lock->fd != fd) continue;
+         if (lock_overlaps( lock, start, end )) count++;
+     }
+ 
+@@ -1334,6 +1369,7 @@
+     LIST_FOR_EACH_ENTRY( lock, &fd->inode->locks, struct file_lock, inode_entry )
+     {
+         if (lock->start == lock->end) continue;
++        if (ofd_locks == 1 && lock->fd != fd) continue;
+         if (!lock_overlaps( lock, start, end )) continue;
+ 
+         /* go through all the holes touched by this lock */

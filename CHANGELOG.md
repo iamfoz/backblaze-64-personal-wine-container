@@ -41,6 +41,14 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   not only by path, so a pool mapped as a drive with the config bound from inside it is caught;
   the path comparison read "not inside any mapped drive" on the test host. An XML exclusion rule
   covering the directory counts as excluded, which is what the Exclusions panel makes for it.
+- The beta moves to Wine 11.19 and carries a fifth Wine patch that fixes the file-handle leak at
+  its source. wineserver kept every closed descriptor on a locked file open, because a classic
+  POSIX lock belongs to the whole server process and closing any descriptor drops all of them.
+  The client's SQLite database is always locked, so every close was kept: 120 descriptors a
+  minute on the test host. The patch takes open file description locks, which belong to the one
+  descriptor as a Windows lock belongs to its handle, so a closed descriptor can close. 11.19 also
+  fixes the 11.18 start-up fault that killed chunk children ("failed to create main module"), and
+  includes the 11.18 fix for an 11.17 regression that hung processes opening device names.
 - The watchdog restarts the Backblaze service before leaked file handles exhaust Wine's open-file
   limit, and bb-doctor reports wineserver's open files against that limit. Client 10.0.3.1075's
   service opens its `Backup.sql` database every few seconds and never closes it; on the test host

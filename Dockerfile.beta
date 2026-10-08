@@ -26,16 +26,16 @@
 # moved, which is the signal to re-verify rather than ship a mispatched Wine.
 # The patch is the same artifact submitted upstream, applied verbatim.
 #
-# Not wine-11.18. Its process-startup rework (ntdll, 10 to 16 Sep 2026) places
-# the initial TEB and process parameters at randomised high addresses before
-# the main image is mapped. bztransmit.exe has no relocations, so it must load
-# at 0x140000000, and when that address is taken the child dies with "failed
-# to create main module, status c0000018". Backblaze launches one child per
-# 10 MB chunk, so a long pass hits it and then waits forever for the missing
-# chunk (seen on 19 Sep 2026, first day on 11.18). Move past 11.17 only after
-# a pass on a large file completes on the newer Wine.
+# wine-11.19, skipping 11.18. 11.18's process-startup rework placed the first
+# thread data at a randomised high address that could take 0x140000000, where
+# bztransmit.exe (no relocations) must load, and the chunk child died with
+# "failed to create main module, status c0000018" (19 Sep 2026). 11.19 carries
+# 76159fce "Make sure that the first thread data is outside of the exe range".
+# 11.17 had its own regression (bug 60298, fixed in 11.18) that hung processes
+# opening non-filesystem names. Before trusting 11.19 for stable, confirm a long
+# pass shows no "failed to create main module" in docker logs.
 # ============================================================================
-ARG WINE_REF=wine-11.17
+ARG WINE_REF=wine-11.19
 
 FROM ubuntu:26.04 AS wine-builder
 ARG WINE_REF
@@ -59,6 +59,7 @@ COPY patches/wine-writability-fix.patch /wine/patches/
 COPY patches/wine-fdwrite-rearm.patch /wine/patches/
 COPY patches/wine-token-localsystem.patch /wine/patches/
 COPY patches/wine-debug-privilege-bypass.patch /wine/patches/
+COPY patches/wine-ofd-locks.patch /wine/patches/
 # Partial (blobless) clone keeps the checkout small while still allowing WINE_REF
 # to be any tag, branch, or exact commit; blobs are fetched on checkout.
 #
@@ -70,7 +71,10 @@ COPY patches/wine-debug-privilege-bypass.patch /wine/patches/
 # Client 10.0.3.1075's bzserv opens the backup pass it launched by pid; the
 # pass denies everyone access to its own process object, and on Windows the
 # service gets through only because LocalSystem holds SeDebugPrivilege, which
-# bypasses the DACL. Wine had neither the privilege enabled nor the bypass. Each gets its
+# bypasses the DACL. Wine had neither the privilege enabled nor the bypass.
+# wine-ofd-locks.patch is independent of the others: wineserver kept every closed
+# fd on a locked file open, so the client's SQLite database leaked descriptors
+# until the limit (issue #13); OFD locks let a closed fd close. Each gets its
 # own --check first, so a context mismatch fails the build with the offending patch
 # named rather than half-applying. The patches are authored against Wine master while
 # WINE_REF pins a release, so a --check failure after a WINE_REF bump usually means
@@ -84,7 +88,9 @@ RUN git clone --filter=blob:none https://gitlab.winehq.org/wine/wine.git src \
  && git -C src apply --check /wine/patches/wine-token-localsystem.patch \
  && git -C src apply /wine/patches/wine-token-localsystem.patch \
  && git -C src apply --check /wine/patches/wine-debug-privilege-bypass.patch \
- && git -C src apply /wine/patches/wine-debug-privilege-bypass.patch
+ && git -C src apply /wine/patches/wine-debug-privilege-bypass.patch \
+ && git -C src apply --check /wine/patches/wine-ofd-locks.patch \
+ && git -C src apply /wine/patches/wine-ofd-locks.patch
 
 # Cap build parallelism by available RAM. Wine's parallel link steps are
 # memory-heavy, so -j<all-cores> on a high-core / modest-RAM host exhausts memory
