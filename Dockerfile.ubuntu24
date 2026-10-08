@@ -1,4 +1,4 @@
-FROM jlesage/baseimage-gui:ubuntu-24.04-v4.12.6@sha256:e35d68767241f1c58407af909b57c7d073b4569deae1231be9be9b5232b47237
+FROM jlesage/baseimage-gui:ubuntu-24.04-v4.14.0@sha256:e7c54da3446b4c65b6755bf00a874463c640a1f579f25bed99532051e81649ef
 
 ENV WINEPREFIX=/config/wine/
 # Backblaze 10.x is a native 64-bit app, so the prefix must be win64.
