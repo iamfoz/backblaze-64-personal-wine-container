@@ -54,7 +54,7 @@ def raises(fn, *args, **kw):
 
 
 # ---- the key store ------------------------------------------------------------------
-# Repointed before bbnotify and bbquiet are imported: both build their own file
+# Repointed before bbnotify and bbquiet are imported: both build their file
 # names out of bbapi.DIR at import time.
 import bbapi
 
@@ -81,8 +81,8 @@ ok(bbapi.verify(pause_secret, ("control:backup-now", "control:pause"))
 ok(bbapi.verify(pause_secret, ("report", "diagnose")) == (False, pause_rec["id"]),
    "a tuple scope refuses a key holding none of them")
 
-# The key id is public by design and is returned on a failure so the attempt can
-# be logged; the secret never is. A wrong secret must not authenticate whatever
+# The key id is public and is returned on a failure so the attempt can
+# be logged, but the secret never is. A wrong secret must not authenticate whatever
 # the id says.
 forged = "bb64_%s_%s" % (read_rec["id"], "A" * 43)
 ok(bbapi.verify(forged, "read") == (False, read_rec["id"]),
@@ -126,7 +126,7 @@ ok(bbapi.verify(dia_secret, "diagnose:repair") == (False, dia_rec["id"]),
 ok(raises(bbapi.create, "bad", ["read", "invent"]), "an unknown permission is refused")
 ok(raises(bbapi.create, "bad", []), "a key with no permission is refused")
 
-# The store sits on the user's own appdata share and holds key hashes, so the
+# The store sits on the user's appdata share and holds key hashes, so the
 # directory is the service's alone. _mutate() tightens it on every write rather
 # than _write(), because quiet hours and the endpoints create it first.
 os.chmod(bbapi.DIR, 0o755)
@@ -302,7 +302,7 @@ for t in _threads:
 ok(len(_calls) == len(bbconfig.PATHS),
    "four concurrent read()s run one sweep, not four (%d bzcli starts for %d paths)"
    % (len(_calls), len(bbconfig.PATHS)))
-ok(len({id(r) for r in _results}) == 1, "all four callers get the sweep's own reading")
+ok(len({id(r) for r in _results}) == 1, "all four callers get the same sweep's reading")
 _before = len(_calls)
 bbconfig.read()
 ok(len(_calls) == _before, "a read inside the TTL costs no bzcli start")
@@ -313,14 +313,14 @@ ok(len(_calls) == _before + len(bbconfig.PATHS), "force=True runs a full sweep")
 # ---- the log parsers -----------------------------------------------------------------
 import bbdata
 
-# The row's own separator is " - " and so is part of this file's name, so the
+# The row's separator is " - " and so is part of this file's name, so the
 # name has to come off the fixed prefix rather than off the last separator.
 bbdata.RPTLOG = os.path.join(FIX, "rptlog")
 os.makedirs(bbdata.RPTLOG, exist_ok=True)
 ROW = ("2026-09-06 01:02:56 -  small  - throttle x  -  -  dedup - 0 bytes - "
        "D:\\Music\\Artist - Track.mp3\n")
 # Both the UTC day file and the local day file, because the rows are UTC-stamped
-# and the client's own naming convention for the file is not established.
+# and the client's naming convention for the file is not established.
 for mday in {time.gmtime().tm_mday, time.localtime().tm_mday}:
     with open(os.path.join(bbdata.RPTLOG, "%02d.log" % mday), "w", encoding="utf-8") as fh:
         fh.write(ROW)
@@ -464,7 +464,7 @@ del getattr(bbdata, "_pending", [])[:]
 _L0 = _done_line("11:59:00")
 _poll(_slot_xml("20260909120000", "aaa"), [_L0], NOON)
 ok(_film_row() is None, "a part still in flight is not a completed part")
-# Part A finished and part B began and finished between polls; the slot now
+# Part A finished and part B began and finished between polls, and the slot now
 # carries part C. Two completion lines landed for thread 3.
 _LA, _LB = _done_line("12:00:08"), _done_line("12:00:16")
 _poll(_slot_xml("20260909120016", "ccc"), [_L0, _LA, _LB], NOON + 18)
@@ -512,7 +512,7 @@ ok(bbdata.milestones({"total": 0, "done": 0}) is None,
    "no totals means no judgement, as completion() also demands")
 
 # One physical rate, two branches: the measured one divides bytes by seconds, the
-# fallback is handed the client's own kbit figure. Dividing by 8192 rather than
+# fallback is handed the client's kbit figure. Dividing by 8192 rather than
 # 8388.608 mixed 1000-bit kbits with 1024-based mebibytes and read 2.4% high.
 MEASURED = bbdata.rate_str(10 * 1048576, 1)
 FALLBACK = bbdata.rate_str(0, 0, 10 * 1048576 * 8 / 1000.0)
@@ -546,7 +546,7 @@ CONF = {"enabled": True, "windows": [DAILY]}
 def _local(y, mo, d, h, mi):
     """Local epoch for a wall clock, with the C library picking the offset. The
     boundaries under test are built the same way, so a test that agreed with the
-    code by accident would have to agree with the platform's own zone data too."""
+    code by accident would have to agree with the platform's zone data too."""
     return time.mktime((y, mo, d, h, mi, 0, 0, 0, -1))
 
 
@@ -603,7 +603,7 @@ ok(st["window_end"] == int(_local(2026, 6, 11, 7, 0)), "and window_end is the wi
 
 def _scheduler():
     """A scheduler with the action recorded rather than run. The action itself
-    goes to a thread of its own, so the test waits on it: the poll loop must not
+    goes to a separate thread, so the test waits on it: the poll loop must not
     block on a cold Wine start, which is why it is threaded at all."""
     seen = []
     rang = threading.Event()
@@ -636,17 +636,17 @@ sch.observe(API_RUNNING, CONF, OUT)
 ok(rang.wait(5) and seen == ["pause", "backup-now"], "leaving the window resumes")
 ok(not sch.active, "and the scheduler stops holding the pause")
 
-# The client's own pause expires after about two hours and it resumes itself;
-# inside a window that is re-paused. A person resuming by hand is told apart by
-# the deadline the client recorded: before it, somebody did this deliberately,
-# and the scheduler holds off until the window ends rather than fighting them.
+# The client's pause expires after about two hours and it resumes itself.
+# Inside a window that is re-paused. A person resuming by hand is told apart by
+# the deadline the client recorded: before it, a person resumed it,
+# and the scheduler holds off until the window ends.
 sch, seen, rang = _scheduler()
 sch.observe(API_RUNNING, CONF, IN)
 ok(rang.wait(5) and seen == ["pause"], "the window pauses the backup")
 until = int(IN + 7200)
 paused = {"ok": True, "paused": True, "pause": {"until": until}}
 ok(sch.observe(paused, CONF, IN + 120) == "paused", "while it holds, nothing more is done")
-ok(sch.paused_until == until, "the client's own deadline is remembered")
+ok(sch.paused_until == until, "the client's deadline is remembered")
 ok(sch.observe(API_RUNNING, CONF, IN + 300) == "override",
    "a resume well before that deadline reads as a person, not the deadline passing")
 ok(sch.override_until == _local(2026, 6, 11, 7, 0), "the override runs to the window's end")
@@ -680,7 +680,7 @@ ok(sch.observe(None, CONF, IN) is None, "nor is no payload at all")
 # ---- passes that lose the four-hour lock ---------------------------------------------
 # Client 10.0.3.1075 loses its four-hour lock under Wine on every pass while large
 # files keep uploading, so nothing else the monitor reads looks wrong. The log's
-# own error line is the signal, and one loss is not enough: a restart mid-pass
+# error line is the signal, and one loss is not enough: a restart mid-pass
 # leaves one behind.
 ok(bbdata.lost_lock("x\nLost four hour lock\ny\n") == 0, "one loss is not a warning")
 ok(bbdata.lost_lock("Lost four hour lock\n" * 3) == 3, "three losses are")
@@ -721,7 +721,7 @@ ok([(v["path"], v["detached"]) for v in _pv] == [("D:\\", False), ("E:\\", False
    "drives come in letter order, the older volume on a reused letter last and marked: %r" % [(v["path"], v["detached"]) for v in _pv])
 ok(_pv[3]["total"] == 300, "and the current Y: is the one seen attached most recently")
 
-# The scanner's own log names the directories it could not open. A disk's file
+# The scanner's log names the directories it could not open. A disk's file
 # list ends at the first, so the Monitor warns while one still exists under
 # that name, and stops once it has been renamed (the test host, 2026-10-07).
 _scanlog = ('2026-10-07 13:15:29.584       1820 - WARNING: GetListOfFileInfosInDir (processId=1820) FindFirstFile_C failed, '
@@ -760,7 +760,7 @@ ok(bbconfig._client_launched() is False, "no bzbui.exe on this machine, so the s
 
 # ---- the licence in words, and an inherit in progress ----------------------------------
 # The client's licence status is a token with a GMT stamp glued on. A date ahead
-# is not a warning; a date within two weeks or behind is.
+# is not a warning, and a date within two weeks or behind is.
 _w = bbconfig.licence_words({"status": "expires_20261004001046"})
 ok(_w["expires_on"] == "4 October 2026" and _w["label"].endswith("4 October 2026"),
    "expires_<stamp> reads as a date: %r" % _w["label"])
@@ -842,7 +842,7 @@ bbnotify.CONF = os.path.join(FIX, "bb-api", "notify.json")
 bbnotify.STATE = os.path.join(FIX, "bb-api", "notify-state.json")
 bbnotify.BB_HEALTH = os.path.join(FIX, "no-such-bb-health")
 
-# An endpoint is the one place a person can make the container issue an outbound
+# An endpoint is the only place a person can make the container issue an outbound
 # request with a body and headers of their choosing, so the addresses that mean
 # "me" are closed before a socket is ever opened. Numeric hosts throughout: this
 # test resolves nothing and connects to nothing.
@@ -918,10 +918,10 @@ ok(all(d in VOCABULARY for d in _details),
 ok(_send("http://127.0.0.1/x")[0][1].split(":")[0] == "refused",
    "and a blocked one is a refused: string")
 
-# The store is on the user's own appdata share and can be unwritable. observe()
+# The store is on the user's appdata share and can be unwritable. observe()
 # rebuilds its baseline from disk on every poll, so a store that cannot be
 # written at all used to mean prev was always None and nothing ever fired again,
-# silently. A directory whose parent is a file cannot be created by anyone,
+# with nothing logged. A directory whose parent is a file cannot be created by anyone,
 # including root, which is what makes this reproduce wherever the tests run.
 _broken = os.path.join(FIX, "a-file-not-a-directory")
 with open(_broken, "w", encoding="utf-8") as fh:
@@ -948,7 +948,7 @@ with contextlib.redirect_stderr(_log):
     second = bbnotify.observe(_api(True), NCONF, deliver=lambda *a: _delivered.append(a))
     third = bbnotify.observe(_api(True), NCONF, deliver=lambda *a: _delivered.append(a))
     fourth = bbnotify.observe(_api(False), NCONF, deliver=lambda *a: _delivered.append(a))
-ok(not os.path.exists(bbnotify.STATE), "the state file really could not be written")
+ok(not os.path.exists(bbnotify.STATE), "the state file could not be written")
 ok(first == [], "the first observation records a baseline and fires nothing")
 ok([f[0] for f in second] == ["frozen"], "a freeze still fires with the store unwritable")
 ok(third == [], "and does not fire again while it holds")
@@ -1073,7 +1073,7 @@ sysd = bbconfig.drive_selection({"drive_filters": [
     {"dir": "z:\\", "whichfiles": "none"},
     {"dir": "d:\\", "whichfiles": "none"},
 ]})
-ok(sysd["C:\\"]["system"] is True, "C: is the container's own drive")
+ok(sysd["C:\\"]["system"] is True, "C: is the container's drive")
 ok(sysd["Z:\\"]["system"] is True, "so is the letter the prefix maps to /")
 ok(sysd["D:\\"]["system"] is False, "a mounted share is not")
 ok(all(r["backed_up"] is False for r in sysd.values()),
@@ -1125,7 +1125,7 @@ ok([f[0] for f in _fired] == ["recovery"] and "service: bzserv has stopped" in _
    "a new recovery action fires one notification with its text: %r" % _fired)
 ok(bbnotify.observe(_r_api(_rec_ev2), NCONF, deliver=lambda *a: None) == [], "and not again")
 
-# ---- container memory: the processes' own, with the cache beside it -------------
+# ---- container memory: the processes' memory, with the cache beside it -------------
 # docker stats charges the page cache to the container, and a dedup scan reads
 # every file, so a user saw 36 GB there while the host called most of it free.
 _cg = os.path.join(FIX, "cg2"); os.makedirs(_cg, exist_ok=True)
@@ -1143,7 +1143,7 @@ ok(_m is not None and _m[0] == 6442450944 and _m[3] == 32212254720 and _m[1] == 
 # ---- settings export and import -------------------------------------------------
 # One file for everything the container keeps for itself. Exported from one
 # store directory and imported into a fresh one, the second must hold the same
-# records; the secrets travel only under a passphrase; a newer file is refused.
+# records. The secrets travel only under a passphrase, and a newer file is refused.
 import bbsettings
 def _point(dirpath):
     bbapi.DIR = dirpath; bbapi.KEYS = dirpath + "/keys.json"; bbapi.LOCK = dirpath + "/.lock"
@@ -1159,7 +1159,7 @@ def _point_recover(dirpath):
     bbexclude.FILE = dirpath + "/bzexcluderules_editable.xml"
 
 # ---- the client's XML exclusion rules -------------------------------------------------------
-# The file is the client's: its own rules and hand edits stay byte for byte, and only the
+# The file is the client's: the rules it wrote and hand edits stay byte for byte, and only the
 # block between the two markers is rewritten.
 _CLIENT_XML = ('<?xml version="1.0" encoding="UTF-8" ?>\n<bzexclusions>\n'
                '<!-- This block is for Internet Explorer history and cache files -->\n'

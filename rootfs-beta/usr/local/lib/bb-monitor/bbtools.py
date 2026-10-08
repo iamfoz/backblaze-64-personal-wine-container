@@ -2,19 +2,17 @@
 #
 # The web does not reimplement these. It runs the binary the console runs and
 # shows what it printed. bb-monitor and bb-monitor-web share a data layer because
-# both draw the same live state continuously; these tools are one-shot programs
-# that write a text report and exit, and for that shape one program with two ways
-# to start it is a stronger guarantee than two implementations kept in step. A
-# change to bb-doctor is a change to both views, with nothing to drift.
+# both draw the same live state continuously. These tools are one-shot programs
+# that write a text report and exit, so both views run the same program. A
+# change to bb-doctor is a change to both views.
 #
 # Two consequences follow. The output shown is the tool's output, byte for byte,
 # so a paste into a support thread is the same artefact whichever way it was
-# made. And the process runs as this service's user, the container's own, which
-# is the user whose permissions the checks are about; a console run is root and
-# passes every permission test.
+# made. And the process runs as this service's user, which is the user whose
+# permissions the checks are about. A console run is root and passes every permission test.
 #
 # The argument list is fixed. A caller names a tool and may switch on options
-# from that tool's own list, each of which maps to a fixed flag. Nothing from a
+# from that tool's list, each of which maps to a fixed flag. Nothing from a
 # request reaches argv except through those lookups. Same rule as bbctl.ACTIONS.
 
 import os, secrets, signal, subprocess, threading, time
@@ -45,10 +43,10 @@ TOOLS = {
                         "missing skin aliases and a stale four-hour lock. Never touches "
                         "backup state, and skips anything it is not sure of.",
                 # Shown before a run with this option. It names what can change,
-                # in plain words, every time. Not a generic "are you sure".
+                # in plain words, every time.
                 "confirm": "This can change files in the Wine prefix and delete a stale "
                            "lock file. bb-doctor only repairs what it has already judged "
-                           "safe, and only in the container's own files. Run the repair?",
+                           "safe, and only in the container's files. Run the repair?",
             },
         },
         # Exit codes in words. bb-doctor exits 1 when it finds a problem, which
@@ -79,7 +77,7 @@ TOOLS = {
     },
 }
 
-OUTPUT_CAP = 64 * 1024     # bytes kept per job; nothing here comes close
+OUTPUT_CAP = 64 * 1024     # bytes kept per job, well above any tool's output
 JOB_TTL = 3600             # seconds a finished job is remembered
 
 _lock = threading.Lock()
@@ -175,13 +173,13 @@ def _run(jid):
 
     def kill():
         timed_out.append(True)
-        # The group, not the process. bb-doctor and bb-version both start wine,
+        # Kill the process group. bb-doctor and bb-version both start wine,
         # and a wedged client leaves a child behind holding the stdout it
         # inherited: killing only the tool left the readline loop below waiting
         # on a pipe that would never reach end of file, so the job stayed
         # "running" for the life of the service and its tool could never be run
-        # again. start_new_session=True below puts this one job in a group of
-        # its own, so this cannot reach the client's own wineserver.
+        # again. start_new_session=True below puts this one job in a new process
+        # group, so this cannot reach the client's wineserver.
         try:
             os.killpg(os.getpgid(p.pid), signal.SIGKILL)
         except OSError:
@@ -203,10 +201,9 @@ def _run(jid):
     try:
         # Line by line into the buffer as it arrives, so a poll shows what has
         # been printed so far. bb-doctor's connectivity check alone can take a
-        # minute; a page that showed nothing until then would look hung.
+        # minute, and a page that showed nothing until then would look hung.
         # readline() rather than iterating the pipe: iteration reads ahead in
-        # blocks and released nothing until the tool exited, which is exactly
-        # the behaviour this loop exists to avoid.
+        # blocks and released nothing until the tool exited.
         for raw in iter(p.stdout.readline, b""):
             line = raw.decode("utf-8", "replace").rstrip("\r\n")
             with _lock:
@@ -219,8 +216,8 @@ def _run(jid):
                 else:
                     j["truncated"] = True     # keep draining so the tool can exit
         # Bounded: the group kill above releases the pipe, but a grandchild that
-        # made a session of its own is out of its reach, and this thread must
-        # end either way rather than hold a job open.
+        # started a new session is out of its reach, and this thread must
+        # end either way so it does not hold a job open.
         try:
             p.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -248,7 +245,7 @@ def _finish(jid, exit_code=None, error=None):
 
 def clear(name):
     """Forget the finished jobs of one tool, so the page can drop a result the
-    user no longer wants shown. A running job is left alone; it finishes and
+    user no longer wants shown. A running job is left alone. It finishes and
     can be cleared afterwards. Returns how many were dropped."""
     n = 0
     with _lock:

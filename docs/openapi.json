@@ -49,7 +49,7 @@
               "integer",
               "null"
             ],
-            "description": "Epoch seconds at which the client's own pause ends, or null"
+            "description": "Epoch seconds at which the client's pause ends, or null"
           },
           "reason": {
             "type": [
@@ -124,7 +124,7 @@
                 "renewal",
                 "lostlock"
               ],
-              "description": "What the warning is about. lostlock: every backup pass aborts at the transmit step because the client cannot see its own four-hour lock, seen with client 10.0.3.1075 under Wine."
+              "description": "What the warning is about. lostlock: every backup pass aborts at the transmit step because the client cannot see its four-hour lock, seen with client 10.0.3.1075 under Wine."
             },
             "text": {
               "type": "string"
@@ -135,7 +135,7 @@
             },
             "dismissed": {
               "type": "boolean",
-              "description": "True when somebody has dismissed it in the web interface, or its kind is hidden there. The entry is still reported; what a dismissal stops is the Status tab, the Monitor's warning band, the terminal monitor and the bb64_health_warning gauge."
+              "description": "True when somebody has dismissed it in the web interface, or its kind is hidden there. The entry is still reported. A dismissal removes it from the Status tab, the Monitor's warning band, the terminal monitor and the bb64_health_warning gauge."
             },
             "hidden": {
               "type": "boolean",
@@ -147,7 +147,7 @@
             }
           }
         },
-        "description": "Warnings drawn from the client's own records. Empty when nothing needs attention."
+        "description": "Warnings drawn from the client's records. Empty when nothing needs attention."
       },
       "Milestone": {
         "type": "object",
@@ -548,7 +548,7 @@
               "number",
               "null"
             ],
-            "description": "Backblaze's own measured throughput"
+            "description": "Throughput as measured by Backblaze"
           },
           "per_volume": {
             "oneOf": [
@@ -566,7 +566,7 @@
                         "string",
                         "null"
                       ],
-                      "description": "The client's own mount path. Without read:files, reduced to a bare drive letter such as \"D:\", or null when the real path is longer than a bare drive root."
+                      "description": "The client's mount path. Without read:files, reduced to a bare drive letter such as \"D:\", or null when the real path is longer than a bare drive root."
                     },
                     "total": {
                       "type": "integer",
@@ -678,7 +678,7 @@
             "properties": {
               "stage": {
                 "type": "string",
-                "description": "The client's own stage token, such as tbs_downloading."
+                "description": "The client's stage token, such as tbs_downloading."
               },
               "stage_label": {
                 "type": "string",
@@ -818,7 +818,7 @@
           },
           "withheld": {
             "type": "string",
-            "description": "Present, naming the missing permission, when the key lacks read:files. bb-doctor's own output can name drives and directories, so a key with diagnose but not read:files gets the job back with lines null and this set to \"read:files\"."
+            "description": "Present, naming the missing permission, when the key lacks read:files. bb-doctor output can name drives and directories, so a key with diagnose but not read:files gets the job back with lines null and this set to \"read:files\"."
           },
           "truncated": {
             "type": "boolean",
@@ -962,7 +962,7 @@
       },
       "ClientReading": {
         "type": "object",
-        "description": "What the Backblaze client reports about itself through its own bzcli. The account email, login and host guid are never read: the container queries five subtrees by path and /backup/account is not one of them.",
+        "description": "What the Backblaze client reports about itself through bzcli. The account email, login and host guid are never read. The container queries five subtrees by path and /backup/account is not one of them.",
         "properties": {
           "licence": {
             "type": "object",
@@ -992,14 +992,14 @@
               "string",
               "null"
             ],
-            "description": "The client's own field: not_frozen, or otherwise"
+            "description": "Reported by the client: not_frozen, or otherwise"
           },
           "summary": {
             "type": [
               "string",
               "null"
             ],
-            "description": "The client's own one-line account of what it is doing"
+            "description": "The client's one-line account of what it is doing"
           },
           "transmit": {
             "type": [
@@ -1026,7 +1026,7 @@
               "object",
               "null"
             ],
-            "description": "Per drive, whichfiles, backed_up and system. A drive reading none backs up nothing while still appearing ticked in the client's settings window. system is true for the container's own drives rather than the user's data: C: is the Wine prefix, and whichever letter the prefix maps to / is Wine's view of the container root. Withheld from a key without read:files."
+            "description": "Per drive, whichfiles, backed_up and system. A drive reading none backs up nothing while still appearing ticked in the client's settings window. system is true for the container's drives: C: is the Wine prefix, and whichever letter the prefix maps to / is Wine's view of the container root. Withheld from a key without read:files."
           },
           "selection_notices": {
             "type": [
@@ -1048,7 +1048,7 @@
                 }
               }
             },
-            "description": "One entry per drive set to back up nothing. A system drive never appears here: there was never anything on it to back up. Withheld from a key without read:files."
+            "description": "One entry per drive set to back up nothing. A system drive never appears here, since there was never anything on it to back up. Withheld from a key without read:files."
           },
           "excluded_dirs": {
             "type": [
@@ -1083,7 +1083,7 @@
     "/status": {
       "get": {
         "summary": "Everything the monitor knows",
-        "description": "Requires read. Add ?fields=a,b to trim the payload; unknown names are ignored. A key without read:files gets no file names.",
+        "description": "Requires read. Add ?fields=a,b to trim the payload. Unknown names are ignored. A key without read:files gets no file names.",
         "parameters": [
           {
             "name": "fields",
@@ -1159,7 +1159,7 @@
     "/metrics": {
       "get": {
         "summary": "Prometheus text exposition",
-        "description": "Requires read. Gauges prefixed bb64_ for rate, progress, memory, RTT, skipped files and health warnings. bb64_health_warning{kind} reads 1 only while the warning is raised and has not been dismissed, so an alert cannot fire forever on a state somebody has accepted; bb64_health_dismissed{kind} reads 1 while it has been.",
+        "description": "Requires read. Gauges prefixed bb64_ for rate, progress, memory, RTT, skipped files and health warnings. bb64_health_warning{kind} reads 1 only while the warning is raised and has not been dismissed, so an alert cannot fire forever on a state somebody has accepted. bb64_health_dismissed{kind} reads 1 while it has been dismissed.",
         "responses": {
           "200": {
             "description": "Metrics",
@@ -1251,7 +1251,7 @@
     "/control": {
       "get": {
         "summary": "The control operations this key holds",
-        "description": "Requires at least one control permission; lists only that key's own operations.",
+        "description": "Requires at least one control permission; lists only the operations that key may run.",
         "responses": {
           "200": {
             "description": "Operations",
@@ -1293,7 +1293,7 @@
     "/control/{action}": {
       "post": {
         "summary": "Start a backup, or pause one",
-        "description": "backup-now requires control:backup-now; pause requires control:pause. The pause is cooperative and is also how a pause is ended: the client documents backup-now as the way out.",
+        "description": "backup-now requires control:backup-now and pause requires control:pause. The pause is cooperative. The client documents backup-now as the way to end a pause.",
         "parameters": [
           {
             "name": "action",
@@ -1360,7 +1360,7 @@
     "/report": {
       "post": {
         "summary": "Start building a diagnostic bundle",
-        "description": "Requires report. One bundle at a time; a second request joins the running job.",
+        "description": "Requires report. One bundle at a time. A second request joins the running job.",
         "responses": {
           "202": {
             "description": "Job started or joined",
@@ -1426,7 +1426,7 @@
     "/report/download/{token}": {
       "get": {
         "summary": "Download a bundle",
-        "description": "Takes no bearer token; the single-use link is the credential. Valid once, for about five minutes.",
+        "description": "Takes no bearer token. The single-use link is the credential. Valid once, for about five minutes.",
         "security": [],
         "parameters": [
           {
@@ -1503,7 +1503,7 @@
     "/tools/{name}": {
       "post": {
         "summary": "Run a tool",
-        "description": "Requires diagnose. An option marked mutates (bb-doctor --fix) also requires diagnose:repair. One run per tool at a time; a second request joins it. The output is the tool's own, line by line, in the job.",
+        "description": "Requires diagnose. An option marked mutates (bb-doctor --fix) also requires diagnose:repair. One run per tool at a time. A second request joins it. The job carries the tool's output line by line.",
         "parameters": [
           {
             "name": "name",
@@ -1530,7 +1530,7 @@
                     "items": {
                       "type": "string"
                     },
-                    "description": "Option keys from the tool's own list, for example [\"fix\"]"
+                    "description": "Option keys from the tool's list, for example [\"fix\"]"
                   }
                 }
               }
@@ -1640,7 +1640,7 @@
     "/client": {
       "get": {
         "summary": "What the client reports about itself",
-        "description": "Requires read. The reading, plus the settings that can be changed with their current values and the client's own description of each.",
+        "description": "Requires read. The reading, plus the settings that can be changed with their current values and the client's description of each.",
         "responses": {
           "200": {
             "description": "Reading",

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """bb-monitor-web: same live upload dashboard as bb-monitor, served over HTTP.
 
-Reuses the exact same data sources as bb-monitor (proc, cgroup, and
-Backblaze's own bzdata log/XML files) -- no curses, no subprocesses.
-A background thread gathers a fresh snapshot every INT seconds; the HTTP
-server just hands out the latest snapshot as JSON, plus a static HTML/JS
+Reuses the same data sources as bb-monitor (proc, cgroup, and Backblaze's
+bzdata log/XML files), with no curses and no subprocesses.
+A background thread gathers a fresh snapshot every INT seconds, and the HTTP
+server hands out the latest snapshot as JSON, plus a static HTML/JS
 page that polls it and redraws.
 
 In the container image this runs as a supervised service bound to loopback,
@@ -21,9 +21,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 # ---- shared data layer ----------------------------------------------------
-# Everything that reads /proc, the cgroups and Backblaze's own files lives in
+# Everything that reads /proc, the cgroups and Backblaze's files lives in
 # bbdata, so this file and bb-monitor cannot drift apart. This one owns HTTP and
-# the page; the terminal one owns curses. Neither owns data collection.
+# the page, and the terminal one owns curses. Neither owns data collection.
 sys.path.insert(0, "/usr/local/lib/bb-monitor")
 import bbapi
 import bbconfig
@@ -80,7 +80,7 @@ _latest_api = {"schema": bbapi.SCHEMA, "ok": False, "error": "warming up"}
 
 # Cross-origin access for a consumer that runs in a browser, which cannot reach
 # the API at all without it. Off unless API_CORS_ORIGINS names origins, and an
-# allow-list rather than "*": the key is still required either way, but with "*"
+# allow-list rather than "*". The key is still required either way, but with "*"
 # any page the user happens to visit could poll their container in the
 # background, and the answer names every file being backed up.
 #
@@ -92,18 +92,17 @@ CORS_ORIGINS = tuple(o.strip().rstrip("/") for o in
 
 
 # ---- what the client says about itself --------------------------------------
-# Read through Backblaze's own bzcli, which starts a Wine process for every
+# Read through Backblaze's bzcli, which starts a Wine process for every
 # reading, so bbconfig caches it and nothing here ever reads it directly. Before
 # the first reading lands, and on an image with no bzcli in it, cached() answers
 # None and every field below is absent rather than wrong.
 def client_reading():
-    """The client's own account of itself, one shape for the page and the API.
+    """The client's account of itself, one shape for the page and the API.
 
-    Spelled out field by field rather than passed through, for the same reason
-    api_v1_payload is: bbconfig's shape is its own business, and passing it
-    through would make it a published contract the moment it shipped. "licence"
-    is spelt the British way because it is our field name; bbconfig keeps
-    Backblaze's spelling for the field it reads.
+    Spelled out field by field, for the same reason as api_v1_payload. Passing
+    bbconfig's shape through would make it a published contract the moment it
+    shipped. "licence" is spelt the British way because it is this module's
+    field name. bbconfig keeps Backblaze's spelling for the field it reads.
     """
     d = bbconfig.cached()
     if not d:
@@ -122,7 +121,7 @@ def client_reading():
         "licence": {
             "status": lic.get("status"),
             "type": lic.get("type"),
-            # The status as a person reads it: the client's token is a word
+            # The status as a person reads it. The client's token is a word
             # with a GMT stamp glued on, expires_20261004001046.
             "label": words["label"],
             "expires_at": words["expires_at"],
@@ -130,7 +129,7 @@ def client_reading():
             "days_left": words["days_left"],
             # Two fields for one question: whether the last renewal failed, and
             # what the client called the failure. A failed renewal stops the
-            # backup, and nothing else in this container can see it happen.
+            # backup, and the container has no other way to see it.
             "renewal_failed": bool(failure and failure != "none"),
             "renewal_failure": failure,
             "renewal_failed_at": lic.get("renewal_failed_at"),
@@ -139,45 +138,44 @@ def client_reading():
         "cluster": d.get("cluster"),
         "cluster_url": d.get("cluster_url"),
         "safety_freeze": d.get("safety_freeze"),
-        # The client's own words, beside the state the monitor derives from the
-        # files. Not a replacement for it, which is finer grained, but the phrase
-        # to quote in a support thread.
+        # The client's words, beside the state the monitor derives from the
+        # files. The derived state is finer grained. This is the phrase to quote
+        # in a support thread.
         "summary": d.get("summary"),
         "transmit": d.get("transmit"),
         "settings": d.get("settings") or {},
-        # Read only, and it stays that way: the container's own quiet hours
-        # already cover this ground, and two mechanisms fighting over one
-        # behaviour is a fault waiting to happen.
+        # Read only. The container's quiet hours already cover this, and two
+        # mechanisms controlling one behaviour would conflict.
         "schedule": d.get("schedule") or {},
-        # Both of these name directories on the user's own share, so both are
+        # Both of these name directories on the user's share, so both are
         # dropped for a key without read:files. See strip_file_names().
         "drive_selection": sel,
         "excluded_dirs": bbconfig.excluded_dirs(d),
         # One entry per drive that warrants the "set to back up nothing" notice,
         # with the key that dismisses it worked out here. The page draws the
-        # notice, but it has no business building a key out of a drive letter:
-        # the key is a stored identifier and its shape belongs to bbdismiss.
+        # notice but does not build the key from a drive letter, because the key
+        # is a stored identifier and its shape belongs to bbdismiss.
         "selection_notices": selection_notices(sel),
     }
 
 
-# Every kind of warning the monitor raises, for the one list on the Settings
-# tab that holds both what is shown and what is sent. `event` is the
-# notification event for the same condition, where one exists. `critical`
-# marks the two that cannot be dismissed or hidden: a safety freeze and passes
-# losing their lock both mean nothing is being backed up, and a warning that
-# can be switched off is one that will be, the day before it matters.
+# Every kind of warning the monitor raises, for the list on the Settings tab
+# that holds both what is shown and what is sent. `event` is the notification
+# event for the same condition, where one exists. `critical` marks the two that
+# cannot be dismissed or hidden. A safety freeze and passes losing their lock
+# both mean nothing is being backed up, and a warning that can be switched off
+# may be off on the day it matters.
 WARNING_KINDS = (
     ("frozen",    "Safety freeze", "Backblaze has frozen the backup. Nothing is deleted.", "frozen", True),
     ("lostlock",  "Passes losing the four-hour lock",
                   "Every backup pass aborts at the transmit step.", "lostlock", True),
     ("scanstop",  "Scan stopped at a directory",
                   "The scanner cannot open a directory, so that disk's file list ends there and files "
-                  "after it are not backed up. bb-doctor names the directories.", "scanstop", True),
+                  "after it are not backed up. bb-doctor names the directories.", "scanstop", False),
     ("stale",     "No completed backup",
-                  "No pass has completed within the limit set in the client's own settings.", "stale", False),
+                  "No pass has completed within the limit set in the client's settings.", "stale", False),
     ("skipped",   "Files skipped", "The client has given up on files.", "skipped", False),
-    ("filecheck", "Failed file check", "The client's own file check found a problem.", None, False),
+    ("filecheck", "Failed file check", "The client's file check found a problem.", None, False),
     ("licence",   "Licence",
                   "The licence has expired, expires within two weeks, or is in a state other than active.",
                   None, False),
@@ -194,11 +192,10 @@ def warning_kinds():
 
 
 def selection_notices(sel):
-    """The drives worth warning about, and whether the warning was dismissed.
+    """The drives to warn about, and whether the warning was dismissed.
 
-    A system drive is left out entirely rather than dismissed: the prefix drive
-    and Wine's root mapping are the container itself, so there was never
-    anything there to accept.
+    A system drive is left out of the list. The prefix drive and Wine's root
+    mapping are the container itself, so there is nothing there to accept.
     """
     if not sel:
         return []
@@ -216,12 +213,12 @@ def selection_notices(sel):
 
 
 def client_health(pairs):
-    """The health list with the client's own warnings merged into it.
+    """The health list with the client's warnings merged into it.
 
     bbdata raises "frozen" from status.json and bbconfig raises it again from the
     field the client documents, so a freeze would otherwise be reported twice on
-    one page. De-duplicated by kind, with whatever is already there kept: the
-    file is read every poll, and the bzcli reading can be minutes old.
+    one page. De-duplicated by kind, keeping the entry already there, because the
+    file is read every poll and the bzcli reading can be minutes old.
     """
     out = list(pairs or [])
     seen = set(k for k, _ in out)
@@ -241,13 +238,13 @@ def health_entries(pairs):
     """The health list as both the page and the API carry it.
 
     The key is the kind, because a health warning is raised once for the whole
-    container: there is one freeze, one licence. The selection warnings are the
-    ones that need a subject in the key, and they travel separately, under the
-    client reading, because that is where the drive they name already is.
+    container. There is one freeze and one licence. Only the selection warnings
+    need a subject in the key, and they travel separately, under the client
+    reading, because that is where the drive they name already is.
     """
     done = bbdismiss.keys()
     hid = bbdismiss.hidden()
-    # A critical kind reads as not dismissed whatever the store says: the
+    # A critical kind reads as not dismissed whatever the store says. The
     # dismiss route refuses it now, and a record from before it did must not
     # keep a freeze off the page.
     return [{"kind": k, "text": t, "key": k,
@@ -259,16 +256,15 @@ def health_entries(pairs):
 
 def strip_client_dirs(client):
     """The client reading with nothing left in it that names a directory on the
-    user's share. The licence, the cluster and the container's own settings stay:
-    they say nothing about what is being backed up."""
+    user's share. The licence, the cluster and the container's settings stay,
+    because they say nothing about what is being backed up."""
     if not client:
         return client
     out = dict(client)
     out["drive_selection"] = None
     out["excluded_dirs"] = None
-    # A selection notice names a drive and nothing else, but a drive letter is
-    # what drive_selection is withheld for, so it goes the same way rather than
-    # being argued about separately.
+    # A selection notice names only a drive, but a drive letter is
+    # what drive_selection is withheld for, so it is withheld too.
     out["selection_notices"] = None
     return out
 
@@ -338,8 +334,8 @@ def snapshot_to_json(d):
         "perf": d.get("perf"),
         "health": health_entries(d.get("health")),
         "upload_success": d.get("upload_success"),
-        # Raw counts rather than a pre-drawn chart: the page scales the bars to
-        # its own tallest day, and the day strings are already display-ready.
+        # Raw counts, not a drawn chart. The page scales the bars to its
+        # tallest day, and the day strings are already display-ready.
         "upload_history": d.get("upload_history"),
         # The size is formatted here because the banner states it as prose, and
         # the days figure is a whole number of days by construction.
@@ -347,13 +343,13 @@ def snapshot_to_json(d):
                          "days": d["completion"]["days"],
                          "total_str": human(d["completion"]["total_bytes"])}
                         if d.get("completion") else None),
-        # What the set is actually made of. Counts only, and only the categories
-        # the client itself counted, so the page can say what a couple of million
-        # files are rather than only how many there are.
+        # What the set is made of. Counts only, and only the categories the
+        # client itself counted, so the page can say what a couple of million
+        # files are as well as how many there are.
         "composition": d.get("composition"),
-        # YYYYMMDD as the client records it. The page formats it for display,
-        # because the raw string is also what the API hands a consumer that wants
-        # to parse the date rather than read it, and one shape serves both.
+        # YYYYMMDD as the client records it. The page formats it for display.
+        # The API hands the same raw string to a consumer that parses the date,
+        # and one shape serves both.
         "backing_up_since": d.get("backing_up_since"),
         # Whether the estimate is better or worse than the last day recorded.
         # An ETA on its own says nothing about whether it is being caught up.
@@ -367,7 +363,7 @@ def snapshot_to_json(d):
         "pause": d.get("pause"),
         "pause_label": d.get("pause_label"),
         # An inherit pulls another identity's backup state into this one and
-        # nothing else happens until it is done; see bbdata.inherit().
+        # no other work happens until it is done. See bbdata.inherit().
         "inherit": d.get("inherit"),
         "milestones": d.get("milestones"),
         "progress_history": d.get("progress_history"),
@@ -385,7 +381,7 @@ def snapshot_to_json(d):
         "rate_limits": bbdata.rate_limits(int(d.get("rate", 0) * 1048576),
                                           d.get("threads"), lat_ms),
         "skipped": d.get("skipped"),
-        # The skipped files themselves, not just the counts. The Skipped Files
+        # The skipped files themselves as well as the counts. The Skipped Files
         # page needs the names to be useful at all, and it reads them from the
         # cached snapshot rather than calling gather() itself, so the raw list
         # has to travel in the snapshot the collector thread already builds.
@@ -403,7 +399,7 @@ def snapshot_to_json(d):
         "latency_note": lat_note,
         "upload_pod": _upload_host(),
         # What the client says about itself: licence, cluster, encryption, its
-        # own summary, and the settings behind them. None until the first bzcli
+        # summary, and the settings behind them. None until the first bzcli
         # reading lands, and on an image that has no bzcli.
         "client": client_reading(),
         "about": ABOUT,
@@ -414,17 +410,17 @@ def snapshot_to_json(d):
 # The palettes, once, spliced into every page at import time so a theme chosen
 # in the Monitor applies to the Status, Tools and API pages as well, and any
 # page added later inherits them by construction. The Monitor also uses
-# --hi-bg, --hi-fg and the track colours; the other pages use --dim, which is
+# --hi-bg, --hi-fg and the track colours. The other pages use --dim, which is
 # derived from each palette below rather than kept as a fourteenth value.
 THEME_CSS = """  :root{
-    /* Blue -- matches the original curses console */
+    /* Blue, matching the original curses console */
     --bg:#0a1830; --panel:#0e2148; --border:#39c5ff; --title:#39c5ff;
     --text:#d7e6ff; --hi-bg:#d7e6ff; --hi-fg:#0a1830;
     --good:#3ddc6b; --warn:#ffd23d; --bad:#ff5a5a;
     --track-bg:#04101f; --track-border:#1c3a63; --scanline:0;
   }
-  /* Dark is properly black rather than dark grey. rogman's values: the point of
-     the theme is black, and #161616 was not it. */
+  /* Dark is black (#000000) instead of dark grey, using rogman's values.
+     #161616 was dark grey. */
   html[data-theme="dark"]{
     --bg:#000000; --panel:#1e1e1e; --border:#6a9fd8; --title:#7fb2e5;
     --text:#d7e6ff; --hi-bg:#d4d4d4; --hi-fg:#161616;
@@ -498,9 +494,10 @@ THEME_CSS = """  :root{
     --track-bg:#08011a; --track-border:#3d1b5c; --scanline:1;
   }
   /* Derived from whichever palette is in force rather than kept as a fourteenth
-     value in each. It lives here, with the palettes, because every page uses it:
-     defined only for the plain pages, the Monitor's progress chart had no value
-     to resolve and its labels fell back to the SVG default, which is black. */
+     value in each. It lives here, with the palettes, because every page uses it.
+     When it was defined only for the plain pages, the Monitor's progress chart
+     had no value to resolve and its labels fell back to the SVG default, which
+     is black. */
   :root{ --dim:#7f9fc8; }
   @supports (color: color-mix(in srgb, red, blue)){
     :root{ --dim:color-mix(in srgb, var(--text) 62%, var(--bg)); }
@@ -508,7 +505,7 @@ THEME_CSS = """  :root{
 """
 
 # What the three plain pages add to the palettes: the page background carried
-# onto html, so a centred body sits on its own colour rather than on the
+# onto html, so a centred body sits on the theme background rather than on the
 # viewport's. The measure and the prose caps are set on body in each page.
 PAGE_CSS = """  html{background:var(--bg);}
 """
@@ -536,8 +533,8 @@ KEYS_HTML = """<!doctype html>
   .on{background:var(--good);color:#04101f;}
   .off{background:var(--dim);color:#04101f;}
   .row{display:flex;gap:14px;align-items:center;flex-wrap:wrap;}
-  /* A switch rather than a button pair: it shows the current state and the
-     other state in one control, and it reads the same on a phone. */
+  /* A switch shows the current state and the other state in one control, and
+     it reads the same on a phone. */
   .switch{display:inline-flex;gap:8px;align-items:center;font-size:13px;cursor:pointer;margin:0;}
   .switch input{appearance:none;-webkit-appearance:none;width:38px;height:20px;margin:0;border-radius:10px;
     background:var(--dim);position:relative;cursor:pointer;border:0;flex:0 0 auto;}
@@ -588,10 +585,10 @@ KEYS_HTML = """<!doctype html>
   th{color:var(--dim);font-weight:600;}
   td.label{white-space:normal;}
   /* A revoked or expired row is dimmed by colour rather than opacity, so the bin
-     on it stays white; opacity on the row would grey the icon with the text. */
+     on it stays white. Opacity on the row would grey the icon with the text. */
   .revoked td,.revoked td code{color:var(--dim);}
-  /* The delete control on a revoked or expired row is a bin, not a word: the row
-     is already greyed and the action is the only one left, so an icon reads
+  /* The delete control on a revoked or expired row is a bin icon. The row is
+     already greyed and the action is the only one left, so an icon reads
      faster than a second label beside the state. White on every theme, because
      every palette here is dark. */
   .icon-btn{padding:4px 6px;background:transparent;border-color:transparent;line-height:0;vertical-align:middle;}
@@ -698,7 +695,7 @@ function render(d){
   document.getElementById('state-note').textContent = !d.has_keys
     ? 'No keys, no API. Every path answers 404 until you make one. Revoke the last key and it switches off again.'
     : (d.switch ? 'On. Switch it off here to stop every path answering, without revoking a key.'
-                : 'Switched off. The keys are kept; every path answers 404 until you switch it on again.');
+                : 'Switched off. The keys are kept. Every path answers 404 until you switch it on again.');
 
   var box = document.getElementById('scopes');
   if(!box.dataset.built){
@@ -779,7 +776,7 @@ document.getElementById('copy').addEventListener('click', function(){
   this.textContent = 'Copied';
 });
 document.getElementById('rows').addEventListener('click', function(e){
-  // The click may land on the icon inside the button; find the button.
+  // The click may land on the icon inside the button, so find the button.
   var t = e.target && e.target.closest ? e.target.closest('button') : e.target;
   if(!t || !t.getAttribute) return;
   var id = t.getAttribute('data-revoke');
@@ -790,7 +787,7 @@ document.getElementById('rows').addEventListener('click', function(e){
   }
   id = t.getAttribute('data-delete');
   if(id){
-    if(!confirm('Delete key ' + id + ' for good? It is already ' + t.getAttribute('data-state') + ', so nothing changes for anything using it; this only removes the row.')) return;
+    if(!confirm('Delete key ' + id + ' for good? It is already ' + t.getAttribute('data-state') + ', so nothing changes for anything using it. This only removes the row.')) return;
     post('manage/keys/delete', {id: id}).then(load);
   }
 });
@@ -802,7 +799,7 @@ document.getElementById('switch').addEventListener('change', function(){
   });
 });
 
-// Digits switch the shell's tabs from inside this frame; the shell owns them.
+// Digits switch the shell's tabs from inside this frame. The shell owns them.
 document.addEventListener('keydown', function(e){
   var tg = e.target && e.target.tagName;
   if(tg === 'INPUT' || tg === 'SELECT' || tg === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -819,8 +816,8 @@ load();
 
 
 # Settings: notifications and quiet hours. Configuration rather than keys, so it
-# has a tab of its own instead of living under API. Served from /settings,
-# reached as /monitor/settings, behind the same login as everything else here;
+# has a separate tab instead of living under API. Served from /settings, reached
+# as /monitor/settings, behind the same login as everything else here, because
 # tokens are entered on this page.
 SETTINGS_HTML = """<!doctype html>
 <html><head><meta charset="utf-8">
@@ -841,8 +838,8 @@ SETTINGS_HTML = """<!doctype html>
   .on{background:var(--good);color:#04101f;}
   .off{background:var(--dim);color:#04101f;}
   .row{display:flex;gap:14px;align-items:center;flex-wrap:wrap;}
-  /* A switch rather than a button pair: it shows the current state and the
-     other state in one control, and it reads the same on a phone. */
+  /* A switch shows the current state and the other state in one control, and
+     it reads the same on a phone. */
   .switch{display:inline-flex;gap:8px;align-items:center;font-size:13px;cursor:pointer;margin:0;}
   .switch input{appearance:none;-webkit-appearance:none;width:38px;height:20px;margin:0;border-radius:10px;
     background:var(--dim);position:relative;cursor:pointer;border:0;flex:0 0 auto;}
@@ -865,7 +862,7 @@ SETTINGS_HTML = """<!doctype html>
   .ep .ep-last{grid-column:1 / -1;margin:0;font-size:12px;}
   .ep .ep-last.bad{color:var(--bad);}
   .ep .ep-last.good{color:var(--good);}
-  /* One row per client setting: the client's own name for it, its own
+  /* One row per client setting: the client's name for it, its
      description, the control, and a Save that answers for that setting alone. */
   .cs{padding:12px 0;border-bottom:1px solid var(--border);}
   .cs:last-child{border-bottom:0;}
@@ -920,8 +917,8 @@ SETTINGS_HTML = """<!doctype html>
     thead{display:none;} tr{border-bottom:1px solid var(--border);padding:6px 0;}
     th,td{border:none;padding:2px 0;white-space:normal;}
     /* The warnings list: the name and what it means on their own line, then
-       Show, Notify and the dismissed count side by side beneath, rather than
-       four stacked cells that read as four unrelated lines. */
+       Show, Notify and the dismissed count side by side beneath. Four stacked
+       cells read as four unrelated lines. */
     #kinds tr{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center;padding:8px 0;}
     #kinds td{padding:0;} #kinds td.label{flex:1 0 100%;} #kinds td:empty{display:none;} }
 </style></head><body>
@@ -930,9 +927,9 @@ SETTINGS_HTML = """<!doctype html>
 
 <h2>Backup client</h2>
 <div class="panel" id="client">
-  <p class="dim">Settings held by the Backblaze client itself, read and written through its own
-  command line. The description under each one is the client's own wording, so it says what the
-  Backblaze settings window says.</p>
+  <p class="dim">Settings held by the Backblaze client itself, read and written through its
+  command line. The description under each one is the client's wording, the same as the Backblaze
+  settings window.</p>
   <p class="dim">Reading them starts a Windows process under Wine, so the values here are taken
   every few minutes rather than continuously. A change is written to the client's configuration
   file straight away, but whether a backup that is already running picks it up without the
@@ -969,7 +966,7 @@ SETTINGS_HTML = """<!doctype html>
 <h2>Warnings and events</h2>
 <div class="panel" id="notices">
   <p class="dim">Everything the container can warn about, in one list. Show puts a warning on the
-  Status tab, the Monitor's warning band, the terminal monitor and the alert gauge; one switched
+  Status tab, the Monitor's warning band, the terminal monitor and the alert gauge. One switched
   off here is still in the API, marked hidden. Notify sends it to the endpoints above when it
   starts and again when it clears. Two warnings cannot be switched off or dismissed, because both
   mean nothing is being backed up: a safety freeze, and passes losing their four-hour lock.</p>
@@ -989,8 +986,8 @@ SETTINGS_HTML = """<!doctype html>
 <h2>bb-doctor</h2>
 <div class="panel" id="doctor">
   <p class="dim">The read-speed sample in bb-doctor's Source drives section reads 64 MB from the first
-  file over 64 MB it finds under each drive root. How far down it looks is a trade: three levels is
-  quick but misses a share laid out as share/category/year/title/file; searching until a file turns
+  file over 64 MB it finds under each drive root. How far down it looks is a trade-off. Three levels is
+  quick but misses a share laid out as share/category/year/title/file. Searching until a file turns
   up finds it, but on a share with millions of small files and no large one the search runs to its
   sixty-second limit for every such drive.</p>
   <label for="doc-depth">Look this many levels below each drive root</label>
@@ -1005,13 +1002,13 @@ SETTINGS_HTML = """<!doctype html>
   <p class="dim">Rules in the exclusions file the client keeps, <code>bzexcluderules_editable.xml</code>.
   The client applies each rule to every drive, so one rule here excludes a folder on every disk
   you have mapped, where the client's Exclusions window needs it added drive by drive. A file is
-  excluded when it matches every criterion of a rule; leave a criterion empty to skip it. The
+  excluded when it matches every criterion of a rule. Leave a criterion empty to skip it. The
   client reads the file at the start of each backup pass. Rules the client wrote, and any made
   by hand, are left as they are.</p>
   <div id="exc-list"></div>
   <h3 id="exc-form-title">Add a rule</h3>
   <label for="exc-path">Folder path, after the drive letter</label>
-  <div class="row"><input type="text" id="exc-path" placeholder=":\\Media\\" style="width:22em"> <span class="dim">tested first, so a miss skips the rest of the rule; at least four characters, or empty for any folder</span></div>
+  <div class="row"><input type="text" id="exc-path" placeholder=":\\Media\\" style="width:22em"> <span class="dim">tested first, so a miss skips the rest of the rule. At least four characters, or empty for any folder</span></div>
   <label for="exc-ext">File extension</label>
   <div class="row"><input type="text" id="exc-ext" placeholder="iso" style="width:8em"> <span class="dim">the part after the last dot</span></div>
   <label for="exc-ends">Path ends with</label>
@@ -1030,7 +1027,7 @@ SETTINGS_HTML = """<!doctype html>
   it clears a stale four-hour lock, and it stops a pass stuck on a lost upload child so the service
   starts a fresh one. Every action goes to the container log. Off by default because it deletes a
   file and kills processes. This switch overrides the container's <code>ENABLE_WATCHDOG</code>
-  variable and takes effect within a minute, no restart needed; "Follow the variable" hands the
+  variable and takes effect within a minute without a restart. "Follow the variable" hands the
   decision back to it.</p>
   <div class="row">
     <label class="switch"><input type="checkbox" id="wd-enabled"> <span>Automatic recovery on</span></label>
@@ -1043,7 +1040,7 @@ SETTINGS_HTML = """<!doctype html>
 <h2>Quiet hours</h2>
 <div class="panel" id="quiet">
   <p class="dim">Pause the backup on a schedule. At the start of a window the container asks the client
-  to pause; at the end it starts the backup again. The client's own pause lasts about two hours, so
+  to pause, and at the end it starts the backup again. The client's pause lasts about two hours, so
   inside a window the container renews it. If you start the backup yourself during a window, it stays
   running until that window ends. Times are in the container's time zone.</p>
   <div class="row">
@@ -1059,16 +1056,16 @@ SETTINGS_HTML = """<!doctype html>
 <h2>Backup and restore</h2>
 <div class="panel" id="transfer">
   <p class="dim">One file with everything this page holds: API keys, notification endpoints and
-  events, quiet hours, warning choices and dismissals, and the Backblaze client's own settings as
+  events, quiet hours, warning choices and dismissals, and the Backblaze client's settings as
   values. The API keys and the notification endpoints are the secrets. With a passphrase they go
-  into the file encrypted; without one they are left out and the file records which sections are
+  into the file encrypted. Without one they are left out and the file records which sections are
   missing. Importing replaces
   each section the file holds and writes the client settings back through bzcli one at a time.
   The file carries a version, so a later build can read an older file. It does not carry the
   backup or its identity: the computer id, the drive stamps, the drive selections and the client's
   file lists stay in appdata and on the drives, and moving a backup to another host is still a copy
   of appdata or an inherit through the client.</p>
-  <label for="xfer-pass">Passphrase <span class="dim">(for the secrets; leave empty to leave them out)</span></label>
+  <label for="xfer-pass">Passphrase <span class="dim">(encrypts the secrets, or leave empty to leave them out)</span></label>
   <div class="row"><input type="password" id="xfer-pass" autocomplete="new-password" style="max-width:280px"></div>
   <div class="row" style="margin-top:12px"><button id="xfer-export">Export settings</button><span class="dim" id="xfer-msg"></span></div>
   <label for="xfer-file" style="margin-top:14px">Import a settings file <span class="dim">(uses the passphrase above if the file has secrets)</span></label>
@@ -1089,19 +1086,19 @@ function post(path, body){
 }
 // ---- the backup client ----
 // The label and the description of every setting come from bbconfig, which took
-// them from bzcli's own help text. Nothing here keeps its own list of settings:
-// a key absent from that whitelist cannot be written, and does not appear.
+// them from bzcli's help text. Nothing here keeps a separate list of settings.
+// A key absent from that whitelist cannot be written, and does not appear.
 var CLIENT = null;
-// What the client's own help text does not say, and someone running it in this
-// container needs to know. Beside the setting rather than in the text above,
-// because each of these is about one setting and nothing else.
+// What the client's help text does not say and someone running it in this
+// container needs to know. Beside the setting instead of in the text above,
+// because each of these is about one setting.
 var CS_EXTRA = {
-  net_throttle: 'Megabits per second per thread, not for the backup as a whole. It does nothing at all while the automatic throttle above is on.',
-  num_backup_threads: 'A ceiling, not a target: the client opens as many as it has work for. Under Wine each thread is separately limited by the send buffer divided by the round trip, so raising this only helps while that per-thread limit is not already what is holding the rate down.'
+  net_throttle: 'Megabits per second per thread, not for the backup as a whole. It does nothing while the automatic throttle above is on.',
+  num_backup_threads: 'A ceiling. The client opens as many as it has work for. Under Wine each thread is separately limited by the send buffer divided by the round trip, so raising this only helps while that per-thread limit is not already what is holding the rate down.'
 };
-// The throttle multiplied out. Worked from the reader's own two settings rather
-// than from an example: a fixed illustration using someone else's numbers reads
-// as a description of the reader's setup and is wrong for almost everyone.
+// The throttle multiplied out, worked from the reader's two settings. A fixed
+// example using someone else's numbers reads as a description of the reader's
+// setup and is wrong for almost everyone.
 // `rows` is the describe() list, not a map of values, so the two figures are
 // looked up by key rather than read off an object.
 function csValue(rows, key){
@@ -1117,7 +1114,7 @@ function throttleTotal(rows){
 }
 function mbit(bytesPerSec){ return (bytesPerSec * 8 / 1e6).toFixed(1); }
 // The live per-thread ceiling from the Monitor, so the thread count can be read
-// against the thing that actually bounds a thread rather than on its own.
+// against what bounds a thread.
 function perThreadNote(rl){
   if(!rl || rl.per_thread == null) return '';
   var line = 'Right now a thread is bounded at about ' + esc(mbit(rl.per_thread)) +
@@ -1169,8 +1166,8 @@ function renderClient(d){
     box.innerHTML = '<p class="dim">The client has not been read yet. Each reading starts a Windows ' +
       'process under Wine, so the first one arrives a little after the monitor starts. This section ' +
       'fills in by itself when it does.</p>';
-    // Asked again until the reading is there, and not after: this section
-    // holds fields being edited, and a redraw would throw the edits away. A
+    // Asked again until the reading is there, and not after, because this
+    // section holds fields being edited and a redraw would throw the edits away. A
     // page opened before the first reading used to stay like this until it
     // was reloaded by hand.
     if(!CLIENT_RETRY) CLIENT_RETRY = setTimeout(function(){ CLIENT_RETRY = null; loadClient(); }, 15000);
@@ -1197,13 +1194,13 @@ document.getElementById('client-settings').addEventListener('click', function(e)
   t.disabled = true;
   post('manage/client', {key: key, value: val}).then(function(res){
     t.disabled = false;
-    // A refusal says which rule it broke, in the validator's own words or the
+    // A refusal says which rule it broke, in the validator's words or the
     // client's, rather than a bare "could not save".
     if(!res.ok){ msg.className = 'cs-msg bad'; msg.textContent = res.body.error || 'Could not save.'; return; }
     msg.className = 'cs-msg good';
     msg.textContent = 'Saved. A restart may be needed before a running backup honours it.';
-    // Show what the client now holds rather than what was typed: the two differ
-    // if it stored something other than the figure that was sent.
+    // Show what the client now holds. It differs from what was typed if the
+    // client stored something other than the figure that was sent.
     if(res.body.value != null){
       if(el.type === 'checkbox') el.checked = (res.body.value === true || String(res.body.value) === 'true');
       else el.value = res.body.value;
@@ -1239,25 +1236,25 @@ function epRow(e, i){
       '<textarea class="ep-template" rows="3" spellcheck="false">' + esc(e.template || '{"title": "{title}", "text": "{message}"}') + '</textarea></label>' +
     '<p class="dim ep-hint"></p>' + lastDelivery(e) + '</div>';
 }
-// The last delivery, so an endpoint that stopped working says so here rather
-// than only in the container log.
+// The last delivery, so an endpoint that stopped working shows it here as well
+// as in the container log.
 function lastDelivery(e){
   var d = e.last_delivery;
   if(!d) return '<p class="dim ep-last">Nothing sent yet.</p>';
   var when = '';
   try { when = new Date(d.at*1000).toLocaleString(); } catch(err){}
   return '<p class="ep-last ' + (d.ok ? 'good' : 'bad') + '">' +
-         (d.ok ? 'Delivered' : 'Failed') + ' \u2014 ' + esc(d.event) + ', ' + esc(when) +
+         (d.ok ? 'Delivered' : 'Failed') + ': ' + esc(d.event) + ', ' + esc(when) +
          (d.detail ? ' (' + esc(d.detail) + ')' : '') + '</p>';
 }
 var KIND_HINT = {
   pushbullet: 'Auth: Bearer with your Pushbullet access token. Sent as a note with the event as its title.',
-  gotify: 'Put the application token in the token box; it is sent as X-Gotify-Key. Priority 5 for a freeze or a stall, 3 otherwise.',
-  discord: 'The webhook URL carries its own secret; leave auth at none.',
-  slack: 'The incoming-webhook URL carries its own secret; leave auth at none.',
-  ntfy: 'Title, priority and tag go in headers; the message is the body. Add a token if the topic is protected.',
+  gotify: 'Put the application token in the token box. It is sent as X-Gotify-Key. Priority 5 for a freeze or a stall, 3 otherwise.',
+  discord: 'The webhook URL carries the secret, so leave auth at none.',
+  slack: 'The incoming-webhook URL carries the secret, so leave auth at none.',
+  ntfy: 'Title, priority and tag go in headers, and the message is the body. Add a token if the topic is protected.',
   webhook: 'JSON with container, build, event, title, message, body, state and time. For Home Assistant or a script.',
-  custom: 'Your own JSON body. Strings are escaped for you; {priority} and {time} are numbers.'
+  custom: 'Your own JSON body. Strings are escaped for you. {priority} and {time} are numbers.'
 };
 function applyKind(row){
   var kind = row.querySelector('.ep-kind').value;
@@ -1278,7 +1275,7 @@ function renderNotify(d){
 }
 // One list for what is shown and what is sent. A warning kind gets a Show
 // box, and a Notify box when a notification event exists for the same
-// condition; an event with no warning behind it (a milestone, an update) gets
+// condition. An event with no warning behind it (a milestone, an update) gets
 // Notify alone. Drawn once both readings are in, whichever arrives second.
 var NOTICES = null;
 function renderKinds(){
@@ -1315,9 +1312,9 @@ function collectHidden(){
 document.getElementById('kinds-save').addEventListener('click', function(){
   var err = document.getElementById('kinds-err'), msg = document.getElementById('kinds-msg');
   err.hidden = true; msg.textContent = '';
-  // Two stores, one button: the hidden kinds live with the dismissals, the
+  // Two stores, one button. The hidden kinds live with the dismissals and the
   // events with the endpoints. The second save carries the endpoints as they
-  // stand on the page, which is what Save notifications would send too.
+  // stand on the page, the same as Save notifications would send.
   post('manage/notices/hidden', {hidden: collectHidden()}).then(function(res){
     if(!res.ok){ err.textContent = res.body.error || 'Could not save.'; err.hidden = false; return null; }
     NOTICES = res.body; renderNotices(res.body);
@@ -1357,10 +1354,10 @@ document.getElementById('endpoints').addEventListener('click', function(e){
   if(t.classList.contains('ep-remove')){ row.remove(); if(!document.querySelector('#endpoints .ep')) document.getElementById('endpoints').innerHTML = '<p class="dim">No endpoints yet.</p>'; }
   if(t.classList.contains('ep-test')){
     var id = row.querySelector('.ep-id').value; var msg = document.getElementById('notify-msg');
-    msg.textContent = 'sending a test\u2026';
+    msg.textContent = 'sending a test...';
     post('manage/notify/test', {id: id}).then(function(res){
-      // The route answers "delivered" or "not delivered" and nothing more, so
-      // the reason for a failure is in the container log rather than here.
+      // The route answers only "delivered" or "not delivered", so the reason
+      // for a failure is in the container log.
       msg.textContent = res.ok ? 'Test delivered.'
         : 'Test not delivered. The container log says what the endpoint answered.';
     });
@@ -1388,8 +1385,8 @@ function quietStateText(st){
   if(!st) return '';
   if(st.in_window){
     var until = st.window_end ? new Date(st.window_end*1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
-    if(st.override_until) return 'In a window until ' + until + '; started by hand, so left running until then.';
-    return 'In a window until ' + until + (st.active ? '; paused by quiet hours.' : '.');
+    if(st.override_until) return 'In a window until ' + until + '. Started by hand, so left running until then.';
+    return 'In a window until ' + until + (st.active ? '. Paused by quiet hours.' : '.');
   }
   if(st.next_start) return 'Next window: ' + new Date(st.next_start*1000).toLocaleString([], {weekday:'short', hour:'2-digit', minute:'2-digit'}) + '.';
   return st.enabled ? 'No windows yet.' : '';
@@ -1422,16 +1419,16 @@ document.getElementById('windows').addEventListener('click', function(e){
 });
 // Ask the shell to show the Monitor and open its settings on the status panel.
 // The Monitor's frame is loaded once and never re-pointed, so this travels as a
-// message rather than as a URL: a query string would need the frame reloaded,
-// which would drop its poll and its scroll position.
+// message. A query string would need the frame reloaded, which would drop its
+// poll and its scroll position.
 document.getElementById('to-monitor').addEventListener('click', function(){
   if(window.parent !== window) window.parent.postMessage({bb64: 'monitor-settings'}, location.origin);
   else window.location = '/monitor/?settings=status';
 });
 // ---- dismissed warnings ----
-// The list is what was turned off and when, so the reset button is not a blind
-// one: somebody coming back to a container weeks later can see what a previous
-// self accepted before deciding to put it all back.
+// The list is what was turned off and when, so the reset is not blind. Somebody
+// coming back to a container weeks later can see what they accepted earlier
+// before deciding to put it all back.
 function renderNotices(d){
   var list = d.dismissed || [];
   document.getElementById('dismissed').innerHTML = list.length
@@ -1473,7 +1470,7 @@ document.getElementById('quiet-save').addEventListener('click', function(){
     renderQuiet(res.body); msg.textContent = 'Saved.'; setTimeout(function(){ msg.textContent = ''; }, 1500);
   });
 });
-// Digits switch the shell's tabs from inside this frame; the shell owns them.
+// Digits switch the shell's tabs from inside this frame. The shell owns them.
 document.addEventListener('keydown', function(e){
   var tg = e.target && e.target.tagName;
   if(tg === 'INPUT' || tg === 'SELECT' || tg === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -1513,9 +1510,9 @@ function renderExclusions(d){
   EXC = d;
   var box = document.getElementById('exc-list');
   if(!d.present){
-    box.innerHTML = '<p class="dim">The client has not written its exclusions file yet. It appears after the first backup pass; rules can be added then.</p>';
+    box.innerHTML = '<p class="dim">The client has not written its exclusions file yet. It appears after the first backup pass. Rules can be added then.</p>';
   } else if(!d.rules.length){
-    box.innerHTML = '<p class="dim">No rules made here' + (d.other ? '; ' + d.other + ' written by the client' : '') + '.</p>';
+    box.innerHTML = '<p class="dim">No rules made here' + (d.other ? ' (' + d.other + ' written by the client)' : '') + '.</p>';
   } else {
     box.innerHTML = '<table><thead><tr><th>Folder</th><th>Extension</th><th>Ends with</th><th>Contains</th><th>Not</th><th></th></tr></thead><tbody>' +
       d.rules.map(function(r){
@@ -1553,7 +1550,7 @@ function excPost(body){
   err.hidden = true; msg.textContent = '';
   return post('manage/exclusions', body).then(function(res){
     if(!res.ok){ err.textContent = res.body.error || 'Could not save.'; err.hidden = false; return false; }
-    renderExclusions(res.body); msg.textContent = 'Saved; applies from the next backup pass.';
+    renderExclusions(res.body); msg.textContent = 'Saved. Applies from the next backup pass.';
     setTimeout(function(){ msg.textContent = ''; }, 4000);
     return true;
   });
@@ -1578,7 +1575,7 @@ document.getElementById('exc-list').addEventListener('click', function(e){
 function wdStateText(d){
   var src = d.source === 'setting' ? 'set here' : ('following ENABLE_WATCHDOG=' + (d.variable ? 'true' : 'false'));
   var run = d.running ? 'watchdog running' : (d.enabled ? 'starting within a minute' : 'watchdog parked');
-  return (d.enabled ? 'On' : 'Off') + ', ' + src + '; ' + run + '.';
+  return (d.enabled ? 'On' : 'Off') + ', ' + src + ', ' + run + '.';
 }
 function renderWatchdog(d){
   document.getElementById('wd-enabled').checked = !!d.enabled;
@@ -1665,13 +1662,13 @@ setInterval(loadNotices, 30000);
 
 # The skipped files page, framed by the Skipped Files tab in the shell. Served
 # from /skipped, reached as /monitor/skipped, so it sits behind the same
-# auth_request as the dashboard. That matters more here than anywhere else in
-# the monitor: this page is a list of paths on the user's own share, and a list
-# of paths is the one thing that must never be readable without the web login.
+# auth_request as the dashboard. That matters most here, because this page lists
+# paths on the user's share, and paths must never be readable without the web
+# login.
 # It began as the Skipped Files page and now leads with everything the client
 # has to say about itself: warnings, a pause, a first backup running or just
-# finished, and then the skipped list under it. One place to look when the
-# monitor shows a red band.
+# finished, and then the skipped list under it. It is the page to look at when
+# the monitor shows a red band.
 STATUS_HTML = """<!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1693,8 +1690,8 @@ STATUS_HTML = """<!doctype html>
   input[type=text]{width:100%;max-width:340px;padding:6px 8px;border-radius:4px;
     border:1px solid var(--border);background:var(--bg);color:var(--text);font:inherit;}
   .controls{display:flex;gap:8px;align-items:center;margin-bottom:16px;}
-  /* The reasons double as the filter, so they are buttons rather than text: a
-     count is only half an answer, and the other half is which files it means. */
+  /* The reasons double as the filter, so they are buttons. A count says how
+     many, and the button shows which files it means. */
   .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
   .chip{padding:3px 10px;border-radius:10px;font-size:12px;font-weight:400;
     background:transparent;color:var(--text);}
@@ -1711,8 +1708,8 @@ STATUS_HTML = """<!doctype html>
   h2{font-size:15px;margin:18px 0 4px;color:var(--title);}
   /* One notice per thing that needs attention, with a coloured edge that says
      how urgently. Text, not icons, so a screen reader gets the same message.
-     On the page background rather than the panel colour: the drive notice sits
-     inside a panel, where a panel-coloured box has no edge at all. */
+     On the page background, because the drive notice sits inside a panel,
+     where a panel-coloured box has no edge. */
   .notice{border:1px solid var(--dim);border-left:4px solid var(--dim);background:var(--bg);
     border-radius:4px;padding:10px 12px;margin-bottom:8px;max-width:100ch;}
   .notice.n-bad{border-left-color:var(--bad);}
@@ -1720,8 +1717,8 @@ STATUS_HTML = """<!doctype html>
   .notice.n-good{border-left-color:var(--good);}
   .notice.n-info{border-left-color:var(--title);}
   .notice a{color:var(--title);}
-  /* Deliberately quiet. Turning a warning off is a thing to reach for once you
-     have read it, not the first thing the eye lands on. */
+  /* Dim, so turning a warning off comes after reading it and is not the first
+     thing the eye lands on. */
   .notice a.dismiss{color:var(--dim);white-space:nowrap;}
   /* State transitions, newest last, as a plain list with the time in a fixed
      column so the eye can run down it. */
@@ -1739,13 +1736,13 @@ STATUS_HTML = """<!doctype html>
 </style></head><body>
 
 <h1>Status</h1>
-<p class="dim">What needs your attention, from the client's own records.</p>
+<p class="dim">What needs your attention, from the client's records.</p>
 
 <div id="notices" aria-live="polite"></div>
 
 <h2>The backup client</h2>
 <div class="panel" id="client">
-  <p class="dim" id="client-none">The client has not been read yet. It is read through its own
+  <p class="dim" id="client-none">The client has not been read yet. It is read through its
   command line, which starts a Windows process under Wine, so the first reading arrives a little
   after the monitor starts.</p>
   <div id="client-body" hidden></div>
@@ -1779,14 +1776,14 @@ them.</p>
     <p id="trunc" class="dim" style="margin:10px 0 0" hidden></p>
   </div>
 
-  <!-- Only shown when that reason is actually present, because it is a specific
-       diagnosis and not general advice. -->
+  <!-- Only shown when that reason is present, because it is a specific
+       diagnosis. -->
   <div class="panel" id="permnote" hidden>
     <strong>About bad permissions</strong>
     <p class="dim" style="margin:8px 0 0">Under this container that almost always means the
     container user cannot read the file. That points at ownership on the mounted share
     rather than at anything wrong with Backblaze. Run <code>bb-doctor</code> from the
-    <a href="/?tab=tools" target="_top">Tools tab</a>: it diagnoses this case and prints
+    <a href="/?tab=tools" target="_top">Tools tab</a>. It diagnoses this case and prints
     the command that fixes it.</p>
   </div>
 
@@ -1802,9 +1799,9 @@ them.</p>
 <script>
 function esc(s){ return String(s==null?'':s).replace(/[&<>\"']/g, function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]; }); }
-// The client reports its own constants, BZ_FILE_PERMANENT_BAD_PERMISSIONS and
-// the like. Shouting an identifier at someone is not an explanation, so the
-// prefix goes and the rest is read as words; the raw value stays in the title
+// The client reports constants such as BZ_FILE_PERMANENT_BAD_PERMISSIONS.
+// Shouting an identifier at someone is not an explanation, so the prefix goes
+// and the rest is read as words. The raw value stays in the title
 // attribute for anyone searching Backblaze support for it verbatim.
 function pretty(r){
   var s = String(r==null?'':r).replace(/^BZ_/, '').replace(/^FILE_/, '');
@@ -1825,8 +1822,8 @@ function render(){
   // Counted from the list rather than from the counter beside it. The counter
   // reads every line that has three columns, which includes the report header
   // the client writes at the top, so it reports one file too many under a reason
-  // that is really a date. The list keeps only lines with a real path, so its
-  // total is the one that matches the rows on screen.
+  // that is a date. The list keeps only lines with a real path, so its total
+  // matches the rows on screen.
   var reasons = {};
   // The data layer counts reasons across every skipped file, not only the ones
   // sent down, so a truncated listing still reports how many of each exist.
@@ -1851,9 +1848,8 @@ function render(){
   var trunc = document.getElementById('trunc');
   trunc.hidden = !(list.shown < list.total);
   if(!trunc.hidden){
-    // Said plainly, because the counts by reason are then counts of what is
-    // listed and not of everything, and a summary that quietly means something
-    // narrower than it says is worse than no summary.
+    // Stated on the page, because the counts by reason would otherwise read as
+    // counts of what is listed and not of everything.
     trunc.textContent = 'Listing the ' + list.shown + ' most recent of ' + list.total +
                         '. The counts by reason cover all of them.';
   }
@@ -1872,19 +1868,18 @@ function render(){
   document.getElementById('empty').hidden = shown.length > 0;
 }
 
-// The link that turns one notice off. The key comes from the payload rather
-// than being built here out of a kind and a drive letter: the key is what gets
-// stored, and its shape is bbdismiss's business, not the page's. The text
-// travels with it so the Settings list can say what was dismissed rather than
-// showing a bare identifier.
+// The link that turns one notice off. The key comes from the payload and is not
+// built here from a kind and a drive letter, because the key is what gets
+// stored and its shape belongs to bbdismiss. The text travels with it so the
+// Settings list can say what was dismissed instead of showing a bare identifier.
 function dismissLink(key, text){
   return ' <a href="#" class="dismiss" data-key="' + esc(key) +
          '" data-text="' + esc(text) + '">Dismiss</a>';
 }
-// Everything above the skipped list. Each notice is one thing the client's own
+// Everything above the skipped list. Each notice is one thing the client's
 // records say needs attention, and the ones bb-doctor can diagnose point at the
-// Tools tab. When there is nothing, the page says so rather than showing an
-// empty space that might be a page that failed to load.
+// Tools tab. When there is nothing, the page says so, because an empty space
+// might be a page that failed to load.
 function renderNotices(j){
   var out = [];
   var tools = '<a href="/?tab=tools" target="_top">Tools tab</a>';
@@ -1904,29 +1899,29 @@ function renderNotices(j){
       tools + ', and read <a href="https://www.backblaze.com/computer-backup/docs/resolve-a-safety-freeze" ' +
       'target="_blank" rel="noopener noreferrer">the Backblaze page on resolving a safety freeze</a> ' +
       'before you change anything. Its uninstall and reinstall step means, in this container, deleting ' +
-      '<code>/config/wine/drive_c/Program Files/Backblaze/</code> and restarting: the client is put back ' +
+      '<code>/config/wine/drive_c/Program Files/Backblaze/</code> and restarting. The client is put back ' +
       'on the next start. It does not mean recreating the Wine prefix, which would destroy the backup ' +
       'state you are trying to save. If you get that far, ask before you do it.';
     else if(h.kind === 'licence') extra = ' Backblaze reports this account as something other than ' +
       'active. A licence that has lapsed stops the backup, and the client keeps running as though ' +
       'nothing were wrong, so the monitor will not show a fault until files start going stale. ' +
       'Check the billing page on your Backblaze account. Nothing already backed up is deleted ' +
-      'while a licence is being sorted out, but do not leave it: Backblaze remove the data after ' +
+      'while a licence is being sorted out, but do not leave it. Backblaze remove the data after ' +
       'the account has been inactive long enough, and how long that is depends on the plan.';
     else if(h.kind === 'renewal') extra = ' The card or the billing details Backblaze holds did not ' +
       'go through. Nothing new is being backed up until it does. Sign in at backblaze.com and ' +
-      'update the payment details on the account; the client picks it up on its own afterwards.';
+      'update the payment details on the account. The client picks it up on its own afterwards.';
     else if(h.kind === 'filecheck') extra = ' Run bb-doctor from the ' + tools + '.';
-    else if(h.kind === 'stale') extra = ' The client has not finished a pass within the limit set in its own settings.';
+    else if(h.kind === 'stale') extra = ' The client has not finished a pass within the limit set in its settings.';
     else if(h.kind === 'lostlock') extra = ' Every pass aborts at the transmit step once its file list is built, ' +
       'and the next one a few minutes later does the same, while large files keep uploading through the other ' +
-      'path so nothing else here looks wrong. Seen with Backblaze client 10.0.3.1075 under an unpatched Wine, ' +
+      'path so the rest of the page looks normal. Seen with Backblaze client 10.0.3.1075 under an unpatched Wine, ' +
       'where the service takes the pass for dead and deletes the lock under it. On the stable image, set ' +
-      '<code>BACKBLAZE_VERSION=10.0.1.1069</code> on the container and restart; the pinned version is installed ' +
-      'over the newer one. The Wine in the beta carries the fix, so on the beta this is something else: run ' +
+      '<code>BACKBLAZE_VERSION=10.0.1.1069</code> on the container and restart. The pinned version is installed ' +
+      'over the newer one. The Wine in the beta carries the fix, so on the beta this has another cause. Run ' +
       'bb-report from the ' + tools + ' and open an issue with the bundle. This clears on its own once a pass ' +
       'gets past the point where the lock was lost.';
-    // A critical warning carries no Dismiss: the server refuses one anyway.
+    // A critical warning carries no Dismiss, because the server refuses one.
     out.push('<div class="notice n-bad"><strong>' + esc(h.text) + '.</strong>' + extra +
              (h.critical ? '' : dismissLink(h.key || h.kind, h.text)) + '</div>');
   });
@@ -1947,10 +1942,10 @@ function renderNotices(j){
                : q.active ? 'The backup starts again when the window ends' +
                             (q.window_end ? ', at ' + esc(fmtTime(q.window_end)) : '') + '.'
                // Escaped like everything else here. For a code the monitor
-               // knows this is one of its own constants, but for one it does
-               // not it is the reason string out of the client's pauseinfo.xml,
-               // which is the only Backblaze-written text on this page that
-               // reaches innerHTML.
+               // knows, this is one of the monitor's constants. For one it
+               // does not, it is the reason string from the client's
+               // pauseinfo.xml, the only Backblaze-written text on this page
+               // that reaches innerHTML.
                : esc(pl.detail || 'Nothing uploads until the backup is started again, from the Monitor tab or the desktop.') +
                  (pl.until_str ? ' Until ' + esc(pl.until_str) + '.' : '');
     var who = pl.who === 'client' ? ' The client did this itself.'
@@ -1982,8 +1977,8 @@ function renderNotices(j){
 
 // What the client says about itself: whether a private key is set, which
 // datacentre it is assigned to, and, per drive, whether it is set to back that
-// drive up at all. The last of those is the one worth the space: a drive set to
-// none is ticked in the client settings window and still backs nothing up.
+// drive up at all. The last of those matters most, because a drive set to none
+// is ticked in the client settings window and still backs nothing up.
 function renderClient(c){
   var body = document.getElementById('client-body'), none = document.getElementById('client-none');
   if(!c){ body.hidden = true; none.hidden = false; return; }
@@ -1991,16 +1986,15 @@ function renderClient(c){
   var out = [];
   var sel = c.drive_selection || {};
   var drives = Object.keys(sel).sort();
-  // One notice per drive rather than one for all of them, because each carries
-  // its own Dismiss and a person may well know about one drive and not another.
-  // The list comes from the payload, which has already left out the container's
-  // own drives: see selection_notices().
+  // One notice per drive, because each carries a Dismiss and a person may know
+  // about one drive and not another. The list comes from the payload, which has
+  // already left out the container's system drives (see selection_notices()).
   (c.selection_notices || []).forEach(function(n){
     if(n.dismissed) return;
     var text = n.drive + ' is set to back up nothing';
     out.push('<div class="notice n-bad" style="margin-bottom:12px"><strong>' + esc(text) +
       '.</strong> The client is set to skip everything on that drive. It still shows ' +
-      'as ticked in the Backblaze settings window, which is what makes this one hard to find, and it ' +
+      'as ticked in the Backblaze settings window, which makes this one hard to find. It ' +
       'is the state behind the message "No files are selected". Fix it in the Backblaze settings ' +
       'window, under Settings and then Exclusions, by removing the exclusion on the drive itself.' +
       dismissLink(n.key, text) + '</div>');
@@ -2031,14 +2025,14 @@ function renderClient(c){
     out.push('<table><thead><tr><th>Drive</th><th>Set to back up</th></tr></thead><tbody>' +
       drives.map(function(k){
         var s = sel[k] || {};
-        // A system drive that backs up nothing is the right answer, not a
-        // fault, so it is stated plainly in the dim colour rather than in the
-        // one the page uses for something that needs fixing.
+        // A system drive that backs up nothing is correct, so it is shown in
+        // the dim colour instead of the one the page uses for something that
+        // needs fixing.
         var answer = s.backed_up
           ? 'Yes, all files'
           : s.system
           ? '<span class="dim">No, nothing (the container' +
-            "'s own drive; nothing here needs backing up)</span>"
+            "'s system drive, with nothing to back up)</span>"
           : '<strong style="color:var(--bad)">No, nothing</strong> <span class="dim">(' +
             esc(s.whichfiles == null ? 'not set' : s.whichfiles) + ')</span>';
         return '<tr><td>' + esc(k) + '</td><td>' + answer + '</td></tr>';
@@ -2060,8 +2054,8 @@ function renderTimeline(list){
   var ul = document.getElementById('timeline'), none = document.getElementById('tl-none');
   list = list || [];
   ul.hidden = !list.length; none.hidden = !!list.length;
-  // Newest first: the question is "what just happened", and a box that scrolls
-  // should open on the answer. Summary lines after a spell of uploading sit in
+  // Newest first, because the question is "what just happened", and a box that
+  // scrolls should open on the answer. Summary lines after a spell of uploading sit in
   // the list at the moment the spell ended.
   ul.innerHTML = list.slice().reverse().map(function(t){
     return '<li' + (t.level === 'warn' ? ' class="warn"' : '') + '><time>' + esc(fmtTime(t.at)) + '</time>' +
@@ -2097,8 +2091,8 @@ document.getElementById('filter').addEventListener('input', render);
 // Every Dismiss link on the page, caught once on the document, because the
 // notices are rebuilt from scratch on each poll and a listener bound to one of
 // them would be thrown away with it. The header is the same one the other
-// /manage/ posts send: it is what forces a preflight on anything cross-origin,
-// which is what stops another site borrowing this browser session.
+// /manage/ posts send. It forces a preflight on anything cross-origin, and that
+// stops another site borrowing this browser session.
 document.addEventListener('click', function(e){
   var a = e.target;
   if(!a || !a.classList || !a.classList.contains('dismiss')) return;
@@ -2111,7 +2105,7 @@ document.addEventListener('click', function(e){
   }).then(function(r){
     // Hidden straight away rather than waiting for the next poll, which is up
     // to fifteen seconds away and long enough to look as though the click did
-    // nothing. The poll then redraws without it anyway.
+    // nothing. The poll then redraws without it.
     if(r.ok){ var n = a.parentNode; if(n) n.hidden = true; load(); }
     else { var err = document.getElementById('err');
            err.textContent = 'Could not dismiss that warning.'; err.hidden = false; }
@@ -2126,7 +2120,7 @@ document.getElementById('chips').addEventListener('click', function(e){
   REASON = r;
   render();
 });
-// Digits switch the shell's tabs from inside this frame; the shell owns them.
+// Digits switch the shell's tabs from inside this frame. The shell owns them.
 document.addEventListener('keydown', function(e){
   var tg = e.target && e.target.tagName;
   if(tg === 'INPUT' || tg === 'SELECT' || tg === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -2144,12 +2138,12 @@ setInterval(load, 15000);
 
 
 # The command-line tools, run from the page. Served from /tools, reached as
-# /monitor/tools, so it sits behind the same auth_request as the dashboard:
-# bb-doctor prints directory paths on the user's share, which is the same class
-# of data the Status tab protects. The page runs the binaries the console runs
-# (see bbtools.py) and shows their output as text, coloured by the prefixes
-# bb-doctor prints; a line it does not recognise is shown plain, so a change of
-# wording in a tool never hides anything.
+# /monitor/tools, so it sits behind the same auth_request as the dashboard.
+# bb-doctor prints directory paths on the user's share, the same class of data
+# the Status tab protects. The page runs the binaries the console runs (see
+# bbtools.py) and shows their output as text, coloured by the prefixes bb-doctor
+# prints. A line it does not recognise is shown plain, so a change of wording in
+# a tool never hides anything.
 TOOLS_HTML = """<!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2174,7 +2168,7 @@ TOOLS_HTML = """<!doctype html>
   .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0 0;}
   .status{font-size:13px;color:var(--dim);margin-left:auto;}
   /* An option is a checkbox with the flag it stands for and what it does, so
-     the page says exactly what will run before it runs. */
+     the page shows what will run before it runs. */
   label.opt{display:flex;gap:8px;align-items:flex-start;font-size:13px;
     margin:8px 0 0;cursor:pointer;}
   label.opt input{margin:3px 0 0;}
@@ -2185,9 +2179,9 @@ TOOLS_HTML = """<!doctype html>
   .ok{color:var(--good);} .warn{color:var(--warn);} .fail{color:var(--bad);font-weight:600;}
   .fixed{color:var(--good);font-weight:600;} .heading{color:var(--title);font-weight:600;}
   .note{color:var(--dim);} .rule{color:var(--dim);} .info{color:var(--title);}
-  /* bb-health's answer is a verdict, so it is shown in the card with a mark
-     rather than in an output box: a tick, a warning sign or a cross, with the
-     tool's own lines under it as the evidence. */
+  /* bb-health's answer is a verdict, so it is shown in the card with a mark (a
+     tick, a warning sign or a cross) instead of in an output box, with the
+     tool's lines under it as the evidence. */
   .verdict{display:flex;gap:12px;align-items:flex-start;margin-top:10px;padding:10px 12px;
     background:var(--bg);border:1px solid var(--border);border-radius:4px;}
   /* display:flex would otherwise beat the hidden attribute and leave an empty
@@ -2214,7 +2208,7 @@ TOOLS_HTML = """<!doctype html>
 
 <h1>Tools</h1>
 <p class="dim">Runs the same programs as the console, as the container user. Output is shown as
-the program prints it; copy it into a forum post or an issue.</p>
+the program prints it, ready to copy into a forum post or an issue.</p>
 <p class="dim" id="build"></p>
 
 <div id="tools"></div>
@@ -2251,8 +2245,8 @@ function showErr(e){ var el = document.getElementById('err');
 function clearErr(){ document.getElementById('err').hidden = true; }
 
 // The prefixes bb-doctor prints, and bb-health's three words. A line that
-// matches none of them is shown plain, so a change of wording in a tool loses
-// colour and nothing else.
+// matches none of them is shown plain, so a change of wording in a tool only
+// loses the colour.
 function cls(line){
   if(line.indexOf('  [ ok ] ') === 0) return 'ok';
   if(line.indexOf('  [warn] ') === 0) return 'warn';
@@ -2338,7 +2332,7 @@ function renderOut(name){
     pre.innerHTML = (j.lines || []).map(function(l){
       var c = cls(l); return c ? '<span class="' + c + '">' + esc(l) + '</span>' : esc(l);
     }).join('\\n') + (j.truncated ? '\\n<span class="warn">[output truncated]</span>' : '');
-    // A fresh run reopens a box the user had hidden; there is new output to see.
+    // A fresh run reopens a box the user had hidden, because there is new output.
     if(running) COLLAPSED[name] = false;
     pre.hidden = !!COLLAPSED[name];
     if(!pre.hidden && (follow || running)) pre.scrollTop = pre.scrollHeight;
@@ -2390,7 +2384,7 @@ function run(name){
     var cb = document.getElementById('opt-' + name + '-' + o.key);
     if(cb && cb.checked){ opts.push(o.key); if(o.confirm) ask = o.confirm; }
   });
-  // The confirmation is the option's own text, which names what can change.
+  // The confirmation is the option's text, which names what can change.
   if(ask && !window.confirm(ask)) return;
   clearErr();
   post('manage/tools/' + name, {options: opts}).then(function(st){
@@ -2480,7 +2474,7 @@ document.addEventListener('click', function(e){
 document.getElementById('rep-run').addEventListener('click', buildReport);
 document.getElementById('rep-refresh').addEventListener('click', loadReport);
 
-// Digits switch the shell's tabs from inside this frame; the shell owns them.
+// Digits switch the shell's tabs from inside this frame. The shell owns them.
 document.addEventListener('keydown', function(e){
   var tg = e.target && e.target.tagName;
   if(tg === 'INPUT' || tg === 'SELECT' || tg === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -2511,14 +2505,14 @@ def api_v1_payload(d):
     """The /api/v1/status contract.
 
     Built from the raw gather() dict rather than from the display payload, and
-    deliberately field by field. Two reasons. The display payload is the web
+    field by field, for two reasons. The display payload is the web
     page's internal shape and would become a contract the moment it shipped, and
     it carries pre-formatted strings ("19.5 TB", "3 days") which are the wrong
     thing to hand a consumer that wants to graph a number or format for its own
     locale. Bytes are bytes and seconds are seconds here.
 
     Everything the monitor knows is here. What names a file is grouped under
-    "files" so it can be withheld from a key without read:files; see
+    "files" so it can be withheld from a key without read:files. See
     strip_file_names().
     """
     b = d.get("backup") or {}
@@ -2551,7 +2545,7 @@ def api_v1_payload(d):
             # Caught from the client naming it, not from a transfer record, so
             # there is no thread, size or rate to report. dedup is true when the
             # client's report shows the datacenter already held the file and
-            # nothing was sent, which is what a restart's opening batch is.
+            # nothing was sent, as in a restart's opening batch.
             row.update(measured=False, dedup=bool(r.get("dedup")))
         else:
             row.update(thread=r["thr"], bytes=r["bytes"], seconds=r["secs"],
@@ -2572,7 +2566,7 @@ def api_v1_payload(d):
         # keeping its own table of the client's codes.
         "pause_label": d.get("pause_label"),
         # An inherit pulls another identity's backup state into this one and
-        # nothing else happens until it is done; see bbdata.inherit().
+        # no other work happens until it is done. See bbdata.inherit().
         "inherit": d.get("inherit"),
         "activity": {"phase": act.get("phase"), "file": act.get("file"),
                      "part": act.get("part"), "internal": act.get("internal")} if act else None,
@@ -2581,8 +2575,8 @@ def api_v1_payload(d):
         "session_bytes": d.get("sess"),
         "chunks_last_minute": d.get("chunks"),
         "uptime_seconds": int(time.time() - bbdata.START_TIME),
-        # cache_bytes is the page cache charged to the container, which is what
-        # docker stats adds on top of used_bytes and a dedup scan fills.
+        # cache_bytes is the page cache charged to the container, the figure
+        # docker stats adds on top of used_bytes and the one a dedup scan fills.
         "memory": dict(gauge(mem) or {}, cache_bytes=mem[3]) if mem and len(mem) > 3 and mem[3] is not None else gauge(mem),
         # What the container did for itself in the last day: watchdog kills,
         # service restarts, doctor repairs. Empty when it did nothing.
@@ -2594,7 +2588,7 @@ def api_v1_payload(d):
                    "done_files": b.get("done_files"), "total_files": b.get("total_files"),
                    "remaining_files": b.get("remaining_files"),
                    "eta_seconds": b.get("eta_seconds"),
-                   # Seconds stay the contract; the date is added alongside so a
+                   # Seconds stay the contract. The date is added alongside so a
                    # consumer that only wants to print "when" need not reimplement
                    # the day-resolution rounding the monitor already applies.
                    "eta_date": bbdata.eta_date(b.get("eta_seconds")),
@@ -2604,30 +2598,30 @@ def api_v1_payload(d):
                  "files": sc.get("files"), "bytes": sc.get("bytes")} if sc else None,
         "health": health_entries(d.get("health")),
         "skipped_files": d.get("skipped"),
-        # The counts above say how many were given up on; this names them. It is
-        # kept at the top level rather than under "files" because it is a
-        # different question -- what is not backed up, rather than what is moving
-        # -- but it names files just the same, so strip_file_names() drops it for
-        # a key without read:files.
+        # The counts above say how many were given up on, and this names them. It
+        # is kept at the top level instead of under "files" because it answers a
+        # different question (what is not backed up, not what is moving), but it
+        # names files just the same, so strip_file_names() drops it for a key
+        # without read:files.
         "skipped_list": d.get("skipped_list"),
         "last_backup_days": d.get("last_backup_days"),
         "first_backup": d.get("first_backup"),
         "latency": {"ms": d.get("latency_ms"), "host": d.get("latency_host"),
                     "note": d.get("latency_note")},
         "upload_pod": d.get("upload_pod"),
-        # The client's own reading, from bzcli. Two of its fields name
+        # The client's reading, from bzcli. Two of its fields name
         # directories on the user's share and are dropped for a key without
-        # read:files; see strip_file_names().
+        # read:files. See strip_file_names().
         "client": client_reading(),
         "compress_saved_bytes": d.get("compress_saved"),
-        # Backblaze's own measurement, not ours.
+        # Backblaze's measurement, not the monitor's.
         "client_measured_kbit": d.get("perf"),
-        # "failures" kept for the schema promise; they are retried attempts,
-        # not files. The reasons breakdown says so in the data itself.
+        # "failures" is kept for the schema promise. The values are retried
+        # attempts, not files, and the reasons breakdown shows that in the data.
         "uploads_today": ({"success": us[0], "failures": us[1],
                            "retried_attempts": us[1], "reasons": us[2]}
                           if us else None),
-        # uploads_today is one row of this; both stay, because a consumer already
+        # uploads_today is one row of this. Both stay, because a consumer already
         # reading uploads_today must not have to change to keep working. "day" is
         # null on any row whose date the client did not record.
         "upload_history": d.get("upload_history"),
@@ -2639,9 +2633,9 @@ def api_v1_payload(d):
         "milestones": d.get("milestones"),
         # One sample a day of percent complete, oldest first, for plotting.
         "progress_history": d.get("progress_history"),
-        # What the set is made of, from the client's own category totals. Counts
-        # only: the client does not break its byte total down the same way, so a
-        # per-category size would have to be invented rather than reported.
+        # What the set is made of, from the client's category totals. Counts
+        # only, because the client does not break its byte total down the same
+        # way, so a per-category size would have to be invented.
         "composition": d.get("composition"),
         # Per drive, from the same two files the totals come from.
         "per_volume": d.get("per_volume"),
@@ -2650,12 +2644,12 @@ def api_v1_payload(d):
         "remaining_shape": d.get("remaining_shape"),
         # What bounds the rate: Wine answers the ideal-send-backlog query with a
         # fixed 64 KB, so a connection carries at most that much in flight and is
-        # bounded by it divided by the round trip. Reported, not turned into
-        # advice: observed has been seen above modelled on live containers.
+        # bounded by it divided by the round trip. Reported without advice,
+        # because observed has been seen above modelled on live containers.
         "rate_limits": bbdata.rate_limits(int(d.get("rate", 0) * 1048576),
                                           d.get("threads"), d.get("latency_ms")),
-        # The date this backup began, YYYYMMDD, which is exactly the resolution
-        # the client records it at. Not an epoch, because turning a calendar day
+        # The date this backup began, YYYYMMDD, the resolution the client
+        # records it at. Not an epoch, because turning a calendar day
         # into a timestamp would have to pick a time of day that was never known.
         "backing_up_since": d.get("backing_up_since"),
         # Whether the ETA is improving or worsening against the last day
@@ -2672,19 +2666,19 @@ def api_v1_payload(d):
 
 
 # A bare drive root, "D:" or "D:\", says nothing about what is on the drive, so
-# it survives the strip. Anything longer is the mounted share's own name.
+# it survives the strip. Anything longer is the mounted share's name.
 _DRIVE_ROOT = re.compile(r"^([A-Za-z]:)\\?$")
 
 
 # What names a file the user is backing up. A key without read:files gets status
-# without any of it: a dashboard tile showing rate, progress, memory and latency
-# has no need for the name of every file on the array.
+# without any of it. A dashboard tile showing rate, progress, memory and latency
+# does not need the name of every file on the array.
 def strip_file_names(payload):
     out = dict(payload)
     out["files"] = None
     # per_volume's "path" is the volume's mount point, which on a mounted share
-    # is the user's own directory name, and its "guid" is a stable identifier
-    # for the machine that the display snapshot deliberately never sends. The
+    # is the user's directory name, and its "guid" is a stable identifier for
+    # the machine that the display snapshot never sends. The
     # numbers say which drive is holding the backup up without either.
     pv = out.get("per_volume")
     if pv:
@@ -2696,12 +2690,12 @@ def strip_file_names(payload):
             rows.append(row)
         out["per_volume"] = rows
     # Every entry in the skipped list is a full path on the source share, which
-    # names the file just as plainly as the in-flight list does. The counts in
+    # names the file as clearly as the in-flight list does. The counts in
     # skipped_files stay: they say how much is not backed up without saying what.
     out["skipped_list"] = None
     # The drive selection and the exclusion list are both lists of directories on
-    # the user's own share, and a directory names files as plainly as a full path
-    # does: "d:\\photos\\" is not backed up says what is on the drive.
+    # the user's share, and a directory names files as clearly as a full path
+    # does. "d:\\photos\\" is not backed up says what is on the drive.
     if out.get("client"):
         out["client"] = strip_client_dirs(out["client"])
     act = out.get("activity")
@@ -2728,8 +2722,8 @@ def _loop():
             api = api_v1_payload(d)
         except Exception as e:
             js = {"ok": False, "error": str(e), "about": ABOUT}
-            # schema is on every response, including this one: a consumer that
-            # reads it first must not break precisely when collection fails.
+            # schema is on every response, including this one, so a consumer that
+            # reads it first does not break when collection fails.
             api = {"schema": bbapi.SCHEMA, "ok": False, "error": str(e)}
         with _lock:
             global _latest, _latest_api
@@ -2759,9 +2753,9 @@ _quiet = bbquiet.Scheduler(bbctl.run)
 _WATCHED = ("state", "paused")
 
 # Held while a bzcli reading is in flight. bbconfig.read() starts a Wine process
-# whenever its own cache has gone stale, which takes seconds and sometimes tens
-# of seconds, and the poll loop runs every INT seconds: doing it inline would
-# stall collection for every reader of the page. So the refresh runs on its own
+# whenever its cache has gone stale, which takes seconds and sometimes tens of
+# seconds, and the poll loop runs every INT seconds, so doing it inline would
+# stall collection for every reader of the page. The refresh runs on a separate
 # thread, and this lock keeps a slow reading from having a second one queued
 # behind it every poll for the whole time it takes.
 _client_refresh = threading.Lock()
@@ -2770,14 +2764,14 @@ _client_refresh = threading.Lock()
 def _refresh_client():
     """Ask bbconfig to renew its cache if it has gone stale, off the poll thread.
 
-    read() decides for itself whether anything needs doing: inside the TTL it
+    read() decides whether anything needs doing. Inside the TTL it
     returns what it holds and starts nothing, so calling this every poll costs a
     lock check and a dictionary lookup on all but one poll in TTL seconds.
     """
     if not bbconfig.ready():
         return
     if not _client_refresh.acquire(False):
-        return                       # one already running; its result covers this poll
+        return                       # one already running, and its result covers this poll
 
     def work():
         try:
@@ -2796,9 +2790,8 @@ def _refresh_client():
 
 def _after_snapshot(api):
     global _events_seq
-    # Ahead of the ok check, deliberately. When collection from Backblaze's own
-    # files is failing, what the client says about itself is exactly the reading
-    # someone needs, and it comes from a different source that may still work.
+    # Ahead of the ok check. When collection from Backblaze's files is failing,
+    # what the client says about itself is the reading someone needs, and it comes from a different source that may still work.
     _refresh_client()
     if not api or not api.get("ok"):
         return
@@ -2814,7 +2807,7 @@ def _after_snapshot(api):
         _quiet.observe(api)
     except Exception as exc:
         sys.stderr.write("bb-monitor-web: quiet hours: %s\n" % exc)
-    # The streams are woken every poll; each one compares its own signature and
+    # The streams are woken every poll, and each one compares its signature and
     # decides whether it has anything to send.
     with _events_cv:
         _events_seq += 1
@@ -2852,7 +2845,7 @@ def summary_text(api):
         if b.get("eta_date"):
             line += ", ETA %s" % b["eta_date"]
             tr = api.get("eta_trend")
-            # bbdata says "improving" or "worsening"; the words the page and the
+            # bbdata says "improving" or "worsening". The words the page and the
             # terminal monitor put on screen are "better" and "slower".
             if tr and tr.get("direction") in ("improving", "worsening"):
                 line += " (%dd %s than yesterday)" % (
@@ -2897,10 +2890,10 @@ def metrics_text(api):
     sc = api.get("scan") or {}
     g("scan_pct", sc.get("pct"), "Percent of directories indexed in the current scan")
     ih = api.get("inherit") or {}
-    g("inherit_pct", ih.get("pct"), "Percent of an inherit of the backup state done; absent when none is running")
+    g("inherit_pct", ih.get("pct"), "Percent of an inherit of the backup state done, absent when none is running")
     m = api.get("memory") or {}
     g("memory_used_bytes", m.get("used_bytes"), "Container memory in use by its processes (anon), not counting the page cache")
-    g("memory_cache_bytes", m.get("cache_bytes"), "Page cache charged to the container; what docker stats adds on top of used")
+    g("memory_cache_bytes", m.get("cache_bytes"), "Page cache charged to the container, the figure docker stats adds on top of used")
     g("recovery_actions_24h", len(api.get("recovery") or []), "Recovery actions by the watchdog, the service watch or bb-doctor --fix in the last 24 hours")
     g("memory_total_bytes", m.get("total_bytes"), "Container memory limit or host total")
     sw = api.get("swap") or {}
@@ -2911,15 +2904,15 @@ def metrics_text(api):
     g("skipped_files", sk.get("total", 0) if sk else 0, "Files the client has given up on")
     kinds = {h["kind"] for h in (api.get("health") or [])}
     gone = {h["kind"] for h in (api.get("health") or []) if h.get("dismissed")}
-    # licence and renewal come from the client's own report through bbconfig.
-    # They reached the JSON payload and the event stream but not this gauge,
-    # which would have left a Grafana alert silent for the one failure that
-    # stops backups without anything else going wrong.
+    # licence and renewal come from the client's report through bbconfig. They
+    # reached the JSON payload and the event stream but not this gauge, which
+    # would have left a Grafana alert silent for a failure that stops backups
+    # while everything else looks normal.
     #
-    # health_warning is the alerting gauge, so a dismissed warning reads 0: an
+    # health_warning is the alerting gauge, so a dismissed warning reads 0. An
     # alert on a state the person has looked at and accepted would fire for as
-    # long as that state lasts, which is how a pager gets ignored. What was
-    # dismissed is not hidden, though. health_dismissed says so alongside, so a
+    # long as that state lasts, and a pager that does that gets ignored. What
+    # was dismissed is not hidden, though. health_dismissed reports it, so a
     # dashboard can still show the state and a rule can still be written on it.
     for k in ("frozen", "filecheck", "stale", "skipped", "licence", "renewal", "lostlock"):
         g("health_warning", 1 if (k in kinds and k not in gone) else 0,
@@ -3064,15 +3057,15 @@ INDEX_HTML = """<!doctype html>
   #health a{color:inherit;text-decoration:underline;flex:1 1 auto;min-width:0;}
   #health{color:var(--hi-bg);background:var(--bad);padding:4px 10px;margin-bottom:18px;
        border-radius:2px;font-weight:bold;}
-  /* One row per warning, each with its own dismiss control, because a person
-     may well have accepted one and not another. A critical warning has none. */
+  /* One row per warning, each with a dismiss control, because a person may
+     have accepted one and not another. A critical warning has none. */
   #health .hrow{display:flex;align-items:center;gap:10px;padding:3px 0;}
   #health .hx{flex:0 0 auto;background:none;border:1px solid var(--hi-bg);color:var(--hi-bg);
        border-radius:3px;width:24px;height:24px;line-height:22px;padding:0;text-align:center;
        font:inherit;font-weight:bold;cursor:pointer;}
-  /* The one thing this dashboard ever has to celebrate, so it takes the good
-     colour instead of the neutral panel border. It states a fact and expires by
-     itself after a week, which is why it carries no dismiss control. */
+  /* A completed first backup, so it takes the good colour instead of the
+     neutral panel border. It states a fact and expires by itself after a week,
+     so it carries no dismiss control. */
   #completion{border-color:var(--good);color:var(--good);font-weight:bold;
        text-align:center;padding:8px 14px;}
   /* ---- settings modal ---------------------------------------------------- */
@@ -3081,9 +3074,9 @@ INDEX_HTML = """<!doctype html>
        cursor:pointer;font-weight:bold;transition:background .15s,color .15s;
        min-width:34px;min-height:30px;}
   #settings-btn:hover,#settings-btn:focus{background:var(--hi-fg);color:var(--hi-bg);}
-  /* The pause control takes the settings button's shape and its variables
-     rather than naming any colour of its own, which is the only way a control
-     added to the title bar stays legible in all thirteen themes. It starts
+  /* The pause control takes the settings button's shape and its variables and
+     names no colour, so a control added to the title bar stays legible in all
+     thirteen themes. It starts
      hidden and is revealed by the first poll that succeeds, so it never offers
      to act on a state the page has not read yet. */
   #pause-btn{font-family:inherit;font-size:12px;line-height:1;background:transparent;
@@ -3091,8 +3084,8 @@ INDEX_HTML = """<!doctype html>
        cursor:pointer;font-weight:bold;transition:background .15s,color .15s;
        min-height:30px;white-space:nowrap;}
   #pause-btn:hover:not(:disabled),#pause-btn:focus:not(:disabled){background:var(--hi-fg);color:var(--hi-bg);}
-  /* In flight: the next poll, not the click, is what changes the label, so the
-     button has to look busy for the second or two in between. */
+  /* In flight. The next poll changes the label, not the click, so the button
+     has to look busy for the second or two in between. */
   #pause-btn:disabled{opacity:.5;cursor:progress;}
   #backdrop{position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:100;
        display:flex;align-items:center;justify-content:center;padding:16px;}
@@ -3134,14 +3127,13 @@ INDEX_HTML = """<!doctype html>
   .credit .what{opacity:.7;}
   #modal a{color:var(--title);}
 
-  /* Media queries live at the end deliberately: they carry the same
-     specificity as the rules they override, so anything declared after
-     them silently wins. That is exactly what happened to the settings
-     button's larger touch target. */
+  /* Media queries live at the end. They carry the same specificity as the
+     rules they override, so anything declared after them wins. That happened
+     to the settings button's larger touch target. */
 
   /* ---- narrow screens ---------------------------------------------------
-     Tested at 375px. The status row already wraps on its own; what needs help
-     is everything with a fixed or nowrap width. */
+     Tested at 375px. The status row already wraps. Everything with a fixed or
+     nowrap width needs help. */
   @media (max-width:560px){
     body{font-size:13px;}
     main{padding:18px 7px 7px;}   /* the top keeps the first panel title off the top bar */
@@ -3150,18 +3142,18 @@ INDEX_HTML = """<!doctype html>
     #topbar,#footer{padding:7px 10px;}
     #settings-btn{min-width:40px;min-height:36px;}
     /* The title, the clock and two controls is more than 375px holds at the
-       full size, and the button label is the one part that cannot be shortened
-       without losing what it does. */
+       full size, and the button label cannot be shortened without losing what
+       it does. */
     #pause-btn{font-size:11px;padding:5px 6px;}
     /* The uptime is the least useful thing in the title bar and the first to
-       push it onto a second line. The footer keeps it on the monitor's own
+       push it onto a second line. The footer keeps it on the monitor's
        page, and the shell tab shows it too. */
     #topbar-title .uptime{display:none;}
     /* The gauge track is fixed at 120px, which leaves too little for the label
        once two gauges share a row. */
     .gauge .track{width:76px;}
-    /* Thread number is the least informative column and the easiest to lose;
-       dropping it gives the filename the room it actually needs. */
+    /* Thread number is the least informative column and the easiest to lose.
+       Dropping it gives the filename the room it needs. */
     th.col-thread,td.col-thread{display:none;}
     th,td{padding-right:6px;}
     /* Not enough width for bar and details side by side, so stack them the
@@ -3171,8 +3163,8 @@ INDEX_HTML = """<!doctype html>
     .file-row .meta{margin-top:2px;gap:4px 10px;}
     /* .stat is nowrap, which is right for the short readouts but not for the
        composition line: five categories on one line is wider than the screen
-       and was the one thing pushing the page sideways at 375px. It carries its
-       own separators, so it can break at them. */
+       and was what pushed the page sideways at 375px. It carries separators,
+       so it can break at them. */
     .stat.wraps{white-space:normal;}
     /* The Backup gauge carries a label, a bar, a percentage and an ETA, which
        is more than fits on one line here. Let it wrap instead of pushing the
@@ -3279,18 +3271,18 @@ INDEX_HTML = """<!doctype html>
 <script>
 // What bounds the rate. Wine answers the ideal-send-backlog query with a fixed
 // 64 KB, so a connection carries at most that in flight and is limited by it
-// divided by the round trip. Stated as a measurement, not as advice: on a live
-// container the observed rate has been seen above what this predicts, so it is
-// a floor of unknown tightness.
+// divided by the round trip. Stated as a measurement without advice, because on
+// a live container the observed rate has been seen above what this predicts. It
+// is a floor of unknown tightness.
 function rateTitle(d){
   var t = Math.round(d.rate_mb * 1048576).toLocaleString() + ' bytes per second';
   var l = d.rate_limits;
   if(!l) return t;
   var mbit = function(b){ return (b * 8 / 1e6).toFixed(1) + ' Mbit/s'; };
   t += '. Each upload connection can hold 64 KB in flight, so at this round trip one carries about ' +
-       mbit(l.per_thread) + '; ' + d.threads + ' of them models ' + mbit(l.modelled) + '.';
+       mbit(l.per_thread) + ', and ' + d.threads + ' of them models ' + mbit(l.modelled) + '.';
   if(l.verdict === 'above') t += ' You are running above that, so more is in flight than the 64 KB figure implies.';
-  else if(l.verdict === 'at') t += ' You are at that limit: more threads would raise it, a faster line would not.';
+  else if(l.verdict === 'at') t += ' You are at that limit. More threads would raise it, and a faster line would not.';
   else t += ' You are below it, so the limit is elsewhere: the line, the disk, or the size of the files in hand.';
   return t;
 }
@@ -3310,10 +3302,10 @@ function perVolumeHtml(vols){
       '<span class="vp">' + v.pct.toFixed(2) + '%</span></span>';
   }).join('') + '</div>';
 }
-// The datacentre the account is assigned to. The client reports it outright, so
+// The datacentre the account is assigned to. The client reports it directly, so
 // that reading is preferred over the pod the monitor infers from the sockets the
-// push threads own: the inferred one is right when it answers, and answers
-// nothing at all while nothing is uploading, which is most of a quiet day.
+// push threads own. The inferred one is right when it answers, but answers
+// nothing while nothing is uploading, which is most of a quiet day.
 function inheritHtml(d){
   var ih = d.inherit;
   if(!ih) return '';
@@ -3332,8 +3324,8 @@ function clusterHtml(d){
     '">Cluster: ' + esc(name) + '</span>';
 }
 // Whether a private encryption key is set. It changes what advice is safe to
-// give, particularly around the reinstall step in freeze recovery, so it is
-// worth a line rather than being something to go and look up.
+// give, particularly around the reinstall step in freeze recovery, so it gets a
+// line on the panel instead of being something to go and look up.
 function encryptionHtml(d){
   var e = d.client ? d.client.encrypted : null;
   if(e == null) return '';
@@ -3343,11 +3335,11 @@ function encryptionHtml(d){
     '">Encryption: ' + (e ? 'private key' : 'Backblaze key') + '</span>';
 }
 // Which readings the status panel shows. Kept per device like the theme, because
-// it is a choice about this screen rather than about the container: a phone
-// wants less than a desk.
+// it is a choice about this screen and not about the container. A phone wants
+// less than a desk.
 //
-// A preset is a starting point, not a mode: choosing one ticks its boxes and
-// leaves them free to change, so "something in between" needs no extra concept.
+// A preset is a starting point. Choosing one ticks its boxes and leaves them
+// free to change, so "something in between" needs no extra concept.
 var STAT_ITEMS = [
   ['Now', [['state','State'],['rate','Upload rate'],['threads','Threads'],['chunks','Chunks a minute'],
            ['rtt','Round-trip time'],['session','This session'],['scan','Scan progress'],
@@ -3428,8 +3420,8 @@ function chunkStrip(cm){
          '<span>'+esc(cm.file)+'</span></div></div>';
 }
 function pingHtml(d){
-  // TCP handshake time, not ICMP. The tooltip names the host actually measured:
-  // with no upload running this falls back to the public site, which can be a
+  // TCP handshake time, not ICMP. The tooltip names the host measured. With no
+  // upload running this falls back to the public site, which can be a
   // CDN edge and read far lower than the real storage pod.
   if(d.latency_ms == null){
     // The note says which of the several reasons applies, so n/a is never a
@@ -3444,7 +3436,7 @@ function pingHtml(d){
   return '<span class="stat"'+tip+'>RTT: <span class="'+cls+'">' +
          Math.round(d.latency_ms) + 'ms</span></span>';
 }
-// dp: a percentage rendered from the number's own string form loses a trailing
+// dp: a percentage rendered from the number's string form loses a trailing
 // zero, so 23.40 prints as "23.4" and the figure changes width as it moves.
 function gaugeHtml(label, g, highIsGood, extra, suffix, dp){
   if(!g) return '<span class="stat">'+label+': n/a</span>';
@@ -3488,7 +3480,7 @@ function uploadStripHtml(hist){
 }
 // A count in the hundreds of thousands cannot be read at a glance in full, and
 // the status row is meant to be glanced at. One decimal from a million up,
-// because 1.0M and 1.9M are a real difference; none at the thousand mark,
+// because 1.0M and 1.9M are a real difference. None at the thousand mark,
 // because 75k and 75.3k are not. The exact figure lives in the tooltip.
 function fmtCount(n){
   if(n == null) return '';
@@ -3498,8 +3490,8 @@ function fmtCount(n){
 }
 // What the set is made of, beside how much of it is left. The order is fixed
 // rather than sorted by size so the line reads the same shape from one poll to
-// the next, and only the categories the client actually counted are drawn: the
-// data layer omits the empty ones rather than sending zeroes.
+// the next, and only the categories the client counted are drawn, because the
+// data layer omits the empty ones instead of sending zeroes.
 var COMP_ORDER = [['photos','photos'],['documents','docs'],['music','music'],
                   ['video','video'],['other','other']];
 function compositionHtml(c){
@@ -3522,9 +3514,9 @@ function compositionHtml(c){
          esc(fmtCount(c.files)) + ' files: ' + esc(parts.join(' • ')) + '</span>';
 }
 // An estimate says more against yesterday's than on its own, so the gauge
-// carries the change as well as the figure. The arrow and the colour are both
-// redundant with the words "better" and "slower" on purpose: a reader who
-// cannot tell the good colour from the bad one still gets the answer.
+// carries the change as well as the figure. The arrow and the colour both repeat
+// the words "better" and "slower", so a reader who cannot tell the good colour
+// from the bad one still gets the answer.
 function etaTrendHtml(t){
   if(!t || t.direction === 'steady') return '';
   var secs = Math.abs(t.delta_seconds || 0);
@@ -3537,7 +3529,7 @@ function etaTrendHtml(t){
 }
 // YYYYMMDD as the client records it, drawn as "1 Jun 2026". Parsed by hand
 // rather than handed to Date(), which reads a bare digit string as UTC and can
-// therefore show the day before the one the client wrote down.
+// show the day before the one the client wrote down.
 var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function fmtDay(s){
   if(!s || String(s).length !== 8) return '';
@@ -3569,7 +3561,7 @@ function updateFavicon(state){
   var link = document.getElementById('favicon');
   if(link) link.href = 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
-// Defined before first use by hoisting; called from every path that puts
+// Defined before first use by hoisting, and called from every path that puts
 // Backblaze-derived text into innerHTML. Filenames come off a Linux array
 // mapped into Wine's drive-letter view, so they carry no guarantee of avoiding
 // HTML-special characters the way native Windows names would.
@@ -3582,7 +3574,7 @@ var aboutDone = false, aboutSince = null;
 // The start date travels at the top level of the payload rather than inside
 // about, because it describes this backup and not this build, so it is passed
 // in as a second argument instead of being dug out of a.
-// The state, and when paused, who paused it and until when. The client's own
+// The state, and when paused, who paused it and until when. The client's
 // reason code sits in the tooltip for anyone searching Backblaze's help for it.
 function stateHtml(d){
   var stateCls = d.state==='Transmitting' ? 'good' : (['Scanning','Preparing'].includes(d.state) ? 'warn' : '');
@@ -3593,7 +3585,7 @@ function stateHtml(d){
          (pl ? ' <span class="dim">(' + esc(pl.title.toLowerCase()) +
                (pl.until_str ? ', until ' + esc(pl.until_str) : '') + ')</span>' : '') + '</span>';
 }
-// The chart gives the shape of the week; this gives today's number.
+// The chart gives the shape of the week, and this gives today's number.
 function todayHtml(d){
   if(!d.upload_success) return '';
   var sk = d.skipped && d.skipped.total ? d.skipped.total : 0;
@@ -3624,10 +3616,11 @@ function progressSvg(hist){
 }
 var aboutHist = 0;
 function renderAbout(a, since, hist){
-  // Build metadata never changes while we run, so this normally draws once. The
-  // exception is the date: the payload sent when collection fails still carries
-  // about but has no backing_up_since, and latching on that first draw would
-  // lose the row for the life of the page. So a date arriving later reopens it.
+  // Build metadata never changes while the monitor runs, so this normally draws
+  // once. The exception is the date. The payload sent when collection fails
+  // still carries about but has no backing_up_since, and latching on that first
+  // draw would lose the row for the life of the page, so a date arriving later
+  // reopens it.
   var hl = hist ? hist.length : 0;
   if(aboutDone && (since == null || since === aboutSince) && hl === aboutHist) return;
   aboutDone = true;
@@ -3655,15 +3648,15 @@ function renderAbout(a, since, hist){
   if(a.credits && a.credits.length){
     html += '<div class="asec"><h3>With thanks to</h3>' +
       a.credits.map(function(c){
-        return '<div class="credit"><span class="who">'+esc(c.who)+'</span> \u2014 ' +
+        return '<div class="credit"><span class="who">'+esc(c.who)+'</span>: ' +
                '<span class="what">'+esc(c.what)+'</span></div>';
       }).join('') + '</div>';
   }
   document.getElementById('pane-about').innerHTML = html;
 }
-// The page's own pause control. It posts to /manage/, which rides the same
-// browser session that was allowed to load the page, so it needs no API key;
-// the X-Requested-With header is the same-origin guard those endpoints require,
+// The page's pause control. It posts to /manage/, which rides the same browser
+// session that was allowed to load the page, so it needs no API key. The
+// X-Requested-With header is the same-origin guard those endpoints require,
 // and a cross-site form post cannot set it. The action name is one of two fixed
 // strings chosen here, never anything typed or received.
 var pauseBusy = false;
@@ -3690,8 +3683,8 @@ function wirePauseButton(){
     }catch(e){
       showError('Could not ' + verb + ': ' + e);
     }
-    // Whatever happened, the button goes live again and the next poll two
-    // seconds from now is what decides which label it carries.
+    // Whatever happened, the button goes live again and the next poll, two
+    // seconds later, decides which label it carries.
     pauseBusy = false;
     btn.disabled = false;
   });
@@ -3701,26 +3694,26 @@ async function tick(){
     // Relative, so it resolves under /monitor/ when proxied and at / when standalone.
     const res = await fetch('api/status', {cache:'no-store'});
     const d = await res.json();
-    if(d.about) renderAbout(d.about, d.backing_up_since, d.progress_history);   // before the ok check: About must work when collection is broken
+    if(d.about) renderAbout(d.about, d.backing_up_since, d.progress_history);   // before the ok check, because About must work when collection is broken
     if(!d.ok){
-      // No state read means no state to act on, so the control goes away rather
-      // than sitting there offering to pause something we cannot see.
+      // No state read means no state to act on, so the control is hidden
+      // instead of offering to pause a state the page cannot see.
       document.getElementById('pause-btn').style.display = 'none';
       document.getElementById('err').style.display='block';
       document.getElementById('err').textContent = 'Waiting for data: ' + (d.error||'unknown');
       document.title = 'Backblaze 64 \u2022 Upload Monitor';
       return;
     }
-    // A message from a failed control call is held for a few seconds; until it
-    // expires the poll leaves the strip alone rather than wiping it unread.
+    // A message from a failed control call is held for a few seconds. Until it
+    // expires the poll leaves the strip alone instead of wiping it unread.
     if(Date.now() >= errHoldUntil) document.getElementById('err').style.display='none';
     var pb = document.getElementById('pause-btn');
     pb.style.display = 'inline-block';
     // Nothing is set optimistically. While a request is in flight the label is
-    // left as it was, and the next poll reports what the client actually did.
+    // left as it was, and the next poll reports what the client did.
     if(!pauseBusy){
-      // backup-now is Backblaze's own documented way out of a pause, which is
-      // why resuming posts that rather than any unpause verb.
+      // backup-now is Backblaze's documented way out of a pause, so resuming
+      // posts that instead of an unpause verb.
       pb.setAttribute('data-action', d.paused ? 'backup-now' : 'pause');
       pb.textContent = d.paused ? 'Resume backup' : 'Pause backup';
       pb.title = d.paused ? 'Ask the client to start a backup now'
@@ -3728,8 +3721,8 @@ async function tick(){
     }
     var hw = document.getElementById('health');
     // Dismissed and hidden warnings stay off the band the way they stay off
-    // the Status tab; the API still carries them. The band is the headline;
-    // the Status tab has the detail and what to do.
+    // the Status tab, and the API still carries them. The band is the headline
+    // and the Status tab has the detail and what to do.
     var live = (d.health || []).filter(function(h){ return !h.dismissed; });
     if(live.length){
       hw.style.display = 'block';
@@ -3750,7 +3743,7 @@ async function tick(){
         ? ' in ' + esc(d.completion.days) + ' day' + (d.completion.days === 1 ? '' : 's')
         : '';
       cw.style.display = 'block';
-      cw.innerHTML = 'First backup complete \u2014 ' + esc(d.completion.total_str) +
+      cw.innerHTML = 'First backup complete: ' + esc(d.completion.total_str) +
                      span + '.';
     } else { cw.style.display = 'none'; }
     document.getElementById('clock').textContent = d.clock;
@@ -3810,8 +3803,8 @@ async function tick(){
       ['Today', [
         ['uploads', d.upload_success ? '<span class="stat" title="Uploads the client recorded for ' +
                   'the most recent day. Retries are attempts a busy storage vault turned ' +
-                  'away; the client tried another and the file still went up. Not lost ' +
-                  'files: for those, watch skipped files.">Uploads: ' +
+                  'away. The client tried another and the file still went up. These are not ' +
+                  'lost files. For those, watch skipped files.">Uploads: ' +
                   d.upload_success[0].toLocaleString() +
                   (d.upload_success[1] ? ' <span class="dim">('+d.upload_success[1]+' retried)</span>' : '') +
                   '</span>' : ''],
@@ -3823,9 +3816,9 @@ async function tick(){
                   (d.perf.large_kbit/1000).toFixed(1)+' Mbit/s</span>' : '']
       ]],
       ['System', [
-        // The cache goes inline, since it is the answer to "why does docker
-        // stats say more": the processes' own figure is the gauge, the cache
-        // is what the kernel charged for files the client has read.
+        // The cache goes inline, since it answers "why does docker stats say
+        // more". The processes' figure is the gauge, and the cache is what the
+        // kernel charged for files the client has read.
         ['mem', gaugeHtml('Mem', d.mem, false,
                   d.memory_by_process && d.memory_by_process.length
                     ? 'Largest: ' + esc(d.memory_by_process[0].name) : '',
@@ -3850,9 +3843,8 @@ async function tick(){
     document.getElementById('uploading-title').textContent = d.files.length
       ? 'Uploading Now \u2022 ' + d.files.length + (d.files.length===1?' file':' files')
       : 'Uploading Now';
-    // A scan is the only place the client exposes a real percentage, but it runs
-    // alongside uploads rather than instead of them, so it heads the panel rather
-    // than replacing it.
+    // A scan is the only place the client exposes a real percentage. It runs
+    // alongside uploads, so it heads the panel instead of replacing it.
     var scanHtml = d.scan
       ? '<div class="file-row"><div class="track">' +
         '<span class="fill good" style="width:'+d.scan.pct+'%"></span></div>' +
@@ -3860,14 +3852,14 @@ async function tick(){
         '<span>'+esc(d.scan.dirs)+' directories</span>' +
         '<span>'+esc((d.scan.files||0).toLocaleString())+' files found</span></div></div>'
       : '';
-    // The chunk strip IS the compact multi-part view, so the setting governs it.
+    // The chunk strip is the compact multi-part view, so the setting governs it.
     var stripHtml = (compactParts && d.chunkmap) ? chunkStrip(d.chunkmap) : '';
     // Most files are small enough to be gone before the next poll, so they never
-    // get a row of their own. The client names the one it has in hand, which is
-    // the only way they show up at all.
+    // get a row of their own. The client names the one it has in hand, so they
+    // show up here.
     var a = d.activity, nowHtml = '';
     if(a && !d.files.some(f => a.file && f.name === a.file)){
-      nowHtml = '<div class="nowline"'+(a.internal ? ' title="The client\u2019s own '+
+      nowHtml = '<div class="nowline"'+(a.internal ? ' title="The client&#39;s '+
         'bookkeeping going up, not one of your files."' : '')+'>' +
         '<span class="nowphase">'+(d.paused ? 'Paused before'
             : esc(a.phase)+(a.part ? ' part '+a.part : ''))+'</span>' +
@@ -3881,7 +3873,7 @@ async function tick(){
       up.innerHTML = head + d.files.map(f=>{
         if(compactParts && f.parts && f.parts.total > 1){
           // A dozen threads on one film would otherwise draw a dozen identical
-          // rows: the compact row counts the file's parts, not the thread's own
+          // rows. The compact row counts the file's parts, not each thread's
           // progress. One row per file, and none for the file the strip covers.
           if(seenCompact[f.name]) return '';
           seenCompact[f.name] = 1;
@@ -3902,7 +3894,7 @@ async function tick(){
 
     var tb = document.getElementById('recent-body');
     if(!d.recent.length){
-      tb.innerHTML = '<tr><td colspan="5" id="empty">(watching for completions&hellip;)</td></tr>';
+      tb.innerHTML = '<tr><td colspan="5" id="empty">(watching for completions...)</td></tr>';
     } else {
       tb.innerHTML = d.recent.slice().reverse().map(r=>
         '<tr><td class="col-time">'+esc(r.time)+'</td><td class="col-thread">'+esc(r.thread)+'</td>'+
@@ -3968,7 +3960,7 @@ async function tick(){
   openBtn.addEventListener('click', openModal);
   // The X on a warning row. Hidden straight away rather than at the next
   // poll, which is up to fifteen seconds away and long enough to look as
-  // though the click did nothing; the poll then redraws without it anyway.
+  // though the click did nothing. The poll then redraws without it.
   document.getElementById('health').addEventListener('click', function(e){
     var b = e.target;
     if(!b || !b.classList || !b.classList.contains('hx')) return;
@@ -3992,7 +3984,7 @@ async function tick(){
     if(e.key === 's'){ document.getElementById('settings-btn').click(); }
     else if(e.key === 'p'){ var pb = document.getElementById('pause-btn'); if(pb && pb.style.display !== 'none') pb.click(); }
     else if(e.key >= '1' && e.key <= '6' && window.parent !== window){
-      // The shell owns the tabs; tell it. Same origin, so the target is exact.
+      // The shell owns the tabs, so tell it. Same origin, so the target is exact.
       window.parent.postMessage({bb64: 'tab', n: Number(e.key)}, location.origin);
     }
   });
@@ -4044,7 +4036,7 @@ class Handler(BaseHTTPRequestHandler):
     # HTTP/1.1 so a consumer polling every couple of seconds reuses one
     # connection instead of opening a fresh one each time. This is only safe
     # because every response here carries a Content-Length, including the
-    # bodyless ones: without it a client waits for a body that never comes and
+    # bodyless ones. Without it a client waits for a body that never comes and
     # the reused connection desynchronises.
     protocol_version = "HTTP/1.1"
 
@@ -4053,8 +4045,8 @@ class Handler(BaseHTTPRequestHandler):
     # stream writes a keep-alive every 15 seconds, so it stays well inside this.
     timeout = 30
 
-    # Nothing this service accepts is large: the biggest body is a settings write
-    # or a list of tool options. nginx bounds the proxied path at 1m; this bounds
+    # Nothing this service accepts is large. The biggest body is a settings write
+    # or a list of tool options. nginx bounds the proxied path at 1m, and this bounds
     # anything reaching the loopback port directly.
     MAX_BODY = 1000000
 
@@ -4083,8 +4075,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cors(self, path):
         """Echo the origin back when it is on the list. Never a wildcard, and
-        never credentials: the API authenticates with a header, so a browser has
-        no reason to send cookies and every reason not to be allowed to."""
+        never credentials. The API authenticates with a header, so a browser has
+        no reason to send cookies and should not be allowed to."""
         if not CORS_ORIGINS or not path.startswith("/api/v1/"):
             return
         origin = (self.headers.get("Origin") or "").rstrip("/")
@@ -4124,19 +4116,19 @@ class Handler(BaseHTTPRequestHandler):
     def _api_route(self, method, path):
         """(scope, handler) for a v1 route, or (None, None).
 
-        The scope is chosen here, per route, rather than assumed. A read key must
+        The scope is chosen here, per route. A read key must
         not be able to stop a backup because both arrive on the same surface.
         """
         if method == "GET" and path == "/api/v1/status":
             return "read", self._api_status
         if method == "GET" and path == "/api/v1/key":
-            # Any valid key, describing only itself. This is what stops a client
-            # having to discover its own grants by collecting 401s, now that the
+            # Any valid key, describing only itself. This saves a client from
+            # discovering its grants by collecting 401s, now that the
             # other endpoints tell a key nothing about what it does not hold.
             return None, self._api_key_self
         if method == "GET" and path == "/api/v1/control":
             # Only a key that holds some control, and it lists only that key's
-            # own operations. A read-only key is not told what control exists.
+            # operations. A read-only key is not told what control exists.
             return tuple(bbapi.GROUPS["control"]), self._api_control_list
         if method == "POST" and path == "/api/v1/report":
             return "report", self._api_report_start
@@ -4160,8 +4152,8 @@ class Handler(BaseHTTPRequestHandler):
             # since bbapi.py is not this file's to change. The guard stays even
             # though it is always true now, so a future bbapi.py that drops the
             # permission takes this route down with it rather than leaving it
-            # live with nothing gating it. The GET stays on "read", which is
-            # what it is.
+            # live with nothing gating it. The GET is a read and stays on
+            # "read".
             if "configure" in bbapi.PERMISSIONS:
                 return "configure", self._api_client_set
         if method == "GET" and path == "/api/v1/summary":
@@ -4171,7 +4163,7 @@ class Handler(BaseHTTPRequestHandler):
         if method == "GET" and path == "/api/v1/events":
             return "read", self._api_events
         if method == "GET" and path == "/api/v1/openapi.json":
-            # Any valid key: the document describes the surface, and a key
+            # Any valid key. The document describes the surface, and a key
             # already proves the caller may know it exists.
             return None, self._api_openapi
         diag = bbapi.DIAGNOSE
@@ -4272,8 +4264,8 @@ class Handler(BaseHTTPRequestHandler):
         """A tool's output verbatim, or the job record without it.
 
         bb-doctor names directories on the user's share: the drives the client
-        is set to back up, and the directories it is skipping. That is exactly
-        what read:files gates on every other route, and "diagnose" is a
+        is set to back up, and the directories it is skipping. That is what
+        read:files gates on every other route, and "diagnose" is a
         permission for running a check, not for reading the array's contents.
         The state, the exit code and the verdict all survive, so a key issued to
         watch that a check passed still works.
@@ -4310,7 +4302,7 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(opts, list) or not all(isinstance(o, str) for o in opts):
             self._json(400, {"schema": bbapi.SCHEMA, "error": "options must be a list of option names"})
             return
-        # Checks need diagnose; anything that changes files needs the repair
+        # Checks need diagnose, and anything that changes files needs the repair
         # permission as well, so a key issued to look cannot be used to change.
         if bbtools.mutating(name, opts) and "diagnose:repair" not in bbapi.perms(self._kid):
             self._json(403, {"schema": bbapi.SCHEMA, "error": "diagnose:repair is required for that option"})
@@ -4324,7 +4316,7 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("bb-monitor-web: key %s %s job %s: %s\n"
                          % (self._kid, "joined" if joined else "started", jid, st.get("command", name)))
         # Joining a run that has already finished hands back its output in this
-        # very reply, so the same gate applies here as on the job route.
+        # reply, so the same gate applies here as on the job route.
         st = self._withhold_tool_output(st)
         st["schema"] = bbapi.SCHEMA
         st["joined_existing"] = joined
@@ -4336,10 +4328,10 @@ class Handler(BaseHTTPRequestHandler):
         if "read:files" not in bbapi.perms(self._kid):
             payload = strip_file_names(payload)
         # ?fields=rate_bytes_per_sec,paused trims the payload to what a consumer
-        # actually wants, plus schema and ok, which every response carries so a
-        # filtered reply is still recognisably the same contract. Unknown names
-        # are ignored rather than erroring: a consumer built against a newer
-        # container should not break on an older one that lacks a field.
+        # wants, plus schema and ok, which every response carries so a filtered
+        # reply is still recognisably the same contract. Unknown names are
+        # ignored instead of raising an error, so a consumer built against a
+        # newer container does not break on an older one that lacks a field.
         q = urlsplit(self.path).query
         m = re.search(r'(?:^|&)fields=([^&]*)', q)
         if m:
@@ -4378,7 +4370,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             ok, detail = bbconfig.write(key, body.get("value"))
         except ValueError as exc:
-            # Every refusal comes from bbconfig's own whitelist and validators, so
+            # Every refusal comes from bbconfig's whitelist and validators, so
             # a key that is not writable and a value out of range read the same
             # way here as they do on the settings page.
             self._json(400, {"schema": bbapi.SCHEMA, "error": str(exc)})
@@ -4415,7 +4407,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, st)
 
     def _serve_report(self, token):
-        """The token is the credential here, so no bearer is required: this is the
+        """The token is the credential here, so no bearer is required. This is the
         URL a browser follows, and a key in a URL ends up in history and logs."""
         path = bbreport.claim(token)
         if not path:
@@ -4448,8 +4440,8 @@ class Handler(BaseHTTPRequestHandler):
             sys.stderr.write("bb-monitor-web: report download failed: %s\n" % exc)
             if not started:
                 # The bundle went between the claim and the read, most likely
-                # deleted in another tab. The request still needs an answer:
-                # with nothing written the connection is reused for a reply that
+                # deleted in another tab. The request still needs an answer.
+                # With nothing written the connection is reused for a reply that
                 # never comes, and the browser waits until it gives up.
                 self._json(404, {"schema": bbapi.SCHEMA,
                                  "error": "the bundle is no longer there"})
@@ -4478,8 +4470,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         ok, msg = bbctl.run(name)
         # Anything that changes the system is recorded with the key that asked for
-        # it. The public id only, never the secret. Reads are not logged: they are
-        # constant and would bury this.
+        # it. The public id only, never the secret. Reads are not logged, because
+        # they are constant and would bury this.
         sys.stderr.write("bb-monitor-web: key %s ran %s: %s\n"
                          % (self._kid, name, "ok" if ok else "failed, " + msg))
         self._json(200 if ok else 502,
@@ -4489,8 +4481,8 @@ class Handler(BaseHTTPRequestHandler):
         """Returns True when the request was handled here."""
         if not path.startswith("/api/v1/") and path != "/api/v1":
             return False
-        # No key means the surface does not exist, so say so rather than 403.
-        # A 403 would confirm the endpoint is here; with no key there is nothing
+        # No key means the surface does not exist, so the answer is 404, not 403.
+        # A 403 would confirm the endpoint is here. With no key there is nothing
         # to confirm, and every fresh container would be advertising it.
         if not bbapi.live():
             self.send_response(404)
@@ -4498,8 +4490,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return True
         # Below that gate and above the key check. The single-use token in the
-        # path is what authorises this one, which is the whole point of issuing
-        # it, but a token can only exist if a key existed to start the job, so
+        # path authorises this one, but a token can only exist if a key existed to start the job, so
         # nothing is lost by letting the "no key, no surface" answer come first.
         # Above it, this route's JSON 404 told a keyless container apart from
         # any other by its shape.
@@ -4534,7 +4525,7 @@ class Handler(BaseHTTPRequestHandler):
         """Same-origin check for the management calls.
 
         These sit behind nginx's auth_request, so the browser session is what
-        authorises them, and a browser session is exactly what a cross-site POST
+        authorises them, and a browser session is what a cross-site POST
         can borrow. Requiring a header the form sets forces a CORS preflight on
         anything cross-origin, which a plain form post cannot satisfy.
         """
@@ -4553,8 +4544,8 @@ class Handler(BaseHTTPRequestHandler):
                 "has_keys": bool(bbapi.active()),
                 "permissions": [{"name": n, "does": bbapi.PERMISSIONS[n],
                                  # A colon does not make a group. read:files is
-                                 # its own permission and belongs at the top
-                                 # level; only names in GROUPS get a box.
+                                 # a separate permission and belongs at the top
+                                 # level. Only names in GROUPS get a box.
                                  "group": (n.split(":")[0]
                                            if n.split(":")[0] in bbapi.GROUPS else None),
                                  "reserved": n in bbapi.RESERVED}
@@ -4585,14 +4576,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/manage/notices":
             # What has been dismissed and what is hidden, with the table of
             # kinds, for the Settings tab. The Status tab does not need this
-            # route: every notice it draws already carries its own flags.
+            # route, because every notice it draws already carries its flags.
             self._json(200, {"schema": bbapi.SCHEMA, "dismissed": bbdismiss.listing(),
                              "hidden": sorted(bbdismiss.hidden()), "kinds": warning_kinds()})
             return True
         if path == "/manage/client":
             # The reading and the writable settings in one answer, because the
             # settings section needs both to draw a single row, and the live
-            # per-thread ceiling with them: the thread count means little without
+            # per-thread ceiling with them, because the thread count means little without
             # the figure that says whether another thread would carry anything.
             with _lock:
                 limits = _latest.get("rate_limits")
@@ -4680,7 +4671,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path
-        # Key auth, so no same-origin guard here: that guard exists for /manage/,
+        # Key auth, so no same-origin guard here. That guard exists for /manage/,
         # which rides the browser session a cross-site post could borrow.
         if self._api_v1("POST", path):
             return
@@ -4711,7 +4702,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/manage/tools/"):
             # The page's Run button. A tool is named by path and its options by
-            # key; both are looked up in bbtools.TOOLS, and nothing else from the
+            # key. Both are looked up in bbtools.TOOLS, and no other part of the
             # request reaches the argument list.
             name = path[len("/manage/tools/"):]
             if name not in bbtools.TOOLS:
@@ -4761,10 +4752,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(404, {"error": "no such bundle"})
             return
         if path.startswith("/manage/control/"):
-            # The page's own pause button. Session-authorised like the rest of
+            # The page's pause button. Session-authorised like the rest of
             # /manage/ (auth_request plus the same-origin guard), so no API key
             # is needed to use the page you are already logged into. The action
-            # name selects from the same fixed whitelist the API uses; nothing
+            # name selects from the same fixed whitelist the API uses. Nothing
             # from the request reaches an argument list.
             name = path[len("/manage/control/"):]
             if name not in bbctl.ACTIONS:
@@ -4780,7 +4771,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/manage/client":
             # One setting at a time. The key is looked up in bbconfig.WRITABLE and
-            # the value goes through that key's own validator, so nothing from the
+            # the value goes through that key's validator, so nothing from the
             # request reaches an argument list unchecked, and a key that is not on
             # the list cannot be written however it is spelt.
             if not bbconfig.available():
@@ -4792,8 +4783,8 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self._json(400, {"error": str(exc)})
                 return
-            # Logged like the tools and control routes: a changed thread count or
-            # throttle should have a line in the container log that explains it.
+            # Logged like the tools and control routes, so a changed thread count
+            # or throttle has a line in the container log that explains it.
             sys.stderr.write("bb-monitor-web: web session set %s=%s: %s\n"
                              % (key, body.get("value"),
                                 "ok" if ok else "failed, " + detail))
@@ -4827,12 +4818,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/manage/notify/test":
             ok, detail = bbnotify.test((body.get("id") or "").strip())
-            # The remote's own answer does not come back out of here. A test is
+            # The remote's answer does not come back out of here. A test is
             # synchronous, so handing back "HTTP 403" for one URL and
             # "Connection refused" for another turned this route into a probe
-            # for whatever the container can reach. The real reason goes to the
-            # container log, which is where someone debugging their own endpoint
-            # already looks for the delivery lines.
+            # for whatever the container can reach. The reason goes to the
+            # container log, where someone debugging their endpoint already looks
+            # for the delivery lines.
             sys.stderr.write("bb-monitor-web: notification test: %s\n" % detail)
             self._json(200 if ok else 502,
                        {"schema": bbapi.SCHEMA, "ok": ok,
@@ -4857,7 +4848,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/manage/exclusions":
             # One rule at a time: add, update or delete by index. The file is
             # the client's, so every write re-reads it first and rewrites only
-            # the managed block; see bbexclude.
+            # the managed block. See bbexclude.
             action = body.get("action")
             try:
                 if action == "add":
@@ -4884,13 +4875,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, dict(bbrecover.state(), schema=bbapi.SCHEMA))
             return
         if path == "/manage/notices/dismiss":
-            # The key is checked in bbdismiss against a pattern that admits a
-            # bare kind or one drive and nothing else, so nothing from the
+            # The key is checked in bbdismiss against a pattern that admits only
+            # a bare kind or one drive, so nothing from the
             # request reaches a file name however it is spelt. The text is
             # stored only so the Settings list can say what was dismissed.
             key = str(body.get("key") or "")
             if key.split(":", 1)[0] in CRITICAL:
-                self._json(400, {"error": "that warning means nothing is being backed up; it cannot be dismissed"})
+                self._json(400, {"error": "that warning means nothing is being backed up, so it cannot be dismissed"})
                 return
             try:
                 bbdismiss.dismiss(key, str(body.get("text") or ""))
@@ -4931,7 +4922,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self._json(400, {"error": str(exc)})
                 return
-            # The client reading may have changed; the poll picks it up. The
+            # The client reading may have changed, and the poll picks it up. The
             # notification and dismiss stores are read from disk on use.
             self._json(200, dict(report, schema=bbapi.SCHEMA, ok=True))
             return
@@ -5037,10 +5028,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
-            # The one page that was left out. It is a static template today, but
+            # This page used to be left out. It is a static template today, but
             # a proxy holding a build behind for a container that has been
-            # updated is a confusing thing to debug, and every sibling page says
-            # not to cache it.
+            # updated is confusing to debug, and every sibling page says not to
+            # cache it.
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(payload)
@@ -5057,7 +5048,7 @@ def main():
                           "connections, then exit. For checking the netlink read "
                           "inside the container without going through the UI.")
     ap.add_argument("--port", type=int, default=8099)
-    # Loopback by default: nginx fronts this, and binding 0.0.0.0 would put
+    # Loopback by default. nginx fronts this, and binding 0.0.0.0 would put
     # the names of every backed-up file on the LAN with no authentication.
     ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()

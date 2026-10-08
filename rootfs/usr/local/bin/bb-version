@@ -4,8 +4,8 @@
 #
 # Backblaze publishes release notes ahead of serving a build, so a version in the
 # notes is not always one the container can install. This asks the same API the
-# updater polls, which is what decides the next restart. The combined output is
-# also what to paste into a bug report.
+# updater polls, and that API decides the next restart. The combined output
+# also belongs in a bug report.
 set -u
 
 usage() {
@@ -24,7 +24,7 @@ EOF
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 
 # Report which image build this came from. The tools ship together inside an image,
-# so the build stamp is the identifier worth having in a bug report.
+# so the build stamp is the identifier to put in a bug report.
 if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-V" ]; then
     echo "bb-version (Backblaze 64 container)"
     cat /etc/bb-build 2>/dev/null || echo "version=unknown (no build stamp)"
@@ -39,7 +39,7 @@ installed=""
 [ -r "$VERSION_FILE" ] && installed="$(tr -d ' \r\n' < "$VERSION_FILE" 2>/dev/null)"
 
 # The updater tracks the "update" channel, which carries the newest build. The file
-# also lists "release" and a much older staged "autoupdate" channel; matching on
+# also lists "release" and a much older staged "autoupdate" channel. Matching on
 # "<update " avoids both (and does not match "<autoupdate ", which has no "<" before
 # "update").
 available=""
@@ -52,7 +52,7 @@ done
 
 echo "Container"
 echo "  Image:     ${DOCKER_IMAGE_VERSION:-unknown}"
-# the build stamp pins the exact image; DOCKER_IMAGE_VERSION alone says "dev" locally
+# the build stamp pins the exact image. DOCKER_IMAGE_VERSION alone says "dev" locally
 [ -r /etc/bb-build ] && sed 's/^/  build:     /' /etc/bb-build
 echo "  Wine:      $(wine --version 2>/dev/null || echo unknown)"
 echo
@@ -71,7 +71,7 @@ if [ -n "$installed" ] && [ -n "$available" ]; then
     elif dpkg --compare-versions "$installed" lt "$available" 2>/dev/null; then
         if [ "${DISABLE_AUTOUPDATE:-false}" = "true" ]; then
             status="update available - blocked by DISABLE_AUTOUPDATE=true"
-        # startapp's updater only runs when this is EXACTLY "true"; unset means
+        # startapp's updater only runs when this is EXACTLY "true". Unset means
         # no update, so the default here must not paper over that.
         elif [ "${FORCE_LATEST_UPDATE:-}" != "true" ]; then
             status="update available - blocked by FORCE_LATEST_UPDATE=${FORCE_LATEST_UPDATE:-unset}"
@@ -85,8 +85,8 @@ if [ -n "$installed" ] && [ -n "$available" ]; then
 fi
 
 # A version in Backblaze's release notes is not installable until it reaches this
-# API, so say so rather than leaving the reader to wonder why a newer number they
-# read about has not arrived.
+# API. The note below explains why a newer number the reader saw there has not
+# arrived.
 echo
 echo "Note: this reports what Backblaze is currently serving. Versions announced in"
 echo "      the release notes can take time to reach the update API, and until they"

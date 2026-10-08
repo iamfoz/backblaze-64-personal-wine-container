@@ -1,22 +1,22 @@
 # Skipped-file diagnosis for bb-doctor. Sourced by a beta-only patch, so the
-# stable bb-doctor is untouched; fold this into it at the next stable release.
+# stable bb-doctor is untouched. Fold this into it at the next stable release.
 #
 # The client keeps a list of files it has given up on, with a reason each. They
-# are neither queued nor retried, so a file on that list is simply not backed up
-# and nothing in the desktop GUI says so. Under this container the usual cause is
-# a file the container user cannot read, which points at ownership on the mounted
-# source rather than at Backblaze.
+# are neither queued nor retried, so a file on that list is not backed up and the
+# desktop GUI does not show it. Under this container the usual cause is a file
+# the container user cannot read, which points at ownership on the mounted
+# source.
 #
-# Nothing here is repaired, even with --fix. These are the user's own files on a
+# Nothing here is repaired, even with --fix. These are the user's files on a
 # mounted share, often thousands of them, and other software on the host may
-# depend on their ownership. Changing that from inside a container is exactly the
+# depend on their ownership. Changing that from inside a container is the
 # "wrong repair costs more than a missed one" case this tool is built around. So
-# it works out precisely what is wrong and prints the command to run, and the
+# it works out what is wrong and prints the command to run, and the
 # person whose files they are decides.
 
 SKIPLIST="${BZ}/bzreports/bzlist_skipped_files.txt"
 
-# The nearest ancestor of a path that actually exists. When a directory cannot be
+# The nearest ancestor of a path that exists. When a directory cannot be
 # entered, everything below it reports as absent, so "does it exist" cannot be
 # asked directly: the answer has to come from the deepest part that can be seen.
 nearest_existing() {
@@ -44,7 +44,7 @@ echo "Files that the client did not back up"
 if [ ! -r "$SKIPLIST" ]; then
     OK "the client has no skipped-file list yet, so it has not refused any file"
 else
-    # A record has a tab-separated reason; the file also carries comment lines
+    # A record has a tab-separated reason. The file also carries comment lines
     # ("# SkippedFilesReportStarted: ...") and other non-record lines, which a
     # bare non-empty count read as skipped files. Seen live: a clean list with
     # only its header reported "2 file(s) skipped". The same rule bbdata's
@@ -66,7 +66,7 @@ else
             NOTE "  ${n}  ${reason}"
         done
 
-        # Work out what is actually wrong with each one, up to a sample. Reading
+        # Work out what is wrong with each one, up to a sample. Reading
         # a path is the only way to tell an unreadable file from a deleted one.
         echo
         NOTE "the first files on the list:"
@@ -76,20 +76,20 @@ else
         # splitlines() drops that, which is why the monitor never noticed, but
         # shell read does not: the last field on a line keeps the CR, a path
         # built from it names a file that cannot exist, and a file sitting right
-        # there reports as "no longer exists, nothing to fix" -- the opposite of
-        # the truth, on the one check whose whole job is finding what is wrong.
+        # there reports as "no longer exists, nothing to fix", the opposite of
+        # the truth.
         # Stripped with parameter expansion rather than a pipe, because piping
         # this loop would put the counters in a subshell and lose them all.
         CR="$(printf '\r')"
         # The path is found rather than taken from a fixed column. Only the reason
-        # column is established (the monitor has counted by it in production); the
+        # column is established (the monitor has counted by it in production). The
         # rest of the layout is not, and assuming it would report every file as
         # missing if it were wrong. A field starting with a drive letter is the
         # path, whichever column it lands in.
         while IFS= read -r line; do
             line="${line%$CR}"
             [ -n "$line" ] || continue
-            # The counting above skips comments; this loop did not, so the report
+            # The counting above skips comments. This loop did not, so the report
             # header was checked for a path, found none, and was reported as a
             # line that could not be understood.
             case "$line" in \#*) continue ;; esac
@@ -110,7 +110,7 @@ else
             else
                 # Absent, or sitting under a directory this container cannot
                 # enter. Those look identical from here and mean opposite things:
-                # one needs nothing done, the other is the whole problem. The
+                # one needs nothing done, the other is the problem. The
                 # deepest visible ancestor tells them apart.
                 anc="$(nearest_existing "$(dirname "$cpath")")"
                 if [ -d "$anc" ] && { [ ! -x "$anc" ] || [ ! -r "$anc" ]; }; then

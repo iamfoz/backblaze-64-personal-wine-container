@@ -1,21 +1,21 @@
 # The client's XML exclusion rules, managed from the Settings tab.
 #
 # Backblaze reads bzexcluderules_editable.xml from bzdata on every pass and
-# applies each rule to every attached volume, which is what a user mapping
-# twenty Unraid disks wants: one rule excludes \Media\ on all of them, where the
+# applies each rule to every attached volume. For a user mapping twenty
+# Unraid disks, one rule excludes \Media\ on all of them, where the
 # GUI's folder exclusions have to be added disk by disk. The client writes the
 # file itself, with its optional Windows rules, and regenerates it if it is
 # removed (its documentation: "Configure custom exclusions using XML").
 #
 # Rules made here live between two comment markers so the rules the client
-# wrote and anything edited by hand are kept byte for byte; only the block
+# wrote and anything edited by hand are kept byte for byte. Only the block
 # between the markers is rewritten. The file's format is the contract:
 #
 #   <excludefname_rule plat="win" osVers="*" ruleIsOptional="t"
 #       skipFirstCharThenStartsWith=":\Media\" contains_1="*" contains_2="*"
 #       doesNotContain="*" endsWith="*" hasFileExtension="*" />
 #
-# A file matches a rule when every criterion matches; "*" skips one. The
+# A file matches a rule when every criterion matches, and "*" skips one. The
 # first character of the path is the drive letter, so the prefix starts with
 # ":\". The client's documentation says the prefix is "*" or at least four
 # characters, and that the client tests it before the rest of a rule, so
@@ -135,8 +135,8 @@ def save(rules):
         raise ValueError("at most %d managed rules" % MAX_RULES)
     text = _read()
     if text is None:
-        raise ValueError("the client has not written its exclusions file yet; "
-                         "it appears after the first backup pass")
+        raise ValueError("the client has not written its exclusions file yet "
+                         "(it appears after the first backup pass)")
     before, block, after = _split(text)
     body = _render(rules)
     if after is None:

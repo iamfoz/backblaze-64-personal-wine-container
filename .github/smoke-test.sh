@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Boot the built image and check it actually comes up.
+# Boot the built image and check it comes up.
 #
 # A successful docker build says nothing about whether the container starts: base
 # image updates, apt/keyring changes and startup script edits have all broken first
 # boot while building cleanly. This starts the image the way a user would, waits for
 # the parts that must work, and fails the build if they do not.
 #
-# It does NOT sign in to Backblaze or run a backup - there are no credentials in CI.
-# It checks the container's own scaffolding: the supervisor comes up, Wine builds a
+# It does NOT sign in to Backblaze or run a backup, because there are no credentials in CI.
+# It checks the container's scaffolding: the supervisor comes up, Wine builds a
 # prefix and reports Windows 10, the drive mapping reaches into the prefix, and the
 # bundled tools are present and runnable.
 #
-# Checks are deliberately deterministic. Wine is noisy on startup, so this asserts
+# Checks are deterministic. Wine is noisy on startup, so this asserts
 # specific things are true rather than grepping the log for anything error-shaped,
 # which would turn normal Wine chatter into red builds.
 set -euo pipefail
@@ -76,8 +76,8 @@ docker exec "$NAME" sh -c 'bb-doctor >/dev/null 2>&1; [ $? -le 1 ]' \
     || fail "bb-doctor crashed (exit >1)"
 
 echo "== checking the build stamp =="
-# test -s catches the stamp file itself missing; the grep anchors on "built=",
-# which the tools' no-stamp fallback text never contains - anchoring on "version="
+# test -s catches a missing stamp file, and the grep anchors on "built=",
+# which the tools' no-stamp fallback text never contains. Anchoring on "version="
 # would match the fallback too and pass on an image whose stamp step vanished.
 docker exec "$NAME" test -s /etc/bb-build \
     || fail "/etc/bb-build is missing or empty - the build stamp step was lost"
@@ -101,12 +101,12 @@ state="$(docker exec "$NAME" cat /tmp/.bb-watchdog-state 2>/dev/null || true)"
 [ "$state" = "disabled" ] || fail "watchdog should be dormant without ENABLE_WATCHDOG, state file says: $state"
 
 # Belt and braces: no watchdog process should exist either. The bracketed character
-# stops the pattern matching this very command's own /proc entry.
+# stops the pattern matching this command's /proc entry.
 if docker exec "$NAME" sh -c 'grep -l "bin/b[b]-watchdog" /proc/[0-9]*/cmdline 2>/dev/null | head -1' | grep -q .; then
     fail "a bb-watchdog process is running despite ENABLE_WATCHDOG not being set"
 fi
 
-# Docker's own health state must not be failing. It may legitimately still read
+# Docker's health state must not be failing. It may still read
 # "starting" here: the first check only runs after the healthcheck interval, so this
 # asserts it is not unhealthy rather than waiting minutes for the first probe.
 state="$(docker inspect -f '{{.State.Health.Status}}' "$NAME" 2>/dev/null || echo none)"

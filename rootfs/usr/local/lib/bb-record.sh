@@ -1,7 +1,7 @@
 # Shared by bb-watchdog, bb-doctor --fix and startapp's service watch: one
 # line per recovery action into a file the monitor reads, so an action shows
 # on the Status tab's timeline, fires a notification and counts in the metrics
-# rather than living only in the container log. Sourced, not executed.
+# as well as in the container log. Sourced, not executed.
 #
 #   bb_record <source> <message>
 #

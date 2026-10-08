@@ -9,7 +9,7 @@
 #
 # This directory alone does not make the service run. The base image's supervisor
 # starts only services reachable from the "default" group, so the empty marker
-# ../default/bb-watchdog.dep is what registers it. Without the marker the
+# ../default/bb-watchdog.dep registers it. Without the marker the
 # directory is ignored with no error.
 #
 # The state file records which branch was taken. Service output does not reliably
@@ -19,7 +19,7 @@
 set -u
 
 STATE_FILE=/tmp/.bb-watchdog-state
-# The switch the Settings tab writes. When the file exists it wins; when it
+# The switch the Settings tab writes. When the file exists it wins. When it
 # does not, ENABLE_WATCHDOG decides, so a container that never touched the
 # page behaves as it always did. One line of JSON, read with grep.
 SWITCH=/config/bb-api/watchdog.json

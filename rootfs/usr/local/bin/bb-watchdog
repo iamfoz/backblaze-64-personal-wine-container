@@ -10,29 +10,29 @@
 #   DOWN   Report it and leave the first restart to startapp's service watch,
 #          which runs every five minutes. If the service is still down when
 #          the cooldown ends, start it from here with the same bounded net
-#          stop and net start the watch uses. The watch is one bash loop; a
+#          stop and net start the watch uses. The watch is one bash loop, and a
 #          build of 2026-09-28 broke it so that it looped instead of logging,
 #          and two hosts then sat DOWN for six and seven hours while this
 #          branch reported the state every half hour and did nothing about it.
 #
 #   FDS    Restart bzserv when wineserver's open files pass FD_RESTART_PCT
 #          (85) percent of its limit. Client 10.0.3.1075 leaks a handle on
-#          Backup.sql every few seconds (issue #13); at the limit nothing in
-#          the prefix can open a file and bzserv dies on its own, taking the
+#          Backup.sql every few seconds (issue #13). At the limit nothing in
+#          the prefix can open a file and bzserv dies, taking the
 #          pass with it. A controlled restart first releases every leaked
 #          handle. Checked every cycle, whatever the health state, with its own
 #          cooldown so a limit set too low cannot restart in a loop.
 #
 #   HANG   Kill the push children and the backup pass that launched them.
-#          Killing the children alone used to be enough; since client 10.0.3
+#          Killing the children alone used to be enough. Since client 10.0.3
 #          the pass waits for a child's result file with no timeout, so a child
 #          that dies or is killed leaves the pass waiting forever (seen twice on
 #          2026-09-19 and 20). bzserv notices the pass exit within ten seconds,
 #          clears the lock and starts a fresh pass, which re-reads its bz_done
 #          files and carries on. Sidecar bztransmit runs (-updatebackupstats
-#          and the like) are killed with it; they are relaunched hourly and
+#          and the like) are killed with it. They are relaunched hourly and
 #          lose nothing. If that does not clear the fault the health state
-#          stays unhealthy and visible; the watchdog does not escalate further.
+#          stays unhealthy and visible. The watchdog does not escalate further.
 #
 # After detecting a fault it waits COOLDOWN_MIN before acting again, whether or
 # not the action worked, so an unfixable fault produces one log line per cooldown
@@ -64,7 +64,7 @@ EOF
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 
 # Report which image build this came from. The tools ship together inside an image,
-# so the build stamp is the identifier worth having in a bug report.
+# so the build stamp is the identifier to put in a bug report.
 if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-V" ]; then
     echo "bb-watchdog (Backblaze 64 container)"
     cat /etc/bb-build 2>/dev/null || echo "version=unknown (no build stamp)"
@@ -90,7 +90,7 @@ COOLDOWN_MIN="$(int_or "$COOLDOWN_MIN" 30)"
 STALL_MIN="$(int_or "$STALL_MIN" 20)"
 
 # The cooldown must exceed bb-health's stall threshold. Killing the deadlocked
-# threads does not advance the transmit log; only the respawned pass writing a
+# threads does not advance the transmit log. Only the respawned pass writing a
 # line does. If the watchdog re-arms before the log can look fresh, it kills the
 # healthy replacement pass every cycle and causes the stall it should clear.
 if [ "$COOLDOWN_MIN" -le "$STALL_MIN" ]; then
@@ -98,7 +98,7 @@ if [ "$COOLDOWN_MIN" -le "$STALL_MIN" ]; then
 fi
 
 say() { echo "[bb-watchdog] $(date '+%Y-%m-%d %H:%M:%S') $*"; }
-# Actions also go to the recovery log the monitor reads; see bb-record.sh.
+# Actions also go to the recovery log the monitor reads (see bb-record.sh).
 . /usr/local/lib/bb-record.sh 2>/dev/null || bb_record() { :; }
 act() { say "$*"; bb_record watchdog "$*"; }
 
@@ -118,7 +118,7 @@ bzserv_up() { [ -n "$(proc_pids 'bzserv.exe')" ]; }
 # Every Wine helper is bounded and killed with the processes it started: an
 # "sc query" sat for 53 minutes on 2026-09-24. The stop clears the record the
 # service manager keeps for a process that died under it, without which the
-# start is a no-op; on a stopped service it fails harmlessly.
+# start is a no-op. On a stopped service it fails harmlessly.
 wine_bounded() { timeout -k 10 "$1" setsid wine "$2" "$3" "$4" >/dev/null 2>&1; }
 start_bzserv() {
     wine_bounded 60 net stop bzserv
@@ -139,7 +139,7 @@ start_bzserv() {
 # seconds and never closes it (issue #13): 120 a minute on the test host on
 # 2026-10-08. At the limit nothing in the prefix can open a file: upload
 # children cannot start, so the pass hangs on them, the scanner fails with
-# Windows error 4, and bzserv itself dies on "unable to open database file".
+# Windows error 4, and bzserv dies on "unable to open database file".
 wineserver_fds() {
     for _w in $(proc_pids 'bin/wineserver'); do
         _n=$(ls "/proc/$_w/fd" 2>/dev/null | wc -l)
@@ -216,8 +216,8 @@ while true; do
             down_seen=0
             act "detected: ${status}"
             # Children first, then every other bztransmit, which is the pass
-            # and any sidecar. The pass must go: it never gives up waiting for
-            # a child on its own.
+            # and any sidecar. The pass must go: it never stops waiting for
+            # a child.
             pids="$(proc_pids 'bztransmit.exe -threadpush')"
             pass="$(proc_pids 'bztransmit.exe' | grep -v -x -F -- "$pids")"
             if [ -n "$pids$pass" ]; then

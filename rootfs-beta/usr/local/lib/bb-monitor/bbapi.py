@@ -7,20 +7,20 @@
 #
 # The surface is live when an unrevoked key exists AND the switch is on. The
 # switch exists so a key can be kept, wired into a dashboard, while the API is
-# turned off for a while; without it the only way off was to revoke and the only
+# turned off for a while. Without it the only way off was to revoke and the only
 # way back was a new key in every consumer. With no key there is nothing to
 # switch, and a fresh container answers 404 rather than 403 on every /api/v1
-# path: a 403 would confirm the endpoint is there.
+# path, because a 403 would confirm the endpoint is there.
 
 import base64, contextlib, fcntl, hashlib, hmac, json, os, re, tempfile, threading, time
 
 DIR = "/config/bb-api"
 KEYS = DIR + "/keys.json"
 LOCK = DIR + "/.lock"
-SETTINGS = DIR + "/settings.json"      # {"enabled": bool}; absent means on
+SETTINGS = DIR + "/settings.json"      # {"enabled": bool}, absent means on
 
 # Every change to the store is read-modify-write, and there are two writers: this
-# service, threaded, and bb-apikey in its own process. Without a lock, recording
+# service, threaded, and bb-apikey in a separate process. Without a lock, recording
 # a key's last use writes back a list read before a key was created, and the new
 # key is gone. Measured before this existed: 40 of 41 keys created during a poll
 # were lost. The threading lock covers this process, the file lock covers the
@@ -34,7 +34,7 @@ def _mutate():
     # Here rather than in _write, because quiet hours and the notification
     # endpoints write through this lock too and can create the directory before
     # a key is ever minted. Left to _write it stayed at the umask's 0755, on a
-    # directory that is on the user's own share.
+    # directory that is on the user's share.
     try:
         os.chmod(DIR, 0o700)
     except OSError:
@@ -68,7 +68,7 @@ PERMISSIONS = {
     "diagnose:repair":    "Also run bb-doctor --fix, which changes files in the prefix.",
     # Reading what the client is set to needs only "read". This is for changing
     # it. The set of settings a key can reach is fixed in bbconfig.WRITABLE, and
-    # deliberately excludes anything that decides what is backed up: the file
+    # excludes anything that decides what is backed up: the file
     # selection, the exclusions and the schedule are not reachable over HTTP at
     # all, because a wrong edit there stops a backup rather than slowing one.
     "configure":          "Change the backup client's settings: threads, throttle, and the like.",
@@ -78,10 +78,10 @@ PERMISSIONS = {
 ORDER = ("read", "read:files", "control:backup-now", "control:pause", "report",
          "diagnose", "diagnose:repair", "configure")
 
-# "read" is a permission in its own right, so it is not also a group name. A key
+# "read" is a permission, so it is not also a group name. A key
 # that should see file names is granted read:files alongside it. "diagnose" is
 # the same shape: a permission, with diagnose:repair granted alongside it. It is
-# deliberately not a group as well, because expand() would then turn a request
+# not a group as well, because expand() would then turn a request
 # for the check-only permission into both.
 GROUPS = {"control": ("control:backup-now", "control:pause")}
 DIAGNOSE = ("diagnose", "diagnose:repair")     # either admits a key to the tools
@@ -122,7 +122,7 @@ def _own_like_config(path):
 
     bb-apikey is normally run through `docker exec`, which is root, while the
     service runs as the container's own user. Left alone, root creates the store
-    0700 root-owned and the service cannot open it: keys created on the command
+    0700 root-owned and the service cannot open it. Keys created on the command
     line never appear, and the API answers 404 as though none existed.
     /config is already owned correctly, so its ownership is the answer, and this
     repairs a store created before the fix the next time a key is written.
@@ -239,8 +239,8 @@ def expired(rec, now=None):
 
 
 def active():
-    """Keys that would authenticate right now. An expired key does not keep the
-    surface alive any more than a revoked one does."""
+    """Keys that would authenticate right now. Expired and revoked keys do not
+    keep the surface alive."""
     now = _now()
     return [r for r in _read() if not r["revoked"] and not expired(r, now)]
 
@@ -327,7 +327,7 @@ def verify(presented, scope):
 
 
 def perms(kid):
-    """What a key holds, so a caller can be told what it may do rather than
+    """What a key holds, so a caller can be told what it may do without
     having to probe each endpoint and collect 401s."""
     for r in _read():
         if r["id"] == kid and not r["revoked"] and not expired(r):
@@ -335,7 +335,7 @@ def perms(kid):
     return []
 
 
-TOUCH_RESOLUTION = 60     # seconds; see touch()
+TOUCH_RESOLUTION = 60     # seconds, see touch()
 
 
 def touch(kid):
@@ -347,7 +347,7 @@ def touch(kid):
     resolution. Coarse to the minute instead.
     """
     try:
-        # Cheap check outside the lock: at a poll every couple of seconds this
+        # Unlocked check first: at a poll every couple of seconds this
         # returns almost every time, so the lock is barely contended.
         for r in _read():
             if r["id"] == kid and r["last_used"] \

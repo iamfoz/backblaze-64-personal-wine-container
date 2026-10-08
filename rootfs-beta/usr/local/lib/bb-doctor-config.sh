@@ -1,15 +1,14 @@
 # Client-settings checks for bb-doctor, read straight from the client via bzcli.
-# Sourced by a beta-only patch after the drive-mapping section; fold into that
+# Sourced by a beta-only patch after the drive-mapping section. Fold into that
 # script at the next stable release.
 #
 # Everything above this file in bb-doctor infers the client's state from files on
 # disk: registries, logs, a lock file's mtime. That is guesswork whenever the
-# client itself disagrees, and the fault behind "No files are selected" is
-# exactly that disagreement: bzdirfilter_add can mark a drive's root entry
+# client disagrees, and the fault behind "No files are selected" is that
+# disagreement: bzdirfilter_add can mark a drive's root entry
 # "none" while the desktop client still shows it ticked, because the tick
 # reflects a different setting than the one that decides whether anything is
-# sent. bzcli's own report command answers the question the client would give,
-# not what the files on disk suggest it might give.
+# sent. bzcli's report command returns the answer the client gives.
 #
 # Only four subtrees are queried, and /backup/account is never one of them: it
 # holds the account email and the login state, and nothing here needs either.
@@ -17,7 +16,7 @@
 # what it was built to protect.
 #
 # Each subtree is queried once and cached, because every call starts a Wine
-# process and costs real seconds; a check written naively per drive would run
+# process and takes seconds. A check written naively per drive would run
 # the settings query once per drive letter instead of once in total.
 
 echo "Backblaze client settings"
@@ -32,7 +31,7 @@ fi
 # Run bzcli against one report subtree and return its stdout. In a subshell so
 # the cd cannot leak into the rest of bb-doctor, and with PATH set explicitly
 # rather than trusted from the caller: bzcli.exe will not run at all unless it
-# is launched from its own install directory under this exact environment.
+# is launched from its install directory under this exact environment.
 _cfg_report() {
     ( cd "$BBDIR" 2>/dev/null \
       && env PATH="/opt/wine/bin:${PATH}" WINEPREFIX="$PREFIX" WINEDEBUG=-all HOME=/config \
@@ -142,11 +141,11 @@ else
         }
     ' | sed 's/\\\\/\\/g')"
 
-    # Where /config really sits, so the loop check below can ask whether a mapped
+    # Where /config resolves to, so the loop check below can ask whether a mapped
     # drive covers it. Resolved once: readlink -f is not free and every drive in
     # the loop is compared against the same target.
     # The directory under a drive root that is the config directory itself,
-    # by device and inode, a few levels down at most; empty when none.
+    # by device and inode, a few levels down at most. Empty when none.
     _cfg_find_config_in() {
         for _cfg_c in $(find "$1" -maxdepth 4 -xdev -type d -inum "${2#*:}" 2>/dev/null | tr ' ' '\001'); do
             _cfg_c="$(printf '%s' "$_cfg_c" | tr '\001' ' ')"
@@ -158,7 +157,7 @@ else
     _cfg_config_real="$(readlink -f "$_cfg_config_dir" 2>/dev/null)"
     # Device and inode as well: a pool mapped as a drive and the config
     # directory bound from a path inside that pool are the same directory
-    # through two mounts, and no amount of path resolution shows it. On the
+    # through two mounts, and path resolution cannot show it. On the
     # test host the cache pool became Y: with /config at Y:\appdata\Backblaze64
     # and the path comparison read "not inside any mapped drive".
     _cfg_config_id="$(stat -c %d:%i "$_cfg_config_dir" 2>/dev/null)"
@@ -168,7 +167,7 @@ else
     for _cfg_link in "${PREFIX}dosdevices"/[d-z]:; do
         [ -L "$_cfg_link" ] || continue
         _cfg_root="$(readlink -f "$_cfg_link" 2>/dev/null)"
-        # Wine maps z: to / on its own. That is the container, not a source
+        # Wine maps z: to / by default. That is the container, not a source
         # drive, and the client having no entry for it is the right state, so
         # warning about it would send someone to add a selection that must not
         # exist.
@@ -183,26 +182,26 @@ else
         _cfg_which="$(printf '%s\n' "$_cfg_pairs" \
             | awk -F'\t' -v want="${_cfg_letter}:\\" 'tolower($1)==tolower(want){print $2; exit}')"
         # A drive with no filter entry is backed up when it is in the client's
-        # own volume list, the <bzvolume mountPointPath="X:\"> records in
+        # volume list, the <bzvolume mountPointPath="X:\"> records in
         # bzinfo.xml: the client writes a per-drive filter only to override the
         # default, so D: carries one from its first setup and a disk added
         # later does not. On 2026-10-07 five newly mapped disks were in that
         # list and being scanned while this check still said "no selection
-        # entry" for each; absent from the list is the state that means the
-        # window's tick was never saved.
+        # entry" for each. Absence from the list means the window's tick was
+        # never saved.
         _cfg_listed=0
         grep -qi "<bzvolume [^>]*mountPointPath=\"${_cfg_letter}:\\\\\"" "$BZ/bzinfo.xml" 2>/dev/null && _cfg_listed=1
         case "$_cfg_which" in
             all)  OK "${_cfg_disp}: the client is set to back this drive up" ;;
             none) BAD "${_cfg_disp}: the client is set NOT to back this drive up"
                   NOTE "this is what produces \"No files are selected\". Check the drive in the"
-                  NOTE "client's own Settings window." ;;
+                  NOTE "client's Settings window." ;;
             *)    if [ "$_cfg_listed" = 1 ]; then
                       OK "${_cfg_disp}: in the client's volume list, backed up by default"
                   else
                       WARN "${_cfg_disp}: not in the client's volume list, so it is not scanned"
-                      NOTE "tick it in the client's Settings window and press OK while the backup is paused;"
-                      NOTE "a save made while a pass is transmitting is abandoned."
+                      NOTE "tick it in the client's Settings window and press OK while the backup is paused."
+                      NOTE "A save made while a pass is transmitting is abandoned."
                   fi ;;
         esac
 
@@ -233,7 +232,7 @@ else
     # -- The container's own config directory must not be a backup target ---------
     # The client's XML rules exclude too: a rule whose folder prefix covers the
     # directory and that sets no other criterion excludes it on every drive.
-    # That is the rule the Settings tab's Exclusions panel makes for it.
+    # The Settings tab's Exclusions panel makes that rule for it.
     _cfg_xml_excluded=0
     if [ -n "$_cfg_config_winpath" ] && [ -r "$BZ/bzexcluderules_editable.xml" ]; then
         _cfg_noletter="$(printf '%s' "$_cfg_config_winpath" | cut -c2- | tr 'A-Z' 'a-z')"
@@ -268,9 +267,9 @@ CFGEOF
         else
             BAD "the container's own config directory is inside a backed-up drive and is not excluded"
             # bb-doctor's OK/BAD/WARN/NOTE all print via echo, and dash's echo treats a
-            # bare backslash as the start of an escape (a stray "\c" here would even
+            # bare backslash as the start of an escape (a stray "\c" here would
             # swallow the rest of the line). Doubled, each pair round-trips back to the
-            # single backslash the Windows path actually needs.
+            # single backslash the Windows path needs.
             _cfg_winpath_disp="$(printf '%s' "$_cfg_config_winpath" | sed 's/\\/\\\\/g')"
             NOTE "exclude ${_cfg_winpath_disp} in the client's Settings > Exclusions."
             NOTE "left as it is, the client backs up its own bookkeeping, which changes what it just"

@@ -2,7 +2,7 @@
 """Builds a sanitised diagnostic bundle for a bug report.
 
 Collection is by allowlist. The per-thread XMLs hold a live auth token, the AES
-key and IV, and the wrapped file encryption key; the bz_done files are a listing
+key and IV, and the wrapped file encryption key. The bz_done files are a listing
 of everything on the machine. None of them are collected. A list of things to
 exclude would only have to be wrong once, so nothing is included unless it is
 named here, and every collected line is filtered afterwards.
@@ -18,7 +18,7 @@ Stable hashes make two bundles from one machine linkable. That helps while
 chasing a single fault and is unwanted afterwards, so --regenerate-hashes
 rotates the salt. Each bundle records a hash epoch derived from the salt, so a
 maintainer can tell whether two bundles share a namespace without being able to
-reverse anything; rotated hashes would otherwise read as different files rather
+reverse anything. Without it, rotated hashes would read as different files rather
 than as not comparable.
 """
 
@@ -49,8 +49,8 @@ LOG_TAIL = 2000
 SALT_LEN = 16
 
 def load_salt(regenerate=False):
-    """Load the hashing salt, creating it when needed. The salt is the whole scheme:
-    a short or empty salt makes every published hash fall to a wordlist, so a stored
+    """Load the hashing salt, creating it when needed. The scheme depends on the
+    salt: a short or empty salt makes every published hash fall to a wordlist, so a stored
     salt is trusted only if it is exactly SALT_LEN bytes. Anything shorter, such as
     a 0-byte file left by an interrupted or out-of-space first run, is treated as
     absent and regenerated. The write goes through a temp file, fsync and rename so
@@ -110,8 +110,8 @@ RE_LONGHEX = re.compile(r'\b[0-9a-fA-F]{32,}\b')           # keys/tokens/GUID bl
 # return 2019.pdf"), and treating either as a terminator left the rest of the name
 # in the output. The excluded set is the characters Windows forbids in a filename
 # plus control characters, so a match runs to the end of a log line. Trailing text
-# on the line can be swallowed into the last hashed component. That is the right
-# trade: the cost is some lost detail, the alternative is publishing filenames.
+# on the line can be swallowed into the last hashed component. That loses some
+# detail, and the alternative is publishing filenames.
 RE_WINPATH = re.compile(r'\b([A-Za-z]):(\\[^"<>|*?\t\r\n]*)')
 # Any absolute path is a candidate rather than an allowlist of roots. Users mount
 # backup volumes at container paths of their own naming, which the README
@@ -129,7 +129,7 @@ SYSTEM_ROOTS = {"bin", "boot", "config", "defaults", "dev", "etc", "init", "lib"
 # stays readable and everything below it is hashed.
 MOUNT_ROOT = re.compile(r'^(drive_[a-z]|mnt|media|home|Users)$')
 
-# Extensions worth keeping on the final component: they say what kind of file
+# Extensions kept on the final component: they say what kind of file
 # stalled without identifying it. A dot-suffix outside this list ("Jane.Doe",
 # "Backup.2019") is part of a name, so it is hashed with the rest.
 KEEP_EXTS = frozenset("""
@@ -233,9 +233,9 @@ def build_items():
         ("container/drives.txt", "mapped drives", lambda: run("ls -la /config/wine/dosdevices/ 2>/dev/null")),
         ("backblaze/startapp.log", "container startup log",
          lambda: tail_file("/config/wine/dosdevices/c:/backblaze-wine-startapp.log")),
-        # Stage, percentages, byte counts and the client's own timestamps; no
-        # names. Its age against the transmit log is what says whether an
-        # inherit the page reports is really still running.
+        # Stage, percentages, byte counts and the client's timestamps, and no
+        # names. Its age against the transmit log shows whether an inherit the
+        # page reports is still running.
         ("backblaze/inherit.txt", "inherit progress file, with its age",
          lambda: run("f=/config/wine/dosdevices/c:/ProgramData/Backblaze/bzdata/bzinherit/bz_ibs_progress.xml; "
                      "[ -f \"$f\" ] && { stat -c 'modified %y' \"$f\"; cat \"$f\"; } || echo 'no progress file'")),
@@ -243,8 +243,8 @@ def build_items():
     for i, p in enumerate(newest_logs(TLOG), start=1):
         items.append(("backblaze/bztransmit_%d.log" % i, "transfer log (most recent)",
                       lambda p=p: tail_file(p)))
-    # The service's own log: when bzserv dies it is the one place that may say
-    # why, and the question behind most "the backup stopped" reports.
+    # The bzserv service log: when bzserv dies it may be the only place that
+    # says why, and the question behind most "the backup stopped" reports.
     for p in newest_logs(os.path.join(BZ, "bzlogs/bzserv"), count=1):
         items.append(("backblaze/bzserv.log", "service log (most recent)", lambda p=p: tail_file(p)))
     # What the container did about faults: the watchdog's, the service watch's
@@ -253,7 +253,7 @@ def build_items():
                   lambda: tail_file("/config/bb-api/recovery.log")))
     return items
 
-# Only variables this project defines are shown by value; anything else could be a
+# Only variables this project defines are shown by value. Anything else could be a
 # secret the user added (a VNC password, a proxy URL with credentials).
 KNOWN_ENV = ("APP_NAME", "DOCKER_IMAGE_VERSION", "WINEARCH", "WINEPREFIX", "WINEDEBUG",
              "DISPLAY_WIDTH", "DISPLAY_HEIGHT", "DISABLE_AUTOUPDATE", "FORCE_LATEST_UPDATE",
@@ -272,7 +272,7 @@ def main():
         print(HELP, end="")
         return 0
     if "--version" in args or "-V" in args:
-        # which image build this came from - the identifier worth having in a bug report
+        # which image build this came from, for a bug report
         print("bb-report (Backblaze 64 container)")
         try:
             with open("/etc/bb-build") as fh:
@@ -302,7 +302,7 @@ def main():
 
     salt, created = load_salt(regenerate=regen)
     h = hasher(salt)
-    epoch = h("bb-report-hash-epoch", 8)   # names the namespace; reveals nothing
+    epoch = h("bb-report-hash-epoch", 8)   # names the namespace, reveals nothing
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out_path = os.path.join(OUT_DIR, "bb-report-%s.zip" % stamp)
@@ -339,7 +339,7 @@ def main():
             manifest.append("  %-34s %s" % (name, desc))
         manifest += [
             "",
-            "Deliberately excluded: per-thread XMLs (they carry a live auth token, the AES",
+            "Excluded: per-thread XMLs (they carry a live auth token, the AES",
             "key and IV, and the wrapped file encryption key), bz_done file listings,",
             "account configuration, and the hash salt.",
             "",

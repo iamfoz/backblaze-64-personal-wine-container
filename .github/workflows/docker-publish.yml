@@ -1,8 +1,8 @@
 name: Docker Build and Push
 
 # Scope concurrency per ref so a release-tag publish never queues behind (or gets
-# cancelled by) a main-branch build. PR builds cancel superseded runs to save CI;
-# main and tag publishes are never cancelled mid-push.
+# cancelled by) a main-branch build. PR builds cancel superseded runs to save CI.
+# Main and tag publishes are never cancelled mid-push.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -33,10 +33,9 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/backblaze-personal-wine
 
 jobs:
-  # Everything that can be checked without building an image. The sanitiser is the
-  # reason this job exists: a bug there does not crash anything, it quietly
-  # publishes someone's file names, auth token or encryption keys in a bundle meant
-  # for a public issue tracker. The rest joined it because nothing in this repo is
+  # Everything that can be checked without building an image. This job exists for
+  # the sanitiser: a bug there crashes nothing and publishes someone's file names,
+  # auth token or encryption keys in a bundle meant for a public issue tracker. The rest joined it because nothing in this repo is
   # compiled, so a syntax error or a broken scope check builds, publishes, and is
   # only found by whoever is running the container. Pure Python and shell, so it all
   # gates in seconds rather than waiting on an image build.
@@ -46,9 +45,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      # The suites need the image's own Python (3.12) and, for the parse gate's
-      # node --check, a node on PATH. ubuntu-latest carries both; this says so out
-      # loud rather than letting a runner image change turn into a puzzling failure.
+      # The suites need the same Python as the image (3.12) and, for the parse
+      # gate's node --check, a node on PATH. ubuntu-latest carries both. This step
+      # checks for them, so a runner image change fails here with a clear message.
       - name: Check the runner has what the suites need
         run: |
           set -eu
@@ -77,7 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # ubuntu24 is the default (oldest supported LTS); the shared :latest/:main/
+        # ubuntu24 is the default (oldest supported LTS). The shared :latest/:main/
         # version tags track it for stability. ubuntu26 ships as :ubuntu26 for early
         # validation before it becomes the default. When 24.04's support ends, drop
         # its entry here and let the default fall through to the next-oldest LTS.
@@ -88,9 +87,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       # No QEMU step: every build here is platforms: linux/amd64, which is the
-      # runner's own architecture, and emulation is only needed to build for
+      # runner's architecture, and emulation is only needed to build for
       # another one. There is no linux/arm64 image because the client is a 64-bit
-      # Windows binary under Wine; see the README on why that is not a matrix entry.
+      # Windows binary under Wine. The README explains why that is not a matrix entry.
       - name: Setup Docker buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
 
@@ -134,9 +133,9 @@ jobs:
             ${{ runner.os }}-buildx-${{ matrix.dockerfile }}-
 
       # Build the image locally first so it can be started and checked before any
-      # push. A build that succeeds still tells us nothing about whether the
-      # container actually comes up: base image updates and startup script changes
-      # have broken first boot while building perfectly cleanly.
+      # push. A successful build does not show that the container comes up. Base
+      # image updates and startup script changes have broken first boot while
+      # building cleanly.
       - name: Build Docker image for testing
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
         with:
@@ -157,7 +156,7 @@ jobs:
       # The stable images must never carry the patched Wine. They install
       # winehq-stable from apt and reference nothing in patches/, so today this
       # holds by construction - this step keeps it holding. The beta's Wine
-      # workaround diverges from Windows on purpose and is beta-only; a stable
+      # workaround diverges from Windows on purpose and is beta-only. A stable
       # image that picked it up would be shipping that divergence to users who
       # never opted into it.
       - name: Assert the stable image carries unpatched Wine
@@ -195,11 +194,11 @@ jobs:
   # The beta image: Ubuntu 26.04 with Wine built from source and the upload-speed
   # patch applied. Compiling Wine takes much longer than the stable images, so this
   # runs on the weekly schedule and on demand rather than on every push. The build
-  # cache keys on the Dockerfile and the patch, so repeat runs are cheap until one
+  # cache keys on the Dockerfile and the patch, so repeat runs are fast until one
   # of those changes.
   #
-  # It publishes the :beta tag and nothing else. The stable tags come from the build
-  # job above; the guard below fails the job rather than let a mistake in the tag
+  # It publishes only the :beta tag. The stable tags come from the build
+  # job above. The guard below fails the job rather than let a mistake in the tag
   # list overwrite :latest for every user.
   beta:
     needs: tests
@@ -248,29 +247,29 @@ jobs:
       - name: Check the beta carries the patched Wine
         run: |
           set -eu
-          # The stable images install winehq-stable into /usr; only the beta builds
+          # The stable images install winehq-stable into /usr. Only the beta builds
           # Wine into /opt/wine. If that is missing, the patch is not in the image.
           docker run --rm --entrypoint /opt/wine/bin/wine bb-beta-test:local --version
           docker run --rm --entrypoint sh bb-beta-test:local -c 'grep -q "^variant=beta" /etc/bb-build'
           # Fingerprint the writability patch in the built binary. The build already
           # fails on `git apply --check`, but that only proves the patch applied to the
-          # source; this proves the result reached the shipped wineserver.
+          # source. This proves the result reached the shipped wineserver.
           docker run --rm --entrypoint sh bb-beta-test:local -c \
             'grep -ac sock_stream_send_ready /opt/wine/bin/wineserver | grep -qv "^0$"'
           # The FD_WRITE re-arm adds no new symbol, so it has no binary fingerprint.
           # Its guard is the `git apply --check` at build time, which fails the build
           # if the context no longer matches.
           # bb-doctor re-runs itself as the container user with setpriv when it is
-          # started as root. The build checks the binary is present; this checks it
+          # started as root. The build checks the binary is present, and this checks it
           # is still present in the image that ships, and that the patched script
           # parses.
           #
           # Dockerfile.beta weaves four drop-ins and one line replacement into
-          # bb-doctor and fails its own build if any of the five markers is missing.
+          # bb-doctor and fails its build if any of the five markers is missing.
           # The five below are the same five, by name, so this stays an independent
-          # re-check of the image that ships rather than a subset of it: checking
-          # two of five would quietly stop catching a regression in the other three
-          # if that build-time guard were ever loosened.
+          # re-check of the image that ships. Checking only two of the five would
+          # miss a regression in the other three if that build-time guard were ever
+          # loosened.
           docker run --rm --entrypoint sh bb-beta-test:local -c '
             set -eu
             command -v setpriv >/dev/null

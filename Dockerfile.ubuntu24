@@ -23,20 +23,21 @@ ENV WINEDEBUG=-all
 ENV DISPLAY=:0
 
 # Unraid reads these labels to show a WebUI button and the app icon on the
-# Docker page - works even for containers started with `docker run`.
+# Docker page, including for containers started with `docker run`.
 LABEL net.unraid.docker.webui="http://[IP]:[PORT:5800]/" \
       net.unraid.docker.icon="https://cdn.jsdelivr.net/gh/selfhst/icons/png/backblaze.png"
 
 # Install 64-bit Wine from WineHQ using the modern deb822 "sources" method.
 # Lessons baked in here:
-#   * The WineHQ apt repo only ever keeps the LATEST build of each branch, so
+#   * The WineHQ apt repo only keeps the LATEST build of each branch, so
 #     pinning an exact version (e.g. winehq-stable=10.0*) breaks the moment a
 #     newer release ships. We track winehq-stable (currently Wine 11.x).
-#   * deb822 + a keyring file is reliable; the old apt-key / add-apt-repository
-#     approach silently fell back to Ubuntu's ancient Wine 6.x when it broke.
-#   * Save the key with a .asc (armored) extension and write our own deb822
+#   * deb822 + a keyring file is reliable. When the old apt-key /
+#     add-apt-repository approach broke, it fell back to Ubuntu's ancient
+#     Wine 6.x without warning.
+#   * Save the key with a .asc (armored) extension and write a deb822
 #     stanza pointing Signed-By at it. Newer apt (26.04+) ignores keyrings with
-#     an unrecognised ".key" extension, which leaves the repo unsigned; an inline
+#     an unrecognised ".key" extension, which leaves the repo unsigned. An inline
 #     stanza also avoids depending on the exact name of WineHQ's .sources file.
 #   * Backblaze 10.x is 64-bit only, but winehq-stable still pulls its i386
 #     WoW64 libraries via recommends. That is harmless and kept for safety.
@@ -44,7 +45,7 @@ LABEL net.unraid.docker.webui="http://[IP]:[PORT:5800]/" \
 #
 # 1. Its build-time environment is minimal - /run and the user/group database
 #    do not exist yet - so postinst scripts that take locks or create users
-#    (dbus, fontconfig, udev, ...) abort. Recreate what the base's own add-pkg
+#    (dbus, fontconfig, udev, ...) abort. Recreate what the base's add-pkg
 #    helper sets up (init_env) first, then strip the scaffolding back out.
 #
 # 2. Wine hard-depends (via libsane/libgphoto2 -> udev) on systemd, whose
@@ -84,17 +85,17 @@ RUN mkdir -p /config/log /tmp/run && \
         /tmp/.passwd /tmp/.group /tmp/.shadow /tmp/.gshadow /tmp/run /config/log
 
 # Image/release version, shown by bb-version and baked into the build stamp below.
-# CI passes the release tag via --build-arg; local builds default to "dev".
+# CI passes the release tag via --build-arg. Local builds default to "dev".
 # Declared HERE, after the heavy apt layer, so a version change does not bust its
-# build cache. Without this ARG, Docker silently ignores the build-arg CI passes
+# build cache. Without this ARG, Docker ignores the build-arg CI passes
 # and every published image would stamp itself "dev".
 ARG DOCKER_IMAGE_VERSION=dev
 ENV DOCKER_IMAGE_VERSION=${DOCKER_IMAGE_VERSION}
 
-# Stamp the build so every bb-* tool can report exactly which image it came from.
-# Sourced from the build rather than versioned per tool: the tools only ever ship
-# together inside an image, so "which build is this" is the question worth answering
-# in a bug report, and a single source cannot drift out of step.
+# Stamp the build so every bb-* tool can report which image it came from.
+# Sourced from the build rather than versioned per tool: the tools always ship
+# together inside an image, so "which build is this" is the question a bug report
+# needs answered, and a single source cannot drift out of step.
 ARG BUILD_REV=unknown
 # BUILD_NUMBER is the CI run number. The :beta tag is mutable, so without it a
 # published beta cannot be told apart from the one before it in a bug report.

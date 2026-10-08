@@ -8,7 +8,7 @@
 #
 # The download suits a browser, where the natural thing is a plain link, and a key
 # in a query string ends up in history, in logs and in a Referer header. So the
-# finished job hands back a single-use, short-lived URL carrying its own
+# finished job hands back a single-use, short-lived URL carrying an
 # unguessable token. The key never appears in a URL, and a link that leaks stops
 # working almost immediately.
 
@@ -190,7 +190,7 @@ def claim(token):
     or already used."""
     # compare_digest raises TypeError on a str with a character above U+007F,
     # and the path arrives decoded latin-1, so a raw high byte in the URL would
-    # otherwise drop the connection with a traceback. A token is hex; anything
+    # otherwise drop the connection with a traceback. A token is hex, so anything
     # outside ASCII is not one.
     if not isinstance(token, str) or not token.isascii():
         return None

@@ -3,14 +3,14 @@
 #
 # A pass that loses the client's four-hour lock aborts at the transmit step,
 # and bzserv starts another a few minutes later that loses it the same way.
-# The chunk path keeps uploading large files meanwhile, so bb-health reads OK
-# and the transmit log never goes quiet: the one place this shows is the log's
-# own error line. Seen with client 10.0.3.1075 under an unpatched Wine, where
+# The chunk path keeps uploading large files, so bb-health reads OK and the
+# transmit log never goes quiet. The fault shows only in the log's error
+# line. Seen with client 10.0.3.1075 under an unpatched Wine, where
 # bzserv cannot open the pass it launched, takes it for dead and deletes the
 # lock under it. The beta's Wine carries the fix.
 #
 # Only losses since the last pass that got past that point count. A pass that
-# loses the lock aborts before it records its bz_done file; one that records
+# loses the lock aborts before it records its bz_done file. One that records
 # it has cleared the step, so earlier losses in the same day's log are history.
 echo "Backup passes"
 # An inherit in progress explains a pass that has not started: nothing runs
@@ -55,8 +55,8 @@ else
     _pl_ver="$(grep -o "my_bztransmit_version=[0-9.]*" "$_pl_log" 2>/dev/null | tail -1 | sed 's/.*=//')"
     _pl_variant="$(sed -n 's/^variant=//p' /etc/bb-build 2>/dev/null)"
     if [ "${_pl_lost:-0}" -ge 2 ]; then
-        BAD "the client lost its four-hour lock ${_pl_lost} times since a pass last got past that point; no backup pass completes"
-        NOTE "bzserv cannot open the pass it launched, takes it for dead and deletes the lock under it. Client ${_pl_ver:-unknown}; seen with 10.0.3.1075 under an unpatched Wine."
+        BAD "the client lost its four-hour lock ${_pl_lost} times since a pass last got past that point, so no backup pass completes"
+        NOTE "bzserv cannot open the pass it launched, takes it for dead and deletes the lock under it. Client ${_pl_ver:-unknown}. Seen with 10.0.3.1075 under an unpatched Wine."
         case "$_pl_variant" in
             beta*) NOTE "this image's Wine carries the fix for that, so this is something else: run bb-report and open an issue with the bundle." ;;
             *) NOTE "set BACKBLAZE_VERSION=10.0.1.1069 on the container and restart: the pinned version is installed over the newer one. The beta image runs 10.0.3.1075 with a patched Wine." ;;

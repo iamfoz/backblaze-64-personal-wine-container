@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Export or import the container's own settings from the console.
+"""Export or import the container's settings from the console.
 
   bb-settings export [FILE] [--passphrase-file PATH | --no-secrets]
   bb-settings import FILE  [--passphrase-file PATH] [--only SECTION,...]
 
 The same file the Settings tab makes and reads: API keys, notification
 endpoints and events, quiet hours, warning choices and dismissals, and the
-Backblaze client's own settings. Secrets go in encrypted under a passphrase,
-asked for at the terminal unless --passphrase-file names a file holding it;
+Backblaze client's settings. Secrets go in encrypted under a passphrase,
+asked for at the terminal unless --passphrase-file names a file holding it.
 --no-secrets exports without them. Run inside the container as the container
 user, the way the other bb-* tools are:
 
@@ -27,7 +27,7 @@ def passphrase(args, needed):
         return None
     if not sys.stdin.isatty():
         if needed:
-            sys.exit("bb-settings: a passphrase is needed; give --passphrase-file or --no-secrets")
+            sys.exit("bb-settings: a passphrase is needed (give --passphrase-file or --no-secrets)")
         return None
     return getpass.getpass("Passphrase (empty to leave the secrets out): ") or None
 

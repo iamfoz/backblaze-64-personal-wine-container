@@ -67,7 +67,7 @@ ok 'grep -q "wine net stop bzserv" "$FX/wine.log" && grep -q "wine net start bzs
 ok 'grep -q "recovered: started bzserv" "$BB_RECOVERY_LOG"' "and records the recovery"
 ok '[ "$(grep -c "wine net start" "$FX/wine.log")" -eq 1 ]' "one start, not one per interval"
 
-# 3. The start does not bring it up: say so, and no false recovery line.
+# 3. The start does not bring it up: report it, and no false recovery line.
 rm -f "$FX/wine.log" "$BB_RECOVERY_LOG" "$FX/start-works" "$FX/bzserv-up"
 sed -i.bak 's/sleep 5$/sleep 0/' "$FX/bb-watchdog"      # the up-poll, 12 x 5 s, is not what is under test
 run_watchdog 8

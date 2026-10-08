@@ -2,18 +2,17 @@
 """Shared data layer for bb-monitor and bb-monitor-web.
 
 Both dashboards read the same things: /proc, the cgroup files, and Backblaze's
-own bzdata logs and XML. Everything that does the reading lives here so the two
+bzdata logs and XML. Everything that does the reading lives here so the two
 front ends cannot drift apart. They did drift: the web dashboard gained overall
 backup progress, an ETA, files remaining and round-trip time while the terminal
 one kept the original narrower view, because each carried its own copy of this
 code. A feature added here now appears in both or neither.
 
 No curses, no HTTP, no subprocesses. Pure reads plus one netlink socket for the
-kernel's own round-trip-time figures. The front ends own presentation and
-nothing else.
+kernel's round-trip-time figures. The front ends handle presentation only.
 
 Imported by path rather than installed as a package, since both callers live in
-/usr/local/bin and this is deliberately not a general-purpose library:
+/usr/local/bin and this is not a general-purpose library:
 
     sys.path.insert(0, "/usr/local/lib/bb-monitor")
     import bbdata
@@ -37,8 +36,8 @@ CG1 = "/sys/fs/cgroup/memory"
 INT = 2.0
 MPLOG = "/tmp/bb_multipart_bzdone.log"
 
-# Files the client keeps its own state in. Everything here was found by surveying
-# a live bzdata tree; see scratch/bzdata-survey-findings.md for what each holds.
+# Files the client keeps its state in. Everything here was found by surveying
+# a live bzdata tree. See scratch/bzdata-survey-findings.md for what each holds.
 OVERVIEW = BZ + "/overviewstatus.xml"
 LFDIR = BZ + "/bzbackup/bzdatacenter/bzcurrentlargefile"
 FLISTS = BZ + "/bzfilelists"
@@ -53,7 +52,7 @@ BZINFO = BZ + "/bzinfo.xml"
 # The "seen" maps below are keyed by file path or file name and were only ever
 # added to. A first backup walks millions of files, so on a container the notes
 # describe as memory-tight that is a monitor process that grows all week. Each is
-# bounded to its most recently touched entries, oldest dropped first; anything
+# bounded to its most recently touched entries, oldest dropped first. Anything
 # still in flight is touched on every poll, so it is never the one dropped.
 _SEEN_MAX = 400           # per-file entries kept in _part_seen and _logged
 _CHUNK_FILES_MAX = 50     # files kept in _chunk_seen, each a whole chunk map
@@ -85,23 +84,22 @@ _last_named = [None]        # last whole file the client named
 _sess = 0
 _rate_ema = 0.0
 # Throughput history for the ETA: (bytes, seconds) per completed transfer,
-# meaning a whole file, or a whole multi-part file once all its parts are in. Weighting by actual bytes/duration over the last several completions
+# meaning a whole file, or a whole multi-part file once all its parts are in. Weighting by bytes/duration over the last several completions
 # is far steadier than the live 2s network-counter sample.
 _completed_hist = deque(maxlen=10)
 
 # ---- round-trip time to the storage pod ----------------------------------
 # Read from the kernel, not measured by us. Every established TCP connection
-# already carries a smoothed RTT the kernel maintains from its own ACK timing,
+# already carries a smoothed RTT the kernel maintains from ACK timing,
 # and NETLINK_SOCK_DIAG exposes it for sockets this process does not own. That
 # is the same interface `ss -ti` uses.
 #
-# So the figure comes from the upload connections themselves rather than from a
-# probe of our own: nothing extra is sent to Backblaze, there is no traffic when
-# idle, and the number describes the actual upload path rather than a separate
-# handshake that merely resembles it. An earlier version opened its own TCP
-# connection every ten seconds; this replaced it.
+# So the figure comes from the upload connections themselves. Nothing extra is
+# sent to Backblaze, there is no traffic when idle, and the number describes the
+# upload path itself. An earlier version opened a separate TCP connection every
+# ten seconds, and this replaced it.
 #
-# Contributed in concept by rogman; reworked to read the kernel instead.
+# Contributed in concept by rogman, and reworked to read the kernel instead.
 BZDC_SYNCHOSTINFO = BZ + "/bzreports/bzdc_synchostinfo.xml"
 
 NETLINK_SOCK_DIAG = 4
@@ -182,7 +180,7 @@ def _diag_dump(family):
                 body = off + 16
                 # inet_diag_msg: 4 bytes, then a 48-byte sockid, then five u32s.
                 # Take the family from the record rather than from the request,
-                # so the address is always decoded as whatever it actually is.
+                # so the address is always decoded as its real family.
                 msg_family = buf[body]
                 dport = struct.unpack_from("!H", buf, body + 6)[0]
                 dst = buf[body + 24:body + 40]
@@ -252,8 +250,8 @@ START_TIME = time.time()
 def client_state():
     """What the client says it is doing, and the file it names.
 
-    overviewstatus.xml is rewritten continuously and holds the client's own word
-    for its state, which beats inferring one from which processes exist.
+    overviewstatus.xml is rewritten continuously and holds the client's word
+    for its state, so nothing has to be inferred from which processes exist.
     current_file reads like "Part 14 of Something.mkv" during a large upload.
     """
     t = read(OVERVIEW)
@@ -277,7 +275,7 @@ def client_state():
 #   Finishing <name>         after the last part
 #   Producing File Lists...  a scan, with no file at all
 #   <name>                   a whole small file, which is most of them
-#   caNNN/bz_done_*.bzff     the client's own records, not anything of the user's
+#   caNNN/bz_done_*.bzff     the client's records, not the user's files
 _ACTS = (
     (re.compile(r"^Producing File Lists", re.I),      "Producing file lists", 0, 0),
     (re.compile(r"^Preparing (?:\d+ of )?(.+)$"),     "Preparing",            1, 0),
@@ -306,9 +304,9 @@ def activity():
 
 
 # bzdata/pauseinfo.xml exists only while a pause is set. bzcli, bzserv and
-# bztransmit all name it, and bzserv's own wording is that the file has to go
+# bztransmit all name it, and bzserv's wording is that the file has to go
 # "to come out of pause", so its presence is the state rather than a flag inside
-# it. Read every poll: it is a small file and costs nothing, where asking bzcli
+# it. Read every poll: it is a small file and one read, where asking bzcli
 # would spawn a Wine process.
 PAUSEINFO = BZ + "/pauseinfo.xml"
 
@@ -365,7 +363,7 @@ def scan_progress(live=None):
 
 
 def measured_perf():
-    """The client's own measured throughput, in kbit/s, split by file size."""
+    """The client's measured throughput, in kbit/s, split by file size."""
     t = read(PERFXML)
     big = re.search(r'perf_in_kbits_per_sec_larger_1mb="(\d+)"', t)
     small = re.search(r'perf_in_kbits_per_sec_smaller_1mb="(\d+)"', t)
@@ -441,8 +439,8 @@ def _win_isdir(win):
 def scan_stops(text=None, exists=None):
     """[(windows path, error code)] for directories the scanner could not open
     and that still exist under that name. A disk's file list ends at the first
-    of them, so files after it are never backed up; bb-doctor has the detail.
-    Read from the newest scan log; a renamed or removed directory is a fix
+    of them, so files after it are never backed up. bb-doctor has the detail.
+    Read from the newest scan log. A renamed or removed directory is a fix
     already made and is left out."""
     if text is None:
         text = _scan_log_tail()
@@ -455,11 +453,11 @@ def scan_stops(text=None, exists=None):
 
 
 def health(data=None):
-    """Conditions worth warning about, from the client's own records.
+    """Conditions to warn about, from the client's records.
 
     A safety freeze stops backups entirely, an unclean file check means the
     client thinks something is wrong, and a backup that has not completed within
-    the user's own threshold is the warning the GUI would give.
+    the user's threshold is the warning the GUI would give.
     """
     out = []
     j = read(RPTS + "/status.json")
@@ -471,7 +469,7 @@ def health(data=None):
     # Only meaningful once the backup has caught up. bzstat_lastbackupcompleted
     # marks a pass finishing, not the whole set: on the machine this was written
     # against it read 4 August while 87% of 85 TB was still unsent. Warning about
-    # that would be warning about a first upload doing exactly what it should.
+    # that would be warning about a first upload doing what it should.
     last = re.search(r'gmt_millis="(\d+)"', read(RPTS + "/bzstat_lastbackupcompleted.xml"))
     warn = re.search(r'numdays_warn_if_no_backup="(\d+)"', read(BZINFO))
     if last and _caught_up(data):
@@ -487,7 +485,7 @@ def health(data=None):
     stops = scan_stops()
     if stops:
         out.append(("scanstop", "The scanner cannot open %d director%s, so a disk's file list stops there and files "
-                                "after it are not backed up; bb-doctor names them"
+                                "after it are not backed up, and bb-doctor names them"
                                 % (len(stops), "y" if len(stops) == 1 else "ies")))
     lost = lost_lock()
     if lost:
@@ -498,10 +496,10 @@ def health(data=None):
 
 # A pass that loses the client's four-hour lock aborts at the transmit step, and
 # bzserv starts another a few minutes later that loses it the same way. Large
-# files keep uploading through the chunk path meanwhile, so the rate, the
-# state and bb-health all look right: the log's own error line is the one
-# place it shows. Seen with client 10.0.3.1075 under Wine, where the lock file
-# is on disk and the client's own check says it is not.
+# files keep uploading through the chunk path all the while, so the rate, the
+# state and bb-health all look right, and only the log's error line shows it.
+# Seen with client 10.0.3.1075 under Wine, where the lock file is on disk and
+# the client's check says it is not.
 LOST_LOCK_MIN = 2         # one loss can follow a restart that cut a pass short
 
 
@@ -509,7 +507,7 @@ LOST_LOCK_MIN = 2         # one loss can follow a restart that cut a pass short
 # and while it runs nothing else happens: no pass, no upload, and the counters
 # read zero because the client has not rebuilt them yet. The client writes its
 # progress to one small file for the whole of it. A reinstall that lost
-# bzinstall.xml is what starts one; see the CHANGELOG.
+# bzinstall.xml is what starts one. See the CHANGELOG.
 IBS = BZ + "/bzinherit/bz_ibs_progress.xml"
 
 _IBS_STAGES = {"tbs_downloading": "downloading the backup state",
@@ -517,7 +515,7 @@ _IBS_STAGES = {"tbs_downloading": "downloading the backup state",
                "tbs_merging": "merging the backup state"}
 # The progress file outlives the inherit: on a live container it read
 # tbs_done_success, 1000 out of 1000, an hour after the client had moved on.
-# A finished inherit is not a reading, and a failed one is the client's own
+# A finished inherit is not a reading, and a failed one is the client's
 # word for it, so only "done, success" is dropped.
 _IBS_DONE_OK = "tbs_done_success"
 
@@ -608,7 +606,7 @@ PASSED_LOCK_POINT = "bz_done file recorded for upload"
 def lost_lock(text=None):
     """How many passes lost the four-hour lock since the last pass got past
     that point, or 0 below LOST_LOCK_MIN. A pass that loses the lock aborts
-    before it records its bz_done file; one that records it has cleared the
+    before it records its bz_done file. One that records it has cleared the
     step every loss happens at, so losses earlier in the log are history and
     the warning must go once a pass succeeds, not at the next log rotation."""
     t = text if text is not None else tail_log(4000)
@@ -618,7 +616,7 @@ def lost_lock(text=None):
 
 
 # Below this share of the set still to send, the backup counts as caught up and a
-# missing completion is worth remarking on. Above it there is simply work left.
+# missing completion is reported. Above it there is work left.
 CAUGHT_UP_FRACTION = 0.02
 SCAN_STALE = 300          # seconds without a write before a scan counts as over
 
@@ -626,11 +624,11 @@ SCAN_STALE = 300          # seconds without a write before a scan counts as over
 def _caught_up(data=None):
     # gather() already has a backup_totals() reading and hands it down, so one
     # poll reads the two stat files once rather than once per caller. Every one
-    # of these still reads for itself when called on its own, which is how the
+    # of these still reads for itself when called alone, which is how the
     # web dashboard and the tests use them.
     b = data if data is not None else backup_totals()
     if not b or not b.get("total"):
-        return True                       # nothing to judge against; do not suppress
+        return True                       # nothing to judge against, so do not suppress
     remaining = max(0, b["total"] - b["done"])
     return remaining <= b["total"] * CAUGHT_UP_FRACTION
 
@@ -647,7 +645,7 @@ def _skipped_parse():
     mounted directory puts tens of thousands of rows in this report: parsing it
     twice a second, twice over, was a measurable share of the container's CPU
     for a list that changes hourly at most. Cached on st_mtime_ns the way
-    dedup_names() caches its own report. The row dicts are shared with every
+    dedup_names() caches its report. The row dicts are shared with every
     caller, so a caller that needs to change one must copy it first.
     """
     p = RPTS + SKIPPED
@@ -666,7 +664,7 @@ def _skipped_parse():
             # The report opens with a "# SkippedFilesReportStarted" line. As
             # observed it carries no tabs, so the field test below already
             # excludes it, but a tabbed variant would be counted as a file with
-            # a date for a reason. Excluding comments outright costs one
+            # a date for a reason. Excluding comments costs one
             # condition and makes this agree with bb-doctor, which already does
             # it.
             if not line or line.startswith("#"):
@@ -697,9 +695,9 @@ def _skipped_parse():
 
 
 def skipped_files():
-    """Files the client has given up on, counted by its own reason.
+    """Files the client has given up on, counted by the client's reason.
 
-    These are not queued and not retried: they are simply not backed up, and
+    These are not queued and not retried: they are not backed up, and
     nothing in the GUI says so. Under this container the usual cause is a file
     the container user cannot read, so a large count here often means a
     permissions or ownership problem on the mounted source rather than anything
@@ -711,16 +709,16 @@ def skipped_files():
 def skipped_list(limit=500):
     """The skipped files themselves: [{path, reason, name}], newest first.
 
-    skipped_files() counts them; this names them, which is what someone trying
-    to fix the problem actually needs. Capped, because a permissions mistake on
+    skipped_files() counts them, and this names them for someone trying
+    to fix the problem. Capped, because a permissions mistake on
     one directory can list tens of thousands and nobody reads past the first
-    screen; the count beside it says how many there are in total.
+    screen. The count beside it says how many there are in total.
     """
     _, rows, reasons = _skipped_parse()
     if not rows:
         return None
     # The count uses every row, not only the rows that this function returns. A
-    # display that shows the first few hundred files can thus give the correct
+    # display that shows the first few hundred files can still give the correct
     # number for each reason.
     return {"total": len(rows), "shown": min(len(rows), limit),
             "reasons": reasons, "files": rows[:limit]}
@@ -756,7 +754,7 @@ def upload_success_today():
     The second figure is failed ATTEMPTS, not failed files. CvtTooBusy and
     CvtNoRoom mean the storage vault turned an attempt away and the client
     retried against another, which is routine load balancing on Backblaze's
-    side; the file still goes up. Nothing here names a file, because no file
+    side, and the file still goes up. Nothing here names a file, because no file
     failed, and displaying this as "failed" sent people hunting through logs
     for five files that never existed. The number that means data at risk is
     skipped_files, not this.
@@ -837,7 +835,7 @@ def completion(data=None):
         return None
     if max(0, b["total"] - b["done"]) > b["total"] * CAUGHT_UP_FRACTION:
         return None
-    # The day count comes from the client's own record of when the first file
+    # The day count comes from the client's record of when the first file
     # went up, not from first_backup(), which returns None the moment a backup
     # is caught up and so was always None by the time this ran: every completion
     # would have read "in 0 days". No record means no first backup to have
@@ -858,7 +856,7 @@ def completion(data=None):
 
 def eta_date(eta_seconds):
     """An ETA as a date, because "done around 30 January" is a thing a person
-    can picture and "171 days" is not. Day resolution on purpose: an estimate
+    can picture and "171 days" is not. Day resolution, because an estimate
     from a moving average should not pretend to know the hour."""
     if not eta_seconds or eta_seconds <= 0:
         return None
@@ -898,7 +896,7 @@ def backing_up_since():
     ahguidcreated is established from a real capture and marks the account-host
     pairing. firstfilescantime.xml is older still but its internal shape was
     never captured, so it contributes by shape (any YYYYMMDD attribute) and,
-    failing that, by its own mtime, since it is written once at install and the
+    failing that, by the file's mtime, since it is written once at install and the
     observed timestamp matched the install date.
     """
     for t in (read(FLISTS + "/filestats.xml"), read(BZINFO)):
@@ -938,8 +936,7 @@ def _eta_trend(backup):
     # Do not record, or compare against, an estimate resting on a couple of
     # completed transfers. Those are whatever the client happened to send first,
     # and comparing today's against yesterday's measures the sample, not the
-    # backup. A recorded bad value is worse than a missing one: it stays in the
-    # history and poisons tomorrow's comparison too.
+    # backup. A recorded bad value stays in the history and poisons tomorrow's comparison too.
     if backup.get("eta_samples", 0) < ETA_MIN_SAMPLES:
         return None
     eta = backup["eta_seconds"]
@@ -983,10 +980,10 @@ def compress_saved():
 
 
 def speed_curve():
-    """Throughput by payload size from the client's own speed test, kbit/s.
+    """Throughput by payload size from the client's speed test, kbit/s.
 
-    Written as 10KB_112__100KB_632__1MB_2712__10MB_4304, which is the clearest
-    statement of why small files are slow: each costs a round trip, so the rate
+    Written as 10KB_112__100KB_632__1MB_2712__10MB_4304, which shows
+    why small files are slow: each costs a round trip, so the rate
     climbs with payload size.
     """
     t = read(RPTS + "/bzperf_lastspeedtest.txt").strip()
@@ -995,7 +992,7 @@ def speed_curve():
 
 
 def volumes():
-    """Source volumes with their space, from the client's own view."""
+    """Source volumes with their space, from the client's view."""
     out = []
     for a in re.findall(r'<bzvolume ([^/]*)/>', read(BZ + "/bzvolumes.xml")):
         mp = re.search(r'mountPointPathHex="([0-9a-f]*)"', a)
@@ -1073,7 +1070,7 @@ def human(n, dp=1):
     # "257524.9 GB", eleven characters that overflowed the gauge label and got
     # clipped. Reported by gandalf15.
     #
-    # dp is for the one figure that needs it: the backup total. At one decimal
+    # dp is only for the backup total. At one decimal
     # place a TB reading only moves every 102.4 GB, which on a large backup is
     # most of a day, so a correct figure sat unchanged long enough to be
     # reported as a stuck counter. Everything else keeps one place, because a
@@ -1094,7 +1091,7 @@ def eta_str(secs):
     """Human ETA from a seconds estimate.
 
     None covers two cases that both mean "no usable estimate": no measurable
-    rate at all, and a rate so low the projection is absurd, which is what the
+    rate at all, and a rate so low the projection is absurd, as the
     first few small files produce at startup. "Stalled" was the old word and it
     is wrong for the second case, where the backup is uploading briskly and only
     the estimate is unusable. There is no way to tell them apart here, so the
@@ -1123,7 +1120,7 @@ def _secs(t):
 
 
 def _local_hms(line, fallback):
-    """Backblaze's own log lines are stamped in UTC regardless of the
+    """Backblaze's log lines are stamped in UTC regardless of the
     container's TZ setting. Returns (utc_hms, local_hms) so callers can keep
     using the UTC value for self-consistent internal span/duration math
     while showing the local value to the user."""
@@ -1180,7 +1177,7 @@ def _part_size(fields, live):
         except ValueError:
             pass
     # The live counter belongs to the part a thread is carrying. A file's last
-    # part is short by definition, so it is only worth believing when it is at
+    # part is short by definition, so it is only trusted when it is at
     # least a part-sized reading and nothing better is known.
     if live >= _MIN_PART:
         best = max(best, live)
@@ -1196,7 +1193,7 @@ def _parts_progress(name, fsize, part):
     """(done, total) for a file Backblaze has split, or None for a single part.
 
     done comes from the completed-parts bundle already tracked for the file, so a
-    part counts only once it has actually landed.
+    part counts only once it has landed.
     """
     if part <= 0 or fsize <= part * 1.5:
         return None
@@ -1227,9 +1224,9 @@ def dedup_names():
     when the file changes, since this runs on every poll.
     """
     now = time.localtime()
-    # The rows inside the file are UTC-stamped, and the client's own naming
+    # The rows inside the file are UTC-stamped, and the client's naming
     # convention for the file is not established from a live capture, so both
-    # candidates are tried. They are the same file for most of the day; on a
+    # candidates are tried. They are the same file for most of the day. On a
     # container well east or west of UTC they differ for the hours the offset
     # covers, and reading only the local one returned nothing for that whole
     # window.
@@ -1265,7 +1262,7 @@ def dedup_names():
                 continue
             # "2026-09-06 01:02:56 -  small  - throttle x  -  -  dedup - 0 bytes - D:\...\name"
             # Taken from the fixed prefix rather than by splitting on the last
-            # " - ": the row's own separator is " - " too, so a file name that
+            # " - ": the row's separator is " - " too, so a file name that
             # contains one ("Artist - Track.mp3") lost everything before it and
             # never matched the name the client reports.
             mp = re.search(r"dedup - 0 bytes - (.*)$", line)
@@ -1295,9 +1292,9 @@ def mark_dedup(rows):
 def rec_cols(r, wide=True):
     # A file too small to catch in flight has no thread, no measured size and no
     # rate. Its name and the time it was dealt with are all there is, unless the
-    # report says the datacenter already held it, which is worth a word. The
-    # terminal's Size column is nine characters, so it gets the client's own
-    # word for it; the web page has room for the sentence.
+    # report says the datacenter already held it. The terminal's Size column
+    # is nine characters, so it gets the client's word for it, and the web page
+    # has room for the sentence.
     if r.get("small"):
         held = ("already backed up" if wide else "dedup") if r.get("dedup") else "\u2014"
         return ("\u2014", held, "\u2014")
@@ -1366,7 +1363,7 @@ def _tx():
     return t
 
 
-# The programs worth attributing memory to. The client comes first, because it
+# The programs to attribute memory to. The client comes first, because it
 # is almost always the answer: a first scan over a large set is the memory peak
 # of this container, and bzfilelist holds the file list while it builds it.
 _MEM_NAMES = ("bzfilelist", "bztransmit", "bzserv", "bzbuitray", "bzbui",
@@ -1412,7 +1409,7 @@ def memory_by_process(limit=5):
 def mem_info(host_total):
     """(used, limit, percent, cache) for the container's cgroup, or None.
 
-    `used` is the processes' own memory (anon), not the cgroup's charge. The
+    `used` is the processes' memory (anon), not the cgroup's charge. The
     charge includes the page cache for every file the client has read, and a
     dedup scan over tens of terabytes reads them all: one user's container
     showed 36 GB by that figure while its processes held a few, and the host
@@ -1448,7 +1445,7 @@ def mem_info(host_total):
 
 def backup_totals():
     """Overall backup progress: total selected for backup vs. still remaining,
-    from Backblaze's own bzstat_totalbackup.xml / bzstat_remainingbackup.xml
+    from Backblaze's bzstat_totalbackup.xml / bzstat_remainingbackup.xml
     (both rewritten periodically by the client itself, independent of any
     single upload session)."""
     tot_txt = read(BZSTAT_TOTAL)
@@ -1494,8 +1491,8 @@ def gather(prev):
 
     threads, xmls, has_fl, has_bt = scan_procs()
     o["threads"] = threads
-    # The client's own state when it offers one, since it knows what it is doing
-    # better than a guess from which processes exist.
+    # The client's reported state when it offers one. Guessing from which
+    # processes exist is the fallback.
     reported = client_state()[0]
     # The client writes cur_state="none" when it has no state to report. The
     # capitalised form is the text "None". A reader sees that as a null value
@@ -1519,10 +1516,10 @@ def gather(prev):
 
     # ETA rate: weighted average of (bytes / duration) over the last several
     # *completed* transfers, not the raw 2s network-counter sample. Individual
-    # completions are real measured data points, so this only moves when a
-    # new file actually finishes -- no more jitter from bursty in-flight
-    # sampling. A live EMA is kept only as a fallback for the first minute or
-    # so, before any completions have landed yet.
+    # completions are measured data points, so this only moves when a new
+    # file finishes, without the jitter of bursty in-flight sampling. A live
+    # EMA is kept only as a fallback for the first minute or so, before any
+    # completions have landed.
     global _rate_ema
     if prev is not None:
         _rate_ema = 0.15 * o["rate"] + 0.85 * _rate_ema
@@ -1540,8 +1537,7 @@ def gather(prev):
             # per-byte rate low enough to extrapolate into the millennia: one
             # observed run read "4259966d", about 11,600 years. A slow uplink
             # can take years, so the ceiling is generous, but past it the
-            # number is arithmetic rather than an estimate, and showing
-            # nothing beats showing that.
+            # number is arithmetic, not an estimate, so nothing is shown.
             o["backup"]["eta_seconds"] = eta if eta <= ETA_MAX else None
         else:
             o["backup"]["eta_seconds"] = None
@@ -1586,8 +1582,8 @@ def gather(prev):
         line when the push was first observed. A file's parts are counted from
         these, so a push that began and ended between two polls still counts:
         its line is there even though no poll saw it running. If `seen` has
-        left the tail the newest line alone is taken, which is what the old
-        newest-differs test amounted to."""
+        left the tail the newest line alone is taken, as the old
+        newest-differs test did."""
         mine = thread_lines(thr)
         if seen is None:
             return mine
@@ -1654,7 +1650,7 @@ def gather(prev):
         cur[x] = (name, fsize, part, thr, newest_line(thr), mg.group(1) + ":" + sha)
     act = activity()
     # A small file completes before a poll can find a thread that carries it.
-    # These files thus never enter the in-flight table. They also never reach
+    # These files never enter the in-flight table. They also never reach
     # the completed table.
     # Backblaze pushes them in bundles rather than singly, which is why the log has
     # no per-file record of them. The client does name each one as it deals with
@@ -1699,11 +1695,11 @@ def gather(prev):
     # nothing moves.
     #
     # A pause is not instant. The client finishes the transfers already in flight
-    # before it stops, which is the point of asking rather than killing, and only
-    # then does its own window show Paused. Saying "Paused" the moment the pause
-    # file appears is therefore ahead of the truth: observed on a live backup,
+    # before it stops, which is why it is asked rather than killed, and only
+    # then does the client's window show Paused. Saying "Paused" the moment the
+    # pause file appears is ahead of the truth: observed on a live backup,
     # transfers kept completing after the request while threads were still
-    # draining. Threads still running means it is on its way, not there yet.
+    # draining. Threads still running means it is still pausing.
     if o["pause"]["paused"]:
         draining = bool(threads)
         o["pause"]["draining"] = draining
@@ -1801,8 +1797,8 @@ def gather(prev):
                     # a reading that makes sense: the next push for this file
                     # brings one, at the cost of one uncounted part.
                     continue
-                # The client's own chunk map is the exact count while the file
-                # is the one being worked on; the size divided by the part size
+                # The client's chunk map is the exact count while the file
+                # is the one being worked on, and the size divided by the part size
                 # stands in when it is not.
                 total = ctotal if (cname == nm and ctotal) else max(1, -(-fs // part))
                 try:
@@ -1836,16 +1832,16 @@ def gather(prev):
 
 
 # ---- why paused ------------------------------------------------------------------
-# The client writes a reason code with every pause. Shown raw it is an identifier;
-# read as words it answers the question a bare "Paused" raises, and it says who
+# The client writes a reason code with every pause. Shown raw it is an identifier.
+# Read as words it answers the question a bare "Paused" raises, and it says who
 # to look at: a pause set from here is a button, a pause the client chose is a
-# wait. The code stays alongside for anyone searching Backblaze's own help.
+# wait. The code stays alongside for anyone searching Backblaze's help.
 PAUSE_REASONS = {
     "action_pause_backup": ("here", "Paused from here",
                             "Set from the Monitor, the API or bzcli."),
     "ca_down_but_network_alive": ("client", "Paused by the client",
                                   "Backblaze's cluster authority is not answering. "
-                                  "Usually their maintenance; it resumes on its own."),
+                                  "Usually their maintenance. It resumes by itself."),
     "on_blocked_network": ("client", "Paused by the client",
                            "This network is one the client is set not to use."),
     "isOffline": ("client", "Paused by the client", "No network."),
@@ -1921,9 +1917,9 @@ def milestones(data=None):
 
 # ---- progress over time ---------------------------------------------------------
 # One sample a day of how far the backup has got, kept for a little over a year.
-# The ETA trend already keeps a fortnight of estimates; this keeps the fact the
-# estimates are about. After months of watching a bar, the line that shows it
-# moving is the thing worth looking at.
+# The ETA trend already keeps a fortnight of estimates, and this keeps the fact the
+# estimates are about. After months of watching a bar, the line shows how it
+# has moved.
 PROGRESS_HIST = "/config/.bb-progress-history"
 PROGRESS_KEEP = 400
 
@@ -1956,8 +1952,8 @@ def progress_history(record=True, data=None):
 
 # ---- per-drive progress ----------------------------------------------------------
 # The two stat files carry a bzvolume element per drive alongside the totals, and
-# nothing read them until now. On a single-share container this repeats the total;
-# on a container backing up several shares it answers which drive is holding the
+# nothing read them until now. On a single-share container this repeats the total.
+# On a container backing up several shares it answers which drive is holding the
 # backup up, which the totals cannot.
 def per_volume():
     """[{guid, path, total, done, remaining, pct, remaining_files}] or None."""
@@ -1981,9 +1977,9 @@ def per_volume():
     if not sel:
         return None
     # The mount path lives in a third file, keyed by the same guid when it
-    # carries one. Where it does not, the drive is named by the head of its guid
-    # rather than left blank: an unlabelled bar is worse than a short label, and
-    # the head is the part that differs. Two guids on a live container shared
+    # carries one. Where it does not, the drive is named by the head of its guid,
+    # since an unlabelled bar tells the reader nothing and the head is the part
+    # that differs. Two guids on a live container shared
     # their last six characters and differed by the fourth.
     paths = {}
     seen = {}
@@ -2051,8 +2047,7 @@ def remaining_shape(data=None):
 #
 # Reported rather than turned into advice. On a live container the observed rate
 # has been seen above what this predicts, so the model is a floor of unknown
-# tightness, not a ceiling to tune against. Saying which it is beats a
-# confident figure that is wrong.
+# tightness, not a ceiling to tune against.
 WINE_SNDBUF = 65536
 
 

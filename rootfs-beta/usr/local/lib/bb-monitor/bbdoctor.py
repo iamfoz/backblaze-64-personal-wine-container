@@ -1,8 +1,8 @@
 # Settings for bb-doctor that the Settings tab can change: how deep the
 # read-speed sample looks for a large file, and whether to keep going until it
 # finds one. One line of JSON, read by the shell drop-in with grep, the same
-# way the watchdog switch is. Absent, the drop-in's own defaults apply (three
-# levels, stop there), which is what every container did before the setting
+# way the watchdog switch is. When the file is absent, the drop-in's defaults
+# apply (three levels, stop there), as every container did before the setting
 # existed.
 
 import json, os, tempfile

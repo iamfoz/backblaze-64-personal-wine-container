@@ -20,8 +20,8 @@ log_message() {
 
 # --- Wine prefix preparation -------------------------------------------------
 # Backblaze 10.x is a native 64-bit application that refuses to install on
-# anything older than Windows 10. The prefix therefore MUST be win64 and MUST
-# report Windows 10 - getting the OS version right is the fix for the installer's
+# anything older than Windows 10. The prefix MUST be win64 and MUST
+# report Windows 10. Getting the OS version right fixes the installer's
 # "unsupported operating system / Windows XP" error.
 
 # A leftover 32-bit prefix (from the pre-10.x era) can never run the 64-bit
@@ -45,10 +45,10 @@ fi
 # command that starts the long-lived wineserver (force_windows_10 below). Wine
 # only enumerates its drives when the server starts, so a symlink created later
 # (as this used to be, right before launching Backblaze) is invisible until the
-# *next* container start. That is exactly why a newly added drive only appeared
+# *next* container start. That is why a newly added drive only appeared
 # after a restart. Creating the links now, while no server is running, makes the
 # drive available on the very first launch. (Trailing slash on the target is
-# irrelevant to Wine; both /drive_x and /drive_x/ work.)
+# irrelevant to Wine. Both /drive_x and /drive_x/ work.)
 for x in {d..z}; do
     if test -d "/drive_${x}" && ! test -d "${WINEPREFIX}dosdevices/${x}:"; then
         log_message "DRIVE: drive_${x} found - linking to Wine drive ${x}:"
@@ -57,7 +57,7 @@ for x in {d..z}; do
 done
 
 # Force the reported Windows version to Windows 10 on EVERY start. We set both
-# Wine's own version key (exactly what winecfg writes) and the raw NT
+# Wine's version key (the one winecfg writes) and the raw NT
 # CurrentVersion keys, so the check passes no matter how Backblaze probes the OS.
 force_windows_10() {
     wine reg add 'HKCU\Software\Wine' /v Version /t REG_SZ /d win10 /f
@@ -81,12 +81,12 @@ force_windows_10() {
 }
 
 # Backblaze runs a .NET MSI custom action ("CheckVersions") inside rundll32.exe -
-# during a normal MSI install and, crucially for us, during its own in-app
+# during a normal MSI install and during its in-app
 # self-update. Thanks to the Windows 8.1+ "version lie", that unmanifested
 # rundll32 is told Windows 8 (6.2) and the action aborts with "MajorVerTooOld" /
 # "unsupported OS", even though force_windows_10() set the prefix to 10.0. We drop
 # an external manifest declaring a Windows 10/11 supportedOS into both system
-# dirs; together with the PreferExternalManifest key set in force_windows_10(),
+# dirs. With the PreferExternalManifest key set in force_windows_10(),
 # GetVersionEx then returns the real 10.0. Our installer bypasses the MSI so this
 # is not needed for the first install, but it keeps Backblaze's self-update from
 # breaking on the OS gate once it ships a version newer than the installed one.
@@ -127,7 +127,7 @@ log_message "WINE: prefix ready and reporting Windows 10"
 # Set the Wine "virtual desktop" by writing the registry directly. We must NOT
 # use "winetricks vd=..." here: winetricks runs "wineserver -w" internally, which
 # hangs forever once Backblaze's persistent bzserv service is running (it never
-# lets the wineserver terminate). These are exactly the keys winetricks writes.
+# lets the wineserver terminate). These are the keys winetricks writes.
 cd "$WINEPREFIX"
 explorer_key='HKCU\Software\Wine\Explorer'
 desktops_key='HKCU\Software\Wine\Explorer\Desktops'
@@ -218,11 +218,11 @@ fetch_and_install() {
 # hyphen-named copies bzbui cannot build its main control-panel window - it
 # renders unstyled and logs "could not CreateDialog for main white window". The
 # naming differs across asset families (some flip every "_", some only the one
-# before "4x"), so rather than guess we read the exact names the binaries
-# reference and alias each from its underscore twin - the rule is reliable: the
-# wanted name with every "-" turned back into "_" is the file already on disk.
-# Deriving the list from the binaries keeps it complete across client versions,
-# so the GUI renders correctly on the first launch with no per-file chasing.
+# before "4x"), so we read the exact names the binaries reference and alias
+# each from its underscore twin. The wanted name with every "-" turned back
+# into "_" is the file already on disk. Deriving the list from the binaries
+# keeps it complete across client versions, so the GUI renders correctly on
+# the first launch.
 create_skin_aliases() {
     bb_dir="${WINEPREFIX}drive_c/Program Files/Backblaze"
     [ -d "$bb_dir" ] || return 0
@@ -234,7 +234,7 @@ create_skin_aliases() {
 }
 
 # Backblaze's service, bzserv, is the process that runs backup passes. Wine's
-# service manager starts it on its own when the prefix boots, but that start
+# service manager starts it when the prefix boots, but that start
 # can fail without a trace: on 2026-09-19 bzserv died 60 ms in, during the
 # prefix update that follows a Wine version change, and nothing restarted it.
 # The GUI does not start the service under Wine, so the container sat with a
@@ -245,7 +245,7 @@ create_skin_aliases() {
 # 2026-09-20 it exited with code 1067 six hours into a run and nothing
 # brought it back. Each start is logged, and a service that will not stay up
 # produces one attempt per cycle rather than a tight loop.
-# By the process table, not the service manager. On 2026-09-23 Wine's service
+# The check reads the process table. On 2026-09-23 Wine's service
 # manager reported bzserv RUNNING for an hour after the process had gone, so
 # this check said fine while bb-health said DOWN, and the start below did
 # nothing because a start on a service the manager thinks is running is a
@@ -270,12 +270,12 @@ wine_bounded() {
 
 # Stop, then start. The stop clears the record the service manager keeps
 # when the process has died under it, which otherwise makes the start a
-# no-op; on a service that is already stopped it fails harmlessly. Two Wine
+# no-op. On a service that is already stopped it fails harmlessly. Two Wine
 # launches instead of three: the query that used to decide whether to stop
 # is the one helper that hung for 53 minutes, and this path only runs once
-# the process table has already said the service is gone. Output goes
-# nowhere: the result is checked by bzserv_running afterwards, and the
-# service's own log has the detail.
+# the process table has already said the service is gone. Output is
+# discarded. bzserv_running checks the result afterwards, and the service
+# log has the detail.
 bzserv_start() {
     wine_bounded 60 net stop bzserv >/dev/null
     sleep 3
@@ -355,9 +355,9 @@ if [ -f "${WINEPREFIX}drive_c/Program Files/Backblaze/bzbui.exe" ]; then
     # check below. Installed on every start that finds a different version,
     # downwards included: 10.0.3.1075 loses its four-hour lock under Wine, and
     # the way back is 10.0.1.1069 over it. Putting it after the DISABLE check
-    # made the pin silently inert for everyone who had followed the advice to
-    # disable updates, which is exactly who needed it. Direction does not matter to fetch_and_install: bzdoinstall.exe never
-    # copies the program files (the MSI does, on Windows), the cp above it does,
+    # made the pin inert for everyone who had followed the advice to disable
+    # updates, and those were the users who needed it. Direction does not
+    # matter to fetch_and_install: bzdoinstall.exe never copies the program files (the MSI does, on Windows), the cp above it does,
     # and cp has no opinion about versions.
     if [ -n "${BACKBLAZE_VERSION:-}" ]; then
         local_version=$(cat "$local_version_file" 2>/dev/null)

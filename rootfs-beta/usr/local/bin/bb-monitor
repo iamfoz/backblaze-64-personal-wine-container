@@ -18,11 +18,11 @@ import curses, os, sys, threading, time, unicodedata
 from collections import deque
 
 # ---- shared data layer ----------------------------------------------------
-# Everything that reads /proc, the cgroups and Backblaze's own files lives in
+# Everything that reads /proc, the cgroups and Backblaze's files lives in
 # bbdata, shared with bb-monitor-web. The two used to carry separate copies and
 # drifted: the web one gained overall progress, an ETA, files remaining and
 # round-trip time while this one kept the original narrower view. A feature
-# added to bbdata now shows up in both. This file owns curses and nothing else.
+# added to bbdata now shows up in both. This file handles only the curses display.
 sys.path.insert(0, "/usr/local/lib/bb-monitor")
 import bbconfig
 import bbdismiss
@@ -30,10 +30,10 @@ from bbdata import (BUILD_INFO, BUILD_LABEL, INT, eta_date, eta_str, gather,
                      human, rec_cols, uptime_str, _upload_host, _upload_rtt)
 
 # ---- what the client says about itself, via bzcli --------------------------
-# bbconfig.read() starts a Wine process when its own cache goes stale, which can
+# bbconfig.read() starts a Wine process when its cache goes stale, which can
 # take the better part of a minute. Calling it from draw() or the key loop would
 # freeze the whole screen for that long, so it is refreshed from a daemon thread
-# on a slow cycle instead; main() reads whatever bbconfig.cached() already has.
+# on a slow cycle instead, and main() reads whatever bbconfig.cached() already has.
 # The lock is acquired by the caller and released by the thread, so a refresh
 # still running when the next slow tick comes round is skipped rather than
 # piled on top of.
@@ -54,17 +54,17 @@ def maybe_refresh_bbconfig():
 
 
 # ---- themes -------------------------------------------------------------------
-# The web dashboard carries these as CSS variables; here they are colour numbers.
+# The web dashboard carries these as CSS variables, and here they are colour numbers.
 # Same names and the same intent, so a screenshot of either is recognisably the
 # same tool. Order matches the web's dropdown.
 #
 # Fields: bg, text, title, hi_bg, hi_fg, good, warn, bad, trough_g, trough_y, trough_r
 # Fields: bg, text, title, hi_bg, hi_fg, good, warn, bad, trough_g, trough_y, trough_r
-# Two palettes each. The 256-colour one is the real thing; the second is what the
-# theme becomes on a terminal that only has the basic eight, which still keeps
+# Two palettes each. The 256-colour one is the full palette. The second is what
+# the theme becomes on a terminal that only has the basic eight, which still keeps
 # Matrix green and Amber amber rather than collapsing everything into the same
 # blue. Some do converge down there, because eight colours will not carry
-# thirteen distinct looks, and the settings pane says so rather than pretending.
+# thirteen distinct looks, and the settings pane notes this.
 THEMES = [
     ("Blue (Classic)", (4, 7, 6, 7, 0, 2, 3, 1, 22, 58, 52),   (4, 7, 6, 7, 0, 2, 3, 1, 0, 0, 0)),
     ("Dark",           (0, 7, 4, 7, 0, 2, 3, 1, 22, 58, 52),   (0, 7, 4, 7, 0, 2, 3, 1, 0, 0, 0)),
@@ -83,8 +83,8 @@ THEMES = [
 
 def theme_names():
     # Every theme is offered on every terminal now. A low-colour terminal gets a
-    # reduced rendering rather than a shorter list, which is less confusing than
-    # options silently going missing.
+    # reduced rendering, not a shorter list, so no option disappears without
+    # explanation.
     return [n for n, _, _ in THEMES]
 
 # ---- identity (About tab) -----------------------------------------------------
@@ -130,7 +130,7 @@ def save_pref(key, value):
         pass
 
 # Which readings the status panel shows. The web dashboard offers the same
-# choice; each keeps its own, because one is a browser on a phone and the other
+# choice. Each keeps a separate selection, because one is a browser on a phone and the other
 # is a terminal, and they are rarely the same width.
 STAT_ITEMS = [
     ("Now", [("state", "State"), ("rate", "Upload rate"), ("threads", "Threads"),
@@ -153,7 +153,7 @@ STAT_PRESETS = {
     "Minimal": ["state", "rate", "backup", "inherit"],
     # "selection" earns a place here even though most of its siblings from
     # bbconfig do not: it is the reading that catches "No files are selected",
-    # a drive ticked in the client's own settings window that backs up nothing.
+    # a drive ticked in the client's settings window that backs up nothing.
     # "cluster" and "encrypted" are informational in the way "server" already
     # is, so they stay out of Normal for the same reason that does.
     "Normal": ["state", "rate", "threads", "rtt", "session", "scan", "inherit", "backup",
@@ -176,8 +176,8 @@ def apply_theme(scr, name):
     """Re-point the colour pairs. curses allows pairs to be redefined at runtime,
     so a theme change repaints on the next draw with no restart."""
     entry = next((t for t in THEMES if t[0] == name), THEMES[0])
-    # Pick the palette for what the terminal actually has, rather than picking the
-    # rich one and then flattening it, which is what made every theme look blue.
+    # Pick the palette for what the terminal has. Picking the rich one and then
+    # flattening it made every theme look blue.
     bg, text, title, hib, hif, good, warn, bad, tg, ty, tr = (
         entry[1] if curses.COLORS >= 256 else entry[2])
     if curses.COLORS < 16:
@@ -215,7 +215,7 @@ def spark(values, width):
     return "".join(out).rjust(width)
 
 # ---- compact count formatter ---------------------------------------------------
-# bbdata.human() does the same job for byte counts (KB..PB); this is the item-count
+# bbdata.human() does the same job for byte counts (KB..PB), and this is the item-count
 # equivalent for the composition chunk below, e.g. file tallies in the hundreds of
 # thousands. Kept separate rather than folded into human() because it has no unit
 # suffix to reason about, just a scale letter.
@@ -267,7 +267,7 @@ def draw_bar(scr,y,x,w,pct,pair):
 
 def draw(scr,d,st):
     global _backing_up_since
-    _backing_up_since=d.get("backing_up_since")   # for the About tab; see _about_lines()
+    _backing_up_since=d.get("backing_up_since")   # for the About tab, see _about_lines()
     h,w=scr.getmaxyx(); scr.erase()
     NORM=curses.color_pair(1); HI=curses.color_pair(2)|curses.A_BOLD
     DIMLBL=curses.color_pair(1)|curses.A_DIM
@@ -275,7 +275,7 @@ def draw(scr,d,st):
     GOOD=curses.color_pair(4)|curses.A_BOLD; WARN=curses.color_pair(3)|curses.A_BOLD; BAD=curses.color_pair(5)|curses.A_BOLD
     # Warnings ride in the title bar, where they cannot be scrolled past.
     warn=list(d.get("health") or [])
-    # bbconfig reads its own subset of client state (licence, safety freeze) by
+    # bbconfig reads a separate subset of client state (licence, safety freeze) by
     # a different route than bbdata, and the two overlap on "frozen": both would
     # otherwise say the same thing about the same freeze in the same title bar.
     seen_kinds={k for k,_ in warn}
@@ -283,8 +283,8 @@ def draw(scr,d,st):
         if kind not in seen_kinds:
             warn.append((kind,text)); seen_kinds.add(kind)
     # A warning somebody has dismissed on the Settings tab is off here too. The
-    # title bar is the one place on this screen that cannot be scrolled past,
-    # which is exactly why it must not carry a state that has been accepted.
+    # title bar cannot be scrolled past, so it must not carry a state that has
+    # been accepted.
     dismissed=bbdismiss.keys()
     warn=[(k,t) for k,t in warn if k not in dismissed]
     hdr="Backblaze 64 • Upload Monitor"
@@ -307,8 +307,8 @@ def draw(scr,d,st):
             for s,a in parts: aw(scr,y,cx,s,a); cx+=len(s)
         return {"w":wd,"draw":dr}
     def gauge(label,us,ts_,pct,high_is_good=False,note="",note2="",dp=0):
-        # Mem and Swap are bad when full; Backup is good when full. Same widget,
-        # opposite reading, so the direction has to be told rather than assumed.
+        # Mem and Swap are bad when full, and Backup is good when full. Same widget,
+        # opposite reading, so the direction has to be passed in.
         # note2 is drawn in NORM after the severity-coloured suffix, for text
         # that is not itself a reading of the gauge (e.g. an ETA calendar date)
         # and so should not borrow the good/warn/bad colouring of the percentage.
@@ -372,8 +372,8 @@ def draw(scr,d,st):
         eta_secs=b.get("eta_seconds"); ed=eta_date(eta_secs)
         # eta_trend compares today's moving-average estimate with yesterday's. A
         # smaller ETA (direction "improving") reads as "better", a larger one
-        # ("worsening") as "slower" -- said in words rather than colour, since
-        # note2 always draws in NORM (see gauge()) and has no severity of its own.
+        # ("worsening") as "slower". It is said in words, not colour, since
+        # note2 always draws in NORM (see gauge()) and has no severity colour.
         trend=d.get("eta_trend"); trend_txt=""
         if trend and ed and trend["direction"]!="steady":
             tsecs=abs(trend["delta_seconds"])
@@ -395,7 +395,7 @@ def draw(scr,d,st):
     # the footer already carries the key hints and the build label, and a 29
     # character hostname does not fit alongside both below about 120 columns. The
     # status grid wraps whole items to whatever width there is, so it shows up on
-    # an 80 column terminal instead of silently vanishing.
+    # an 80 column terminal instead of being dropped.
     sc=d.get("scan")
     if sc:
         add("NOW","scan",txt([("Scanning: ",NORM),
@@ -416,7 +416,7 @@ def draw(scr,d,st):
     if hist and len(hist)>=2:
         # Reuses spark() rather than a new bar-builder: it already scales values
         # to the same " ▁▂▃▄▅▆▇█" glyph set and left-pads to a constant width,
-        # which is exactly what a status chunk needs. The count alongside it is
+        # which a status chunk needs. The count alongside it is
         # padded to a fixed field for the same reason spark() pads its bar: a
         # day's tally gaining a digit must not reflow every chunk to its right,
         # the way an earlier, variable-width sparkline once did (see spark()).
@@ -442,8 +442,8 @@ def draw(scr,d,st):
     if pod: add("SYSTEM","server",txt([("Server: ",NORM),(pod,NORM)]))
     # The datacentre cluster the account is assigned to, from bbconfig. Server
     # above is inferred from which socket a -threadpush process owns, so it
-    # goes blank whenever nothing happens to be uploading at that instant;
-    # cluster comes straight from the client's own configuration and is there
+    # goes blank whenever nothing happens to be uploading at that instant.
+    # The cluster comes straight from the client's configuration and is there
     # whether or not a transfer is running, so it is preferred when bbconfig
     # has an answer and the inferred host is kept only as a fallback.
     cfg=bbconfig.cached() if bbconfig.available() else None
@@ -451,7 +451,7 @@ def draw(scr,d,st):
     if cluster: add("NOW","cluster",txt([("Cluster: ",NORM),(cluster,NORM)]))
     ih=d.get("inherit")
     if ih:
-        # Another identity's backup state coming in; nothing is backed up
+        # Another identity's backup state coming in. Nothing is backed up
         # until it is done, so it belongs on the first line rather than in a
         # panel someone may have trimmed.
         add("NOW","inherit",txt([("Inheriting: ",NORM),
@@ -466,14 +466,14 @@ def draw(scr,d,st):
         for drive in sorted(sel):
             label=drive.rstrip("\\")
             # A drive whose root filter reads "none" shows ticked in the
-            # client's own settings window and backs up nothing: the state
-            # behind the user-reported fault "No files are selected". Worth
+            # client's settings window and backs up nothing: the state
+            # behind the user-reported fault "No files are selected". It gets
             # the BAD colour, since nothing else on this screen would catch it.
             #
             # Two drives are exempt. C: is the Wine prefix and Z: is Wine's
             # mapping of the container root, so both are the container rather
-            # than the user's data and neither should ever be backed up: they
-            # are stated in NORM, not shouted about in BAD. So is a drive whose
+            # than the user's data and neither should ever be backed up, so they
+            # are stated in NORM, not BAD. So is a drive whose
             # warning somebody has dismissed, which is the same judgement made
             # by hand rather than worked out from the prefix.
             if sel[drive].get("backed_up"): parts.append((label+" ",GOOD))
@@ -508,7 +508,7 @@ def draw(scr,d,st):
     if st.get("cells"):
         # One thread per part means a dozen threads on one film produce a dozen
         # identical rows, since the compact row counts parts of the file rather
-        # than the thread's own progress. One row per file, and none at all for
+        # than the thread's progress. One row per file, and none at all for
         # the file the chunk strip is already showing in full.
         cmf=(d.get("chunkmap") or {}).get("file")
         seen=set(); keep=[]
@@ -546,10 +546,10 @@ def draw(scr,d,st):
         shown=False
         comp=d.get("completion")
         if comp and yy<rec_top-1:
-            # The moment a first backup catches up is worth a line of its own for
-            # the week bbdata keeps celebrating it: it answers "is it actually
-            # done yet", the question people watching a first backup keep coming
-            # back to, in a way "day 6 • 99.8%" up in Status does not quite land.
+            # The moment a first backup catches up gets a separate line for the
+            # week bbdata keeps celebrating it. It answers "is it done yet", the
+            # question people watching a first backup keep asking, more directly
+            # than "day 6 • 99.8%" up in Status.
             aw(scr,yy,2,wclip("First backup complete: %s in %d days"
                               %(human(comp["total_bytes"]),comp["days"]),iw),GOOD)
             yy+=1; shown=True
@@ -589,7 +589,7 @@ def draw(scr,d,st):
     if rec_h>=4:
         aw(scr,rec_top+1,2,"%-8s  %-6s  %-9s  %-12s    %s"%("Time","Thread","Size","Rate","File"),NORM|curses.A_BOLD)
         yy=rec_top+2; rows=d["recent"][-(rec_h-3):]
-        if not rows: aw(scr,yy,2,"(watching for completions…)",NORM)
+        if not rows: aw(scr,yy,2,"(watching for completions...)",NORM)
         for r in rows:
             th,size,rate=rec_cols(r, wide=False)
             aw(scr,yy,2,wclip("%-8s  %-6s  %-9s  %-12s    %s"%(r["t"],th,size,rate,r["name"]),w-4),NORM); yy+=1
@@ -601,9 +601,9 @@ def draw(scr,d,st):
     # produced it. Dropped rather than overlapped when the terminal is too narrow.
     if BUILD_LABEL and w >= len(ft)+len(BUILD_LABEL)+5:
         aw(scr,foot,w-len(BUILD_LABEL)-2,BUILD_LABEL,HI)
-    # A reading that failed leaves the screen that was already up and says so
-    # here, over the key hints, since a dashboard nobody can tell is stale is
-    # worse than one that has lost a row of hints for a moment.
+    # A reading that failed leaves the screen that was already up and reports
+    # the failure here, over the key hints. A stale dashboard has to look
+    # stale, and losing the hints for a moment costs little.
     if st.get("err"):
         aw(scr,foot,0," "*w,WARN)
         aw(scr,foot,1,wclip("stale reading • %s"%st["err"],w-2),WARN)
@@ -620,7 +620,7 @@ def draw(scr,d,st):
 #   Esc      close, or back out of an open chooser
 # The About pane is rendered from static constants and BUILD_INFO, both fixed at
 # import time, but "backing up since" comes from bbdata.gather() each refresh.
-# draw_overlay(scr, st) -- and so _about_lines() -- never sees d, and the call
+# draw_overlay(scr, st), and so _about_lines(), never sees d, and the call
 # chain (main -> draw -> draw_overlay -> _about_lines) has three hops, so
 # threading a parameter through all of them for one field would outweigh the
 # field. Instead draw() drops the latest value here each refresh, the same
@@ -646,7 +646,7 @@ def _about_lines():
     # image with no bzcli, and on a cold start before the first read has
     # happened, so this whole block is skipped rather than showing blank or
     # "None" rows. Headed "Backblaze client" rather than "Licence" so it is not
-    # mistaken for this project's own AGPL licence just below.
+    # mistaken for this project's AGPL licence just below.
     cfg = bbconfig.cached() if bbconfig.available() else None
     if cfg:
         out.append(("", False)); out.append(("Backblaze client", True))
@@ -677,8 +677,8 @@ def draw_overlay(scr, st):
 
     names = theme_names()
     bh = min(max(12, len(names) + 8), h - 2)
-    # Width follows the content rather than a fixed 62. The project URL is 62
-    # characters on its own, so a fixed box clipped the last six and left a link
+    # Width follows the content rather than a fixed 62. The project URL alone is
+    # 62 characters, so a fixed box clipped the last six and left a link
     # that looked complete but 404s when clicked.
     widest = max([len(t) for t, _ in _about_lines()] + [len(n) for n in names] + [40])
     bw = min(max(62, widest + 6), w - 2)
@@ -708,7 +708,7 @@ def draw_overlay(scr, st):
            HI if (sel == 1 and not picking) else NORM)
         if picking:
             # Scroll rather than truncate. On a short terminal the list will not
-            # fit, and silently dropping the last few themes is how Cyberpunk Neon
+            # fit, and dropping the last few themes without notice is how Cyberpunk Neon
             # became unreachable.
             avail = max(1, (by + bh - 2) - (top + 2))
             sel = ui["picker"]
@@ -724,7 +724,7 @@ def draw_overlay(scr, st):
         else:
             aw(scr, top + 3, bx + 2,
                wclip("Applies immediately and is remembered in %s" % PREF_FILE, bw - 4), DIM)
-            # Say what the terminal can actually do. Without this, a theme that
+            # Say what the terminal can do. Without this, a theme that
             # renders almost identically to another looks like a broken setting
             # rather than a limit of the terminal.
             if curses.COLORS < 256:
@@ -733,7 +733,7 @@ def draw_overlay(scr, st):
                     % curses.COLORS, bw - 4), DIM)
                 # Point at the route that already works rather than asking for a
                 # docker exec line to be reconstructed: `docker exec -t` sets
-                # TERM=xterm regardless of the client, while Unraid's own console
+                # TERM=xterm regardless of the client, while Unraid's console
                 # popup arrives with 256 colours already.
                 aw(scr, top + 5, bx + 2, wclip(
                     "Unraid's container Console gives full colour, or pass "
@@ -899,7 +899,7 @@ def main(scr):
             last=time.time()
             # An unexpected shape in one log line or one XML must not take the
             # whole dashboard down with a curses traceback. The web monitor
-            # already recovers on its next poll; this keeps the last good screen,
+            # already recovers on its next poll. This keeps the last good screen,
             # names the fault in the footer and tries again on the next tick.
             try:
                 nd=gather(prev); prev=nd["_tx"]; d=nd
@@ -920,7 +920,7 @@ def main(scr):
             maybe_refresh_bbconfig()
 
 def _print_version():
-    """Which image build this came from - the identifier worth having in a bug report."""
+    """Which image build this came from, for a bug report."""
     print("bb-monitor (Backblaze 64 container)")
     try:
         with open("/etc/bb-build") as fh: sys.stdout.write(fh.read())

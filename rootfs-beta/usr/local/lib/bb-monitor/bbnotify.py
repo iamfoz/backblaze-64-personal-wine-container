@@ -3,7 +3,7 @@
 #
 # Everything here is detected already and shown on a page nobody has open. A
 # safety freeze in one support thread was found by accident days later. The fix
-# is not a louder page; it is a message to somewhere the user already looks.
+# is a message to somewhere the user already looks.
 #
 # Two rules. An event fires once when its condition becomes true and once when
 # it clears, never on every poll, and the conditions are remembered on disk so a
@@ -17,7 +17,7 @@
 # which Home Assistant, Discord, Slack and anything scripted can take.
 #
 # Delivery is best effort: three attempts, then the failure is logged. There is
-# no queue on disk. A stall notification an hour late is still worth having; one
+# no queue on disk. A stall notification an hour late is still useful, and one
 # a week late is not.
 
 import base64, ipaddress, json, os, secrets, socket, subprocess, sys, tempfile, threading, time
@@ -28,7 +28,7 @@ import bbapi
 CONF = bbapi.DIR + "/notify.json"
 STATE = bbapi.DIR + "/notify-state.json"
 
-# Each service wants its own shape. ntfy takes the text as the body with the title
+# Each service wants a different shape. ntfy takes the text as the body with the title
 # in a header; the generic webhook gets everything as JSON; the named services get
 # the fields they document; "custom" renders a JSON template the user writes, with
 # placeholders, for anything not listed. A Pushbullet user found the gap: it needs
@@ -55,13 +55,13 @@ def blocked_address(url):
     """The address this URL resolves to that the container will not send to, or
     None.
 
-    An endpoint is the one place a person can make the container issue an
+    An endpoint is the only place a person can make the container issue an
     outbound request with a body and headers they choose, so the addresses that
     mean "me" are closed: loopback, the link-local range that carries a cloud
     host's metadata service, and the unspecified address. Private LAN ranges
     stay open, because ntfy and Gotify are usually run on the LAN.
 
-    A name that will not resolve is not a refusal. The send fails on its own,
+    A name that will not resolve is not a refusal. The send fails anyway,
     and refusing at save time would stop a person configuring an endpoint while
     the network is down.
     """
@@ -90,7 +90,7 @@ def blocked_address(url):
 
 def render(template, values):
     """Fill {name} placeholders inside a JSON template. Strings are escaped as
-    JSON string content, so a title with a quote in it stays valid JSON; numbers
+    JSON string content, so a title with a quote in it stays valid JSON. Numbers
     go in bare, so {priority} can sit outside quotes."""
     out = template
     for k in PLACEHOLDERS:
@@ -111,7 +111,7 @@ EVENTS = (
     ("skipped",       "Files skipped",
      "The client has given up on files. Fires when the count reaches the threshold.", True),
     ("stale",         "No completed backup",
-     "No pass has completed within the limit set in the client's own settings.", True),
+     "No pass has completed within the limit set in the client's settings.", True),
     ("lostlock",      "Passes losing the four-hour lock",
      "Every backup pass aborts at the transmit step. Seen with client 10.0.3.1075 under Wine.", True),
     ("scanstop",      "Scan stopped at a directory",
@@ -144,7 +144,7 @@ _lock = threading.Lock()
 _health = {"verdict": None, "at": 0}
 
 # How each endpoint's last delivery went. A notification failing at three in the
-# morning went to the container log, where nobody looks; the Pushbullet endpoint
+# morning went to the container log, where nobody looks, and the Pushbullet endpoint
 # that could not work was only found by pressing Test. Kept in memory rather than
 # on disk: it describes this run of the service, and a stale verdict from before
 # a restart would be worse than none.
@@ -194,7 +194,7 @@ def _write(path, obj):
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(obj, fh, indent=2, sort_keys=True)
-        os.chmod(tmp, 0o600)          # tokens live here in the clear; owner only
+        os.chmod(tmp, 0o600)          # tokens live here in the clear, so owner only
         bbapi._own_like_config(tmp)
         os.replace(tmp, path)
     except BaseException:
@@ -276,7 +276,7 @@ def public(conf):
 
 # The same state as the file holds, kept here as well. observe() rebuilds its
 # baseline from disk on every poll, so a store that cannot be written at all
-# used to mean prev was always None and no event ever fired again, silently.
+# used to mean prev was always None and no event ever fired again, with nothing logged.
 # Held in memory the failure degrades to "forgotten across a restart".
 _state_mem = {}
 _state_warned = False
@@ -305,12 +305,12 @@ def _state_save(st):
         # 43,000 a day in the container log.
         if not _state_warned:
             _state_warned = True
-            sys.stderr.write("bb-monitor-web: notification state cannot be saved (%s); "
-                             "events still fire but are forgotten on restart\n" % exc)
+            sys.stderr.write("bb-monitor-web: notification state cannot be saved (%s). "
+                             "Events still fire but are forgotten on restart\n" % exc)
 
 
 def health_verdict():
-    """bb-health's first line, refreshed at most once a minute, in its own thread
+    """bb-health's first line, refreshed at most once a minute, in a separate thread
     so the poll loop never waits on a shell script."""
     now = time.time()
     with _lock:
@@ -358,11 +358,11 @@ def conditions(api, health=None):
 
 
 def observe(api, conf=None, deliver=None, now=None):
-    """Compare the payload with what was last seen; fire what changed.
+    """Compare the payload with what was last seen and fire what changed.
 
     Returns the list of events fired, for tests and for the log. The first
     observation records a baseline and fires nothing, except a build change
-    against a build recorded before the restart: that one is the point.
+    against a build recorded before the restart.
     """
     if not api or not api.get("ok"):
         return []
@@ -400,8 +400,8 @@ def observe(api, conf=None, deliver=None, now=None):
                           "Now running build %s (was %s)." % (cur["build"], prev["build"])))
         # Same shape as the build change: a version recorded before the restart
         # against the one running now. The reading comes from bzcli, which is
-        # not asked until the client is up, so an absent version is unknown
-        # rather than a change.
+        # not asked until the client is up, so an absent version is treated
+        # as unknown.
         if conf["events"].get("client") and prev.get("client_version") and cur["client_version"] \
                 and prev.get("client_version") != cur["client_version"]:
             fired.append(("client", "Backblaze client updated",
@@ -429,7 +429,7 @@ def observe(api, conf=None, deliver=None, now=None):
 def _message(key, cur, api):
     if key == "frozen":
         return ("Backblaze has safety-frozen this backup. Nothing is deleted. Open the "
-                "Status tab; it says what to do and what not to do.")
+                "Status tab for what to do and what not to do.")
     if key == "skipped":
         sk = api.get("skipped_files") or {}
         reason = (sk.get("top_reason") or "").replace("_", " ").lower()
@@ -463,7 +463,7 @@ def _cleared(key, cur):
 # ---- delivery --------------------------------------------------------------------
 
 def fire(conf, key, title, message, api=None):
-    """Send to every endpoint, each in its own thread, and log the outcome."""
+    """Send to every endpoint, each in a separate thread, and log the outcome."""
     payload = {"container": socket.gethostname(), "build": (api or {}).get("build"),
                "event": key, "title": title, "message": message,
                "time": int(time.time()),
@@ -494,9 +494,9 @@ def _deliver(ep, key, title, message, payload):
 def _quiet_detail(ep, reason, said):
     """What a delivery record says, with the reason kept to the container log.
 
-    The record is read back from the page, so it is the one place the remote's
+    The record is read back from the page, so it is where the remote's
     answer could be read by whoever can reach /manage/. A person debugging their
-    own endpoint gets the full reason from the log, where it was always going.
+    endpoint gets the full reason from the log, where it was always going.
     """
     sys.stderr.write("bb-monitor-web: notify %s (%s): %s\n"
                      % (ep.get("label"), ep.get("kind"), reason))
@@ -527,7 +527,7 @@ def send_once(ep, key, title, message, payload):
         else:
             headers["Content-Type"] = "application/json"
             if kind == "gotify" and ep.get("token"):
-                headers["X-Gotify-Key"] = ep["token"]     # Gotify's own header
+                headers["X-Gotify-Key"] = ep["token"]     # Gotify-specific header
             template = TEMPLATES.get(kind) or (ep.get("template") if kind == "custom" else None)
             if template:
                 values = dict(payload, title=title, message=message, priority=priority)

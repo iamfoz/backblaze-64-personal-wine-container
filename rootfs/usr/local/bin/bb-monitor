@@ -57,7 +57,7 @@ def _secs(t):
     hh,mm,ss=t.split(":"); return int(hh)*3600+int(mm)*60+int(ss)
 
 def _local_hms(line,fallback):
-    """Backblaze stamps its own log lines in UTC whatever the container's TZ is.
+    """Backblaze stamps its log lines in UTC whatever the container's TZ is.
     Returns (utc_hms, local_hms): callers keep the UTC value for span/duration
     arithmetic, which must stay self-consistent, and show the local one."""
     m=re.match(r'^(\d{4}-\d{2}-\d{2}) (\d\d:\d\d:\d\d)',line)
@@ -102,7 +102,7 @@ def wclip(s,width):
         out.append(ch); cw+=w
     return "".join(out)
 
-# ---- data sources (all direct file reads; no subprocesses) ----------------------
+# ---- data sources (all direct file reads, no subprocesses) ----------------------
 def scan_procs():
     """threadpush count, in-flight XML names, and process presence from /proc."""
     thr=0; xmls=set(); has_fl=False; has_bt=False
@@ -225,13 +225,13 @@ def gather(prev):
         except ValueError: el=0
         pct=min(99.0,max(0.0,el*ptbps/part*100)) if part>0 else 0
         # remember the newest completion line for this slot NOW, while the push is
-        # in flight — a completion later is corroborated by a NEWER line appearing
+        # in flight. A completion later is corroborated by a NEWER line appearing
         # (clock-free: immune to log-vs-XML timezone/clock skew).
         files.append((name,part,fsize,pct)); cur[x]=(name,fsize,part,thr,newest_line(thr))
     o["files"]=files
 
     # completion = a push tracked last cycle whose XML is gone (or now holds a new
-    # file), CORROBORATED by a fresh log line for that thread — so a killed push
+    # file), CORROBORATED by a fresh log line for that thread, so a killed push
     # or a stale slot never fabricates a "Recently Completed" row.
     for xb,(nm,fs,part,thr,seen) in _inflight.items():
         if xb in cur and cur[xb][0]==nm: continue
@@ -356,7 +356,7 @@ def draw(scr,d,st):
     if rec_h>=4:
         aw(scr,rec_top+1,2,"%-8s  %-6s  %-9s  %-12s    %s"%("Time","Thread","Size","Rate","File"),NORM|curses.A_BOLD)
         yy=rec_top+2; rows=d["recent"][-(rec_h-3):]
-        if not rows: aw(scr,yy,2,"(watching for completions…)",NORM)
+        if not rows: aw(scr,yy,2,"(watching for completions...)",NORM)
         for r in rows:
             th,size,rate=rec_cols(r)
             aw(scr,yy,2,wclip("%-8s  %-6s  %-9s  %-12s    %s"%(r["t"],th,size,rate,r["name"]),w-4),NORM); yy+=1
@@ -398,7 +398,7 @@ def main(scr):
             d=gather(prev); prev=d["_tx"]; last=time.time(); draw(scr,d,st)
 
 def _print_version():
-    """Which image build this came from - the identifier worth having in a bug report."""
+    """Which image build this came from, for a bug report."""
     print("bb-monitor (Backblaze 64 container)")
     try:
         with open("/etc/bb-build") as fh: sys.stdout.write(fh.read())

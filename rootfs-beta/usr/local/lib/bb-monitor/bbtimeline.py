@@ -1,12 +1,11 @@
 # The last 24 hours, as a list a person can read: every change of state, and
 # after each spell of uploading, one line saying what it amounted to.
 #
-# The state changes come free from the poll loop. The summary line is the part
-# that needs a little care: the client's state flickers between Transmitting and
+# The state changes come free from the poll loop. The summary line needs more
+# care. The client's state flickers between Transmitting and
 # its neighbours while it works through small files, so a spell of uploading is
-# not "state == Transmitting" but "Transmitting, allowing gaps of up to a
-# minute". Splitting on every flicker would give a log of one-minute spells that
-# says nothing; one line per real spell says how the backup is doing.
+# defined as "Transmitting, allowing gaps of up to a minute". Splitting on every flicker would give a log of one-minute spells that
+# says nothing. One line per spell shows how the backup is doing.
 #
 # Files and bytes are counted from the completed transfers the monitor already
 # tracks. Rows present when the spell starts belong to an earlier one and are
@@ -24,7 +23,7 @@ import time
 KEEP = 24 * 3600
 GAP = 60             # seconds without Transmitting before a spell is over
 REPORT_EVERY = 3600  # seconds between "so far" lines inside a spell
-# Both spellings, matching bbdata's own list: the state is whatever the client
+# Both spellings, matching bbdata's list: the state is whatever the client
 # wrote in cur_state, capitalised, and a client reporting "uploading" would
 # otherwise leave every spell unopened and the panel with no summary line.
 _TX = ("Transmitting", "Uploading")

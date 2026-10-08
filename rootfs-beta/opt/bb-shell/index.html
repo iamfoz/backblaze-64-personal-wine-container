@@ -4,15 +4,15 @@
 <title>Backblaze 64</title>
 <link rel="icon" href="/favicon.ico">
 <style>
-  /* Deliberately plain and thin. The desktop and the monitor each have their own
-     look, and the monitor has thirteen themes; a shell with opinions of its own
-     would clash with whichever one is picked. */
+  /* Plain and thin. The desktop and the monitor each have their own look, and
+     the monitor has thirteen themes. A styled shell would clash with whichever
+     one is picked. */
   :root{ --bar:#0e2148; --bar-fg:#d7e6ff; --accent:#39c5ff; --edge:#1c3a63; }
   *{box-sizing:border-box;}
   html,body{height:100%;margin:0;background:#0a1830;}
   body{display:flex;flex-direction:column;
        font-family:"Cascadia Mono","Consolas","Menlo",monospace;font-size:13px;}
-  /* The tab row scrolls sideways when it does not fit, rather than clipping. A
+  /* The tab row scrolls sideways when it does not fit. A
      finger swipes it natively; a mouse drags it (below); and the fades at either
      edge, with a chevron, say that there is more. Without them a phone showed
      five tabs and no sign of the sixth. */
@@ -51,7 +51,7 @@
   #desk-notice button{appearance:none;border:1px solid #ffb3b3;background:transparent;color:#ffd7d7;
     padding:4px 10px;border-radius:4px;font:inherit;cursor:pointer;}
   /* On a phone the tabs should own the width and be comfortably tappable.
-     44px is the usual floor for a finger target; the default padding gives
+     44px is the usual floor for a finger target. The default padding gives
      about 30. */
   @media (max-width:560px){
     #brand{display:none;}
@@ -72,7 +72,7 @@
 </div>
 </div>
 
-<!-- /desktop/ rather than /index.html on purpose. noVNC appends "websockify" to
+<!-- /desktop/ rather than /index.html. noVNC appends "websockify" to
      location.pathname to build its websocket URL, so serving it from a file path
      produces /index.htmlwebsockify and the viewer never connects. A directory
      path gives /desktop/websockify, which nginx routes correctly.
@@ -86,31 +86,31 @@
         allow="fullscreen; clipboard-read; clipboard-write"
         title="Wine desktop"></iframe>
 
-<!-- The monitor is loaded lazily: its page polls every two seconds, so there is
+<!-- The monitor is loaded lazily. Its page polls every two seconds, so there is
      no reason to start that before anyone has asked to see it. -->
 <iframe id="pane-monitor" class="pane" role="tabpanel" hidden
         title="Upload monitor"></iframe>
 
 <!-- Everything the client says needs attention, and the files it has given up
-     on. Also lazy, and also served through /monitor/ so it inherits the login:
-     this pane lists paths on the user's own share, which is the last thing that
-     should be readable without one. -->
+     on. Also lazy, and also served through /monitor/ so it inherits the login.
+     This pane lists paths on the user's share, which must not be readable
+     without one. -->
 <iframe id="pane-status" class="pane" role="tabpanel" hidden
         title="Status"></iframe>
 
 <!-- The command-line tools, run from the page. Lazy, and behind the login for
-     the same reason: bb-doctor prints directory paths, and a repair button has
-     no business being reachable without one. -->
+     the same reason. bb-doctor prints directory paths, and a repair button must
+     not be reachable without one. -->
 <iframe id="pane-tools" class="pane" role="tabpanel" hidden
         title="Tools"></iframe>
 
 <!-- Key management. Served through /monitor/ so it inherits the same login as
-     the dashboard: creating a key must never sit on the exempted /api/v1/ path. -->
+     the dashboard. Creating a key must never sit on the exempted /api/v1/ path. -->
 <iframe id="pane-api" class="pane" role="tabpanel" hidden
         title="API keys"></iframe>
 
-<!-- Notifications and quiet hours. Configuration, so its own tab rather than a
-     corner of the API page; behind the login because tokens are typed here. -->
+<!-- Notifications and quiet hours. Configuration, so a tab separate from the
+     API page. Behind the login because tokens are typed here. -->
 <iframe id="pane-settings" class="pane" role="tabpanel" hidden
         title="Settings"></iframe>
 
@@ -148,8 +148,8 @@
       if(on && t.scrollIntoView) try { t.scrollIntoView({inline:'nearest', block:'nearest'}); } catch(e){}
     });
     try { localStorage.setItem('bbShellTab', name); } catch(e){}
-    // Keep the address bar honest without reloading, so a refresh or a shared
-    // link lands on the same tab.
+    // Keep the address bar matching the tab without reloading, so a refresh or
+    // a shared link lands on the same tab.
     try { history.replaceState(null, '', name === 'desktop' ? '/' : '/?tab=' + name); } catch(e){}
   }
 
@@ -207,9 +207,9 @@
     if(e.origin !== location.origin) return;
     var m = e.data;
     if(m && m.bb64 === 'tab' && m.n >= 1 && m.n <= 6) show(ORDER[m.n - 1]);
-    // The Settings tab asks for the Monitor's own settings. Show the Monitor,
-    // then tell its frame; on the first visit the frame is still loading, so
-    // the message waits for it rather than arriving at an empty document.
+    // The Settings tab asks for the Monitor's settings. Show the Monitor, then
+    // tell its frame. On the first visit the frame is still loading, so the
+    // message waits for its load event.
     if(m && m.bb64 === 'monitor-settings'){
       var wasLoaded = loaded.monitor;
       show('monitor');
@@ -219,9 +219,9 @@
     }
   });
 
-  // The tab title carries the state, because the browser tab is the one part of
-  // the page visible while the user is doing something else. Polled lightly from
-  // the small status feed rather than the Monitor's full one.
+  // The tab title carries the state, because the browser tab stays visible
+  // while the user is doing something else. Polled lightly from the small
+  // status feed instead of the Monitor's full one.
   function title(){
     fetch('/monitor/manage/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
       var mark = '';
@@ -233,10 +233,10 @@
   }
   title(); setInterval(title, 20000);
 
-  // The desktop pane looks after itself. noVNC's own status text is read from
-  // the frame (same origin) and, when it says the connection is gone, a notice
-  // with a Reconnect button appears. Anything unexpected in that document means
-  // nothing happens, which is the right failure.
+  // The desktop pane looks after itself. noVNC's status text is read from the
+  // frame (same origin) and, when it reports the connection gone, a notice with
+  // a Reconnect button appears. Anything unexpected in that document leaves the
+  // notice hidden.
   var notice = document.getElementById('desk-notice');
   function checkDesktop(){
     try {
@@ -247,7 +247,7 @@
   }
   document.getElementById('desk-reconnect').addEventListener('click', function(){
     notice.hidden = true;
-    panes.desktop.src = '/desktop/';    // the one time re-pointing it is right: the session is already gone
+    panes.desktop.src = '/desktop/';    // re-pointed only here, because the session is already gone
   });
   setInterval(checkDesktop, 20000);
 })();

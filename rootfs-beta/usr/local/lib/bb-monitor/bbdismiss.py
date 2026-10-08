@@ -1,8 +1,8 @@
 # Dismissed warnings: the ones the person has looked at and accepted.
 #
-# Every warning the monitor raises is drawn from the client's own records, so a
-# state that is genuinely fine on this container still raises one for as long as
-# it lasts. C: set to back up nothing is the case that prompted this; a licence
+# Every warning the monitor raises is drawn from the client's records, so a
+# state that is fine on this container still raises one for as long as
+# it lasts. C: set to back up nothing is the case that prompted this. A licence
 # the owner knows about is another. A warning nobody can clear is a warning
 # everybody learns to read past, which costs the next real one its audience.
 #
@@ -17,7 +17,7 @@
 #
 # Hidden kinds are the other thing the store holds: a preference, set on the
 # Settings tab, that a kind of warning is never shown. A dismissal is one
-# occurrence accepted; hiding is the kind switched off. Reset forgets the
+# occurrence accepted. Hiding switches the kind off. Reset forgets the
 # dismissals and keeps the preference, which is why the two live in one file
 # but are read out separately.
 
@@ -95,7 +95,7 @@ def keys():
     """Every key to keep off the Status tab, the Monitor, the terminal monitor
     and the alert gauge: the dismissed keys and the hidden kinds together.
     A hidden kind is in here as its bare kind, so a consumer that checks a
-    kind sees it; one that checks a subject key, such as a drive, must also
+    kind sees it. One that checks a subject key, such as a drive, must also
     ask hidden()."""
     return _cached()[0]
 
@@ -132,7 +132,7 @@ def listing():
 def dismiss(key, text=""):
     """Record one dismissal. Raises ValueError with a message for the page.
 
-    Written the way bbquiet.save() writes: a temporary file in the store's own
+    Written the way bbquiet.save() writes: a temporary file in the store's
     directory, tightened and owned before it is put in place, under the same
     lock bb-apikey takes, so a dismissal arriving while a key is being minted
     cannot write back a store read before that key existed.
@@ -141,8 +141,8 @@ def dismiss(key, text=""):
     if not KEY.match(key):
         raise ValueError("not a warning this container will dismiss")
     # Bounded and on one line, for the same reason a key label is: it is read
-    # back into the Settings tab and it is the client's own wording, which is
-    # the one string here that this container did not write.
+    # back into the Settings tab and it is the client's wording, the only
+    # string here that this container did not write.
     text = (text or "").replace("\r", " ").replace("\n", " ").strip()[:200]
     with bbapi._mutate():
         rec = load()
@@ -152,10 +152,9 @@ def dismiss(key, text=""):
 
 
 def reset():
-    """Forget every dismissal and keep the hidden kinds: a reset is "show me
-    what I accepted again", not "undo my settings". A store that was never
-    written is already reset, so a missing file is the answer rather than an
-    error."""
+    """Forget every dismissal and keep the hidden kinds, so a reset brings
+    back accepted warnings without undoing settings. A store that was never
+    written is already reset, so a missing file is not an error."""
     with bbapi._mutate():
         rec = load()
         if rec["hidden"]:

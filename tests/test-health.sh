@@ -3,9 +3,8 @@
 #
 # The property under test is fail-SAFE detection: bb-health's HANG verdict triggers
 # a recovery that kills live upload threads, so a read error, a rotated log, or a
-# malformed threshold must never read as "stalled". A false alarm here does not
-# crash anything - it kills a healthy backup mid-pass, which is exactly the damage
-# the tool exists to prevent.
+# malformed threshold must never read as "stalled". A false alarm here kills a
+# healthy backup mid-pass, the damage the tool exists to prevent.
 #
 # Run:  bash tests/test-health.sh
 set -u
@@ -47,13 +46,13 @@ mkproc(){ rm -rf "$FX/proc"; mkdir -p "$FX/proc"; echo "$UP.00 $UP.00" > "$FX/pr
 # the 20th field after the comm). mkproc assigns pids from 100 in argument
 # order. Without a stat file the process age is unreadable, and bb-health must
 # treat it as old enough to own the lock (fail safe).
-# The third argument is the parent pid; a live parent when omitted.
+# The third argument is the parent pid, a live parent when omitted.
 procage(){ printf '%s (bztransmit.exe) S %s 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 %s 0\n' \
   "$1" "${3:-99}" $(( (UP - $2) * 100 )) > "$FX/proc/$1/stat"; }
 run(){ env "$@" "$FX/bb-health" 2>/dev/null | awk '{print $1}'; }
 old(){ touch -t 202601010000 "$1"; }
 # Set a file's mtime to AGE_S seconds ago (touch -t cannot express a relative
-# age portably; perl is already a dependency of the stat shim above).
+# age portably, and perl is already a dependency of the stat shim above).
 agef(){ perl -e 'my $t=time-$ARGV[1]; utime $t,$t,$ARGV[0]' "$1" "$2"; }
 spam(){ for i in $(seq 1 "$1"); do echo "2026-07-05 10:00:0$i Failed to grab fourHourLock"; done; }
 

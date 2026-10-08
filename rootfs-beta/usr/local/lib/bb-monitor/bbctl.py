@@ -1,17 +1,17 @@
-# Backup control, through Backblaze's own bzcli rather than anything invented here.
+# Backup control, through Backblaze's bzcli.
 #
-# The rule this module exists to enforce: killing bztransmit mid-upload is what
+# This module exists to enforce one rule. Killing bztransmit mid-upload
 # leaves the stale four-hour lock behind, and the relaunch loop after it is the
 # wedge bb-health detects and bb-watchdog clears. An API that stopped a backup by
 # killing the process would manufacture that fault on demand, over HTTP. bzcli
-# asks bztransmit to pause instead, which is the client's own mechanism.
+# asks bztransmit to pause instead, which is the client's built-in mechanism.
 #
 # bzcli's "action" group also carries --set-pek, --clear-pek and --change-pek.
 # Clearing the private encryption key on someone's backup is unrecoverable:
 # Backblaze cannot reset it and cannot retrieve the data without it. Those verbs
 # do require account authentication that this container does not hold, but that
-# is Backblaze's guard and not ours. Hence the whitelist below: the HTTP layer
-# maps a path segment to a key in ACTIONS, and nothing from a request ever
+# is Backblaze's guard and not ours, so this module keeps the whitelist below.
+# The HTTP layer maps a path segment to a key in ACTIONS, and nothing from a request ever
 # reaches the argument list.
 
 import os, signal, subprocess
@@ -21,18 +21,18 @@ PREFIX = os.environ.get("WINEPREFIX", "/config/wine")
 
 # The complete set of things this container will ask the client to do. Neither
 # needs account authentication, which is why they are safe to expose and the PEK
-# verbs are not. Adding to this dict is a deliberate act; nothing here builds an
+# verbs are not. Adding to this dict is a deliberate act. Nothing here builds an
 # argument list from anything a caller sends.
 ACTIONS = {
     "backup-now": (["action", "--backup-now"],
                    "start a backup if one is not already running"),
-    # Backblaze document backup-now as the way out of a pause: their own PEK
+    # Backblaze document backup-now as the way out of a pause: their PEK
     # instructions read "pause backup, change the PEK, and then do backup now".
     "pause": (["action", "--pause-backup"],
               "ask the running backup to pause, cooperatively"),
 }
 
-TIMEOUT = 60          # wine start-up is slow; a hung call must not hold a worker
+TIMEOUT = 60          # wine start-up is slow, and a hung call must not hold a worker
 
 
 def _finish(p, timeout):
@@ -42,7 +42,7 @@ def _finish(p, timeout):
     group of its own and the timeout can take the group rather than only wine:
     a wedged client leaves a child behind holding the pipes it inherited, and
     killing wine alone leaves that child running for the life of the container.
-    The group holds this one call, so the client's own wineserver, started
+    The group holds this one call, so the client's wineserver, started
     elsewhere, is out of reach.
     """
     try:
@@ -58,7 +58,7 @@ def _finish(p, timeout):
         except OSError:
             pass
     try:
-        # Bounded too: a grandchild that made a session of its own is out of
+        # Bounded too: a grandchild that started a new session is out of
         # reach of the group kill and can still be holding the write end.
         p.communicate(timeout=5)
     except subprocess.TimeoutExpired:
@@ -77,7 +77,7 @@ def run(name):
     # Matched to the invocation proven by hand: a working directory of the
     # install folder, and HOME set. This runs from an s6 service rather than a
     # shell, and s6 hands down a minimal environment, so anything Wine needs has
-    # to be supplied rather than assumed. Wine without HOME tries to build a
+    # to be supplied explicitly. Wine without HOME tries to build a
     # fresh prefix somewhere it cannot write and fails in a way that has nothing
     # to do with the command it was asked to run.
     env = dict(os.environ, WINEPREFIX=PREFIX, WINEDEBUG="-all")

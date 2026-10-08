@@ -11,8 +11,8 @@
 #   warnings        dismissed warnings and hidden kinds
 #   recovery        the automatic-recovery switch, when set on the page
 #   doctor          bb-doctor's read-speed search depth
-#   client          the Backblaze client's own writable settings, as values;
-#                   import writes them back through bzcli one at a time
+#   client          the Backblaze client's writable settings, as values.
+#                   Import writes them back through bzcli one at a time
 #
 # Never in the file: the computer identity (hguid), the drive stamps under
 # .bzvol, the volume list, the drive selections and exclusions, or any backup
@@ -22,7 +22,7 @@
 #
 # Secrets. The key hashes, and the notification endpoints whole (a webhook
 # URL is itself a secret), are the sensitive part. With a passphrase they go
-# into the file encrypted; without one they are left out and the file records
+# into the file encrypted. Without one they are left out and the file records
 # which sections are missing, so a file made without a passphrase is safe to
 # keep anywhere and still restores everything else.
 #
@@ -48,7 +48,7 @@ SECRET_SECTIONS = ("api_keys", "notifications")
 
 KDF = {"name": "scrypt", "n": 1 << 15, "r": 8, "p": 1}
 CIPHER = "hmac-sha256-ctr"
-MAX_FILE = 1 << 20          # a settings file is kilobytes; anything near this is not one
+MAX_FILE = 1 << 20          # a settings file is kilobytes, so anything near this is not one
 
 # Older formats are brought up to date one step at a time. None yet: the
 # table is here so the first change to the format has a place to go and a
@@ -99,7 +99,7 @@ def seal(passphrase, obj):
 
 def open_(passphrase, box):
     """The object seal() put in the box, or ValueError when the passphrase is
-    wrong or the box has been altered; the two are not told apart."""
+    wrong or the box has been altered. The two are not told apart."""
     if not isinstance(box, dict):
         raise ValueError("the encrypted part of the file is not intact")
     if box.get("kdf") != KDF["name"] or box.get("cipher") != CIPHER:
@@ -137,7 +137,7 @@ def _client_settings():
 
 def export(passphrase=None, build=None):
     """The settings file as a dict. With a passphrase the secrets are in it,
-    encrypted; without one they are left out and `omitted` names them."""
+    encrypted. Without one they are left out and `omitted` names them."""
     notify = bbnotify.load()
     doc = {
         "format": FORMAT, "version": VERSION,
@@ -191,7 +191,7 @@ def _check_doc(doc):
     except (TypeError, ValueError):
         raise ValueError("the file has no version")
     if ver > VERSION:
-        raise ValueError("the file is version %d and this build reads up to %d; update the container first"
+        raise ValueError("the file is version %d and this build reads up to %d, so update the container first"
                          % (ver, VERSION))
     while ver < VERSION:
         doc = MIGRATIONS[ver](doc)
@@ -249,9 +249,9 @@ def import_(doc, passphrase=None, sections=None, write_client=None):
     raises ValueError with a message for the page before anything is written:
     every section is checked first, so a bad file changes nothing.
 
-    `sections` limits what is applied; None means everything in the file.
-    `write_client` is the function that writes one client setting, for tests;
-    bbconfig.write otherwise.
+    `sections` limits what is applied. None means everything in the file.
+    `write_client` is the function that writes one client setting, for tests.
+    It defaults to bbconfig.write.
     """
     doc = _check_doc(doc)
     want = set(sections) if sections else set(SECTIONS)
@@ -262,7 +262,7 @@ def import_(doc, passphrase=None, sections=None, write_client=None):
     secrets = None
     if doc.get("secrets") is not None:
         if not passphrase:
-            raise ValueError("this file's API keys and notification endpoints are encrypted; the passphrase is needed")
+            raise ValueError("this file's API keys and notification endpoints are encrypted and need the passphrase")
         secrets = open_(passphrase, doc["secrets"])
         if not isinstance(secrets, dict):
             raise ValueError("the encrypted part of the file is not intact")
@@ -276,8 +276,8 @@ def import_(doc, passphrase=None, sections=None, write_client=None):
             conf["endpoints"] = secrets["endpoints"]
         elif doc.get("omitted"):
             conf["endpoints"] = []
-            report["notes"].append("notification endpoints were not in the file (exported without a passphrase); existing ones kept")
-        # save() validates as it writes; there is no dry pass through the
+            report["notes"].append("notification endpoints were not in the file (exported without a passphrase), so the existing ones are kept")
+        # save() validates as it writes, and there is no dry pass through the
         # same checks, so a bad endpoint is reported from the write step, with
         # the sections before it already applied. It runs first for that reason.
         plan.append(("notifications", lambda c=conf, keep=bool(doc.get("omitted")): _save_notify(c, keep)))
@@ -299,7 +299,7 @@ def import_(doc, passphrase=None, sections=None, write_client=None):
             raise ValueError("recovery.watchdog must be true or false")
         plan.append(("recovery", lambda v=wd: (bbrecover.save(v), None)[1]))
     if "doctor" in want and isinstance(secs.get("doctor"), dict):
-        bbdoctor.load()   # the store must be reachable; save() validates the values
+        bbdoctor.load()   # the store must be reachable, and save() validates the values
         plan.append(("doctor", lambda c=secs["doctor"]: (bbdoctor.save(c), None)[1]))
     if "exclusions" in want and isinstance(secs.get("exclusions"), dict):
         rules = secs["exclusions"].get("rules")
@@ -362,5 +362,5 @@ def _write_client(values, write):
         (done if ok else failed).append(key if ok else "%s (%s)" % (key, detail))
     out = "%d written" % len(done)
     if failed:
-        out += "; not written: " + ", ".join(failed)
+        out += ", not written: " + ", ".join(failed)
     return out

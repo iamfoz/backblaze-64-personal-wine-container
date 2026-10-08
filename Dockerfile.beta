@@ -3,16 +3,16 @@
 # patch applied. Published as the :beta tag.
 #
 # Stock Wine caps a single upload stream at roughly 140 KB/s for senders like
-# libcurl, which is what Backblaze's bztransmit uses: Wine reports a socket as
+# libcurl, which Backblaze's bztransmit uses. Wine reports a socket as
 # not writable while its send buffer still has room, so the sending loop waits
 # out a full timeout instead of sending. patches/wine-writability-fix.patch
-# reports writability from the kernel's own send-accept condition, at both the
+# reports writability from the kernel's send-accept condition, at both the
 # poll answer and the blocking-send gate, matching Windows semantics (verified
 # against Windows Server 2022 and 2025).
 #
 # The fix is filed as WineHQ bug 59893 and submitted upstream (MR !11272).
-# Once it ships in a Wine release this whole file can go and the stable images
-# will carry the fix on their own.
+# Once it ships in a Wine release this file can go and the stable images will
+# carry the fix.
 #
 # This image is not the supported path. It carries a Wine build that has not
 # been through WineHQ review, and it tracks the newer LTS. Use the stable tags
@@ -31,7 +31,7 @@
 # bztransmit.exe (no relocations) must load, and the chunk child died with
 # "failed to create main module, status c0000018" (19 Sep 2026). 11.19 carries
 # 76159fce "Make sure that the first thread data is outside of the exe range".
-# 11.17 had its own regression (bug 60298, fixed in 11.18) that hung processes
+# 11.17 had a regression (bug 60298, fixed in 11.18) that hung processes
 # opening non-filesystem names. Before trusting 11.19 for stable, confirm a long
 # pass shows no "failed to create main module" in docker logs.
 # ============================================================================
@@ -41,8 +41,8 @@ FROM ubuntu:26.04 AS wine-builder
 ARG WINE_REF
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Build toolchain plus the -dev libraries Wine links against. Deliberately scoped
-# to fonts, TLS and the X stack Backblaze's GUI needs - no OpenGL/sound/scanner
+# Build toolchain plus the -dev libraries Wine links against. Scoped to
+# fonts, TLS and the X stack Backblaze's GUI needs - no OpenGL/sound/scanner
 # dev packages, so configure auto-disables those subsystems (matching the
 # validated build and keeping the runtime library set small).
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -62,23 +62,23 @@ COPY patches/wine-debug-privilege-bypass.patch /wine/patches/
 COPY patches/wine-ofd-locks.patch /wine/patches/
 COPY patches/wine-case-cache.patch /wine/patches/
 # Partial (blobless) clone keeps the checkout small while still allowing WINE_REF
-# to be any tag, branch, or exact commit; blobs are fetched on checkout.
+# to be any tag, branch, or exact commit. Blobs are fetched on checkout.
 #
 # Order matters: wine-fdwrite-rearm.patch extends the block that
 # wine-writability-fix.patch introduces, so it must be applied second.
 # wine-token-localsystem.patch and wine-debug-privilege-bypass.patch are
 # independent of both and of each other: together they make the token every
 # process gets behave like the LocalSystem token a service holds on Windows.
-# Client 10.0.3.1075's bzserv opens the backup pass it launched by pid; the
+# Client 10.0.3.1075's bzserv opens the backup pass it launched by pid. The
 # pass denies everyone access to its own process object, and on Windows the
 # service gets through only because LocalSystem holds SeDebugPrivilege, which
 # bypasses the DACL. Wine had neither the privilege enabled nor the bypass.
 # wine-ofd-locks.patch is independent of the others: wineserver kept every closed
 # fd on a locked file open, so the client's SQLite database leaked descriptors
-# until the limit (issue #13); OFD locks let a closed fd close.
+# until the limit (issue #13). OFD locks let a closed fd close.
 # wine-case-cache.patch is independent too: the case-sensitivity check after
 # every failed lookup did an fstatfs() each time, 21 ms on Unraid's shfs, half
-# a scan's wall time; it now decides once per device. Each gets its
+# a scan's wall time. It now decides once per device. Each gets its
 # own --check first, so a context mismatch fails the build with the offending patch
 # named rather than half-applying. The patches are authored against Wine master while
 # WINE_REF pins a release, so a --check failure after a WINE_REF bump usually means
@@ -101,7 +101,7 @@ RUN git clone --filter=blob:none https://gitlab.winehq.org/wine/wine.git src \
 # Cap build parallelism by available RAM. Wine's parallel link steps are
 # memory-heavy, so -j<all-cores> on a high-core / modest-RAM host exhausts memory
 # and thrashes the machine into swap. Default to ~1 job per 2 GB (never more than
-# the core count); override on a large box with --build-arg MAKE_JOBS=N.
+# the core count). Override on a large box with --build-arg MAKE_JOBS=N.
 ARG MAKE_JOBS
 RUN set -eu; \
     mkdir build; cd build; \
@@ -129,8 +129,8 @@ ENV APP_NAME="Backblaze 64-Bit Personal Backup (beta)"
 ENV FORCE_LATEST_UPDATE="true"
 # No pin: this image carries the Wine fixes 10.0.3.1075 needs, so it follows
 # Backblaze's newest client the way it always did. The stable images pin
-# 10.0.1.1069 because they run an unpatched Wine. Set a version to pin one;
-# it is installed over a newer or older client in place, so the machine
+# 10.0.1.1069 because they run an unpatched Wine. Set a version to pin one.
+# It is installed over a newer or older client in place, so the machine
 # identity in bzinstall.xml survives and no inherit is needed.
 ENV BACKBLAZE_VERSION=""
 ENV DISABLE_AUTOUPDATE="false"
@@ -141,12 +141,12 @@ ENV DISPLAY_HEIGHT="700"
 ENV WINEDEBUG=-all
 # Set DISPLAY so GUI programs can find the X server
 ENV DISPLAY=:0
-# Our Wine is installed under /opt/wine; startapp.sh calls wine/wineserver/etc.
+# Our Wine is installed under /opt/wine. startapp.sh calls wine/wineserver/etc.
 # from PATH, so it must come first.
 ENV PATH="/opt/wine/bin:${PATH}"
 
 # Unraid reads these labels to show a WebUI button and the app icon on the
-# Docker page - works even for containers started with `docker run`.
+# Docker page, including for containers started with `docker run`.
 LABEL net.unraid.docker.webui="http://[IP]:[PORT:5800]/" \
       net.unraid.docker.icon="https://cdn.jsdelivr.net/gh/selfhst/icons/png/backblaze.png"
 
@@ -158,7 +158,7 @@ COPY --from=wine-builder /opt/wine /opt/wine
 # `wine`/`wineserver`/`wineboot`/... calls in startapp.sh must be resolvable
 # directly. Link the binaries Wine and the startup script invoke by name into
 # /usr/bin - where winehq-stable used to install them, and which is on the app
-# service's PATH. Wine still finds its own libraries relative to /opt/wine via
+# service's PATH. Wine still finds its libraries relative to /opt/wine via
 # the symlink target.
 RUN set -eu; for b in wine wine64 wineserver wineboot winepath winecfg wineconsole; do \
         if [ -e "/opt/wine/bin/$b" ]; then ln -sf "/opt/wine/bin/$b" "/usr/bin/$b"; fi; \
@@ -171,7 +171,7 @@ RUN set -eu; for b in wine wine64 wineserver wineboot winepath winecfg wineconso
 #   * the tools startapp.sh uses (curl, 7z, cabextract, xvfb),
 #   * the shared libraries our Wine links against (fonts, TLS, the X stack),
 #   * locales for the en_US.UTF-8 the prefix expects.
-# The init_env scaffolding (and its later cleanup) mirrors the base image's own
+# The init_env scaffolding (and its later cleanup) mirrors the base image's
 # add-pkg helper, so font/ca-certificate postinst scripts succeed on this
 # otherwise minimal base.
 RUN mkdir -p /config/log /tmp/run && \
@@ -191,17 +191,17 @@ RUN mkdir -p /config/log /tmp/run && \
         /tmp/.passwd /tmp/.group /tmp/.shadow /tmp/.gshadow /tmp/run /config/log
 
 # Image/release version, shown by bb-version and baked into the build stamp below.
-# CI passes the release tag via --build-arg; local builds default to "dev".
+# CI passes the release tag via --build-arg. Local builds default to "dev".
 # Declared HERE, after the heavy apt layer, so a version change does not bust its
-# build cache. Without this ARG, Docker silently ignores the build-arg CI passes
+# build cache. Without this ARG, Docker ignores the build-arg CI passes
 # and every published image would stamp itself "dev".
 ARG DOCKER_IMAGE_VERSION=dev
 ENV DOCKER_IMAGE_VERSION=${DOCKER_IMAGE_VERSION}
 
-# Stamp the build so every bb-* tool can report exactly which image it came from.
-# Sourced from the build rather than versioned per tool: the tools only ever ship
-# together inside an image, so "which build is this" is the question worth answering
-# in a bug report, and a single source cannot drift out of step.
+# Stamp the build so every bb-* tool can report which image it came from.
+# Sourced from the build rather than versioned per tool: the tools always ship
+# together inside an image, so "which build is this" is the question a bug report
+# needs answered, and a single source cannot drift out of step.
 ARG BUILD_REV=unknown
 # BUILD_NUMBER is the CI run number. The :beta tag is mutable, so without it a
 # published beta cannot be told apart from the one before it in a bug report.
@@ -218,7 +218,7 @@ COPY rootfs/ /
 # than in rootfs/, so the stable images stay exactly as 10.2.1 shipped while the
 # HTTP dashboard, the tabbed interface and the nginx change get exercised on the
 # :beta channel. It overlays rootfs/, so the bb-monitor here replaces the released
-# one; when this work reaches a stable release the two merge back and this
+# one. When this work reaches a stable release the two merge back and this
 # directory goes away.
 COPY rootfs-beta/ /
 # Beta-only additions to bb-doctor.
@@ -227,8 +227,8 @@ COPY rootfs-beta/ /
 # second copy here, which would drift the way the two monitors did before they
 # shared a data layer, each addition lives in one beta-only file and this
 # patches in the single line that sources it. The anchor checks fail the build
-# if bb-doctor is restructured, rather than quietly producing an image where an
-# addition never runs.
+# if bb-doctor is restructured, so no image ships with an addition that never
+# runs.
 #
 # The first drops root. `docker exec` is root, and root passes every permission
 # test, so the ownership checks could not fail from the console. It goes in
@@ -236,21 +236,20 @@ COPY rootfs-beta/ /
 # the report once. The second is the skipped-file check, before the summary so
 # its warnings count in the totals.
 #
-# One line is replaced rather than added: the RAM check. Low RAM with swap is a
-# working configuration, and not everyone can add memory to the host, so with
-# swap present it reads OK instead of WARN. Same rule: the exact line must be
-# found once, or the build fails.
+# No line is replaced at present (the replacements list is empty). The RAM check
+# that used to be replaced here now lives in the stable bb-doctor. A replacement
+# follows the same rule: the exact line must be found once, or the build fails.
 #
 # The third insert is the source-drive check (ownership before the client has to
 # fail, and whether the client still recognises each drive), after the drive
-# mapping section. bb-health gets one insert of its own, a FROZEN state, so a
-# safety-frozen backup shows unhealthy in the Docker tab; bb-watchdog acts only
+# mapping section. bb-health gets one insert, a FROZEN state, so a
+# safety-frozen backup shows unhealthy in the Docker tab. bb-watchdog acts only
 # on HANG and WEDGE, so it cannot turn that into a recovery attempt.
 #
-# The fourth insert is the client-settings check: it asks bzcli what the client
-# itself thinks (licence, safety freeze, encryption, per-drive selection, and
-# whether the container's own config directory is excluded), which catches the
-# case where a file on disk and the client's own view of it have drifted apart.
+# The fourth insert is the client-settings check: it asks bzcli for the client's
+# view (licence, safety freeze, encryption, per-drive selection, and whether the
+# container's own config directory is excluded), which catches the case where a
+# file on disk and the client's view of it have drifted apart.
 # It shares the source-drives anchor and is ordered after it in this list, so
 # it runs immediately after that section and still before Storage.
 RUN python3 - <<'PATCH'
@@ -306,8 +305,8 @@ for name, anchor, add in inserts:
         sys.exit("bb-doctor: anchor for %s not found exactly once, refusing to guess" % name)
     src = src.replace(anchor, add + anchor, 1)
     print("bb-doctor: %s added" % name)
-# The RAM and swap logic used to be replaced here for the beta; it now lives in
-# bb-doctor itself (info on a large host, a warning on a small one without swap,
+# The RAM and swap logic used to be replaced here for the beta. It now lives in
+# bb-doctor (info on a large host, a warning on a small one without swap,
 # and a warning anywhere there is evidence of pressure), so nothing is replaced.
 replacements = []
 for name, old, new in replacements:
@@ -325,11 +324,11 @@ hsrc = open(health, encoding="utf-8").read()
 anchor = 'echo "OK"\nexit 0\n'
 add = '''# --- FROZEN: Backblaze has safety-frozen this backup --------------------------
 # Beta only, to be folded in at the next stable release. The client records the
-# freeze in status.json and nothing in this container can clear it; it needs a
-# person, which is what an unhealthy state in the Docker tab is for. bb-watchdog
+# freeze in status.json and nothing in this container can clear it. It needs a
+# person to act, so it shows as unhealthy in the Docker tab. bb-watchdog
 # matches only HANG and WEDGE, so this cannot start a recovery.
 if grep -q '"frozen"[[:space:]]*:[[:space:]]*true' "${BZ}/bzreports/status.json" 2>/dev/null; then
-    echo "FROZEN Backblaze has safety-frozen this backup; see the Status tab, and the Backblaze page on resolving a safety freeze"
+    echo "FROZEN Backblaze has safety-frozen this backup. See the Status tab, and the Backblaze page on resolving a safety freeze"
     exit 1
 fi
 
@@ -361,9 +360,8 @@ RUN sh -n /usr/local/bin/bb-doctor \
 # bzcli, and restricted to /settings for the same reason: the full report and
 # /backup/account both carry the account email, and this bundle exists so that
 # never has to be collected. Same anchored-replace discipline as above: each
-# anchor must be found exactly once, or the build fails naming it, rather than
-# shipping a bundle where the item is silently missing or, on a rebuild,
-# silently duplicated.
+# anchor must be found exactly once, or the build fails naming it, so no bundle
+# ships with the item missing or, on a rebuild, duplicated.
 RUN python3 - <<'PATCH'
 import sys
 rep = "/usr/local/bin/bb-report"
@@ -371,7 +369,7 @@ src = open(rep, encoding="utf-8").read()
 
 helper_anchor = "# Every item is (name in bundle, description, producer). Nothing else is collected.\n"
 helper = '''# Client settings, via bzcli. Beta only: to be folded into this script at the
-# next stable release. bzcli reports the client's own view of what it is
+# next stable release. bzcli reports the client's view of what it is
 # doing, which belongs alongside the files bb-report already reads back out of
 # bzdata. Only /settings is queried, never the whole report and never
 # /backup/account: both carry the account email.
@@ -400,8 +398,8 @@ def _bzcli_settings():
         text = re.sub(r'("online_hostname"\\s*:\\s*)"[^"]*"',
                       r'\\1"<hidden>"', text)
         # RE_KEYVAL further down only matches an *unquoted* key ("key:
-        # value" or "key=value"); a JSON key is quoted ("hguid": "..."),
-        # so the character right after the key is the key's own closing
+        # value" or "key=value"). A JSON key is quoted ("hguid": "..."),
+        # so the character right after the key is the key's closing
         # quote, not "=" or ":", and RE_KEYVAL's match never starts.
         # bzcli's settings report is JSON, so every name in SECRET_KEYS
         # needs this same by-value redaction here, before this text
@@ -438,7 +436,7 @@ RUN python3 -m py_compile /usr/local/bin/bb-report \
  && grep -q "_bzcli_settings" /usr/local/bin/bb-report \
  && grep -q "backblaze/settings.txt" /usr/local/bin/bb-report
 
-# The client version pin lives in rootfs/startapp.sh itself since 10.2.2, so the
+# The client version pin lives in rootfs/startapp.sh since 10.2.2, so the
 # beta inherits it. The guard stays: a stable edit that lost the pin would ship a
 # beta that installs whatever Backblaze serves, which is how 10.0.3.1075 got in.
 RUN bash -n /startapp.sh && grep -q "BACKBLAZE_VERSION" /startapp.sh
@@ -451,12 +449,11 @@ RUN chmod +x /startapp.sh /usr/local/bin/bb-monitor /usr/local/bin/bb-monitor-we
 
 # Wire the upload dashboard into the base image's nginx server block. The base
 # includes default_site.conf directly from nginx.conf (not via /var/tmp/nginx),
-# so a build-time edit survives; it is not regenerated at container start.
+# so a build-time edit survives. It is not regenerated at container start.
 #
 # The grep before the edit is the guard: if a base-image bump moves or renames
-# that include line, the build fails here with the anchor named, rather than
-# silently producing an image whose /monitor/ 404s. The grep after confirms the
-# edit actually landed.
+# that include line, the build fails here with the anchor named, so no image
+# ships whose /monitor/ 404s. The grep after confirms the edit landed.
 RUN python3 - <<'PATCH'
 # Wire the upload dashboard into the base image's nginx server block.
 #
@@ -467,8 +464,8 @@ RUN python3 - <<'PATCH'
 # whoever reads it next.
 #
 # The anchor check is the guard: if a base-image bump moves or renames that
-# include line, the build fails here naming the anchor, rather than silently
-# producing an image whose /monitor/ returns 404.
+# include line, the build fails here naming the anchor, so no image ships
+# whose /monitor/ returns 404.
 import sys
 site = "/opt/base/etc/nginx/default_site.conf"
 anchor = "include /var/tmp/nginx/term[.]conf;"

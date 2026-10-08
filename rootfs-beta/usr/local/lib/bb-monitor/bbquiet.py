@@ -2,14 +2,15 @@
 #
 # The client has a schedule, but it is a backup schedule and not a pause
 # schedule, and it lives in a window that renders badly under Wine. This is the
-# one control the API already has, given a clock. It uses only the two
+# API's existing pause control, run on a clock. It uses only the two
 # whitelisted verbs: pause at the start of a window, backup-now at the end.
 #
 # The client's own pause carries a deadline of about two hours and then resumes
 # by itself. Inside a window the scheduler re-issues the pause when that happens,
-# and says so in the log. A resume the user asked for is different: it holds
+# and logs it. A resume the user asked for is different: it holds
 # until the window ends. The two are told apart by the deadline the client
-# recorded: past it, the client resumed itself; before it, someone did.
+# recorded. A resume after it came from the client, and one before it came
+# from a person.
 
 import datetime, json, os, sys, tempfile, threading, time
 
@@ -107,8 +108,8 @@ def _at(day, minutes):
 
 def in_window(conf, now=None):
     """(window, start_epoch, end_epoch) for the window containing `now`, else
-    (None, None, next_start_epoch or None). Local time, which is the container's
-    TZ, which is what the user set the times in."""
+    (None, None, next_start_epoch or None). Local time, meaning the container's
+    TZ, the zone the user set the times in."""
     now = now if now is not None else time.time()
     today = datetime.date.fromtimestamp(now)
     best_next = None
@@ -186,18 +187,18 @@ class Scheduler:
         if now - self.acted_at < SETTLE:
             return "settling"
         if self.paused_until and now < self.paused_until - 60:
-            # Before the client's own deadline: a person resumed it. Hold off
-            # until the window ends rather than fighting them.
+            # Before the client's deadline, so a person resumed it. Hold off
+            # until the window ends.
             self.override_until = end
             self.active = False
-            self.log("resumed by hand inside a window; not pausing again until %s"
+            self.log("resumed by hand inside a window, not pausing again until %s"
                      % time.strftime("%H:%M", time.localtime(end)))
             return "override"
         self._act("pause", "the client resumed at its deadline, pausing again", now)
         return "repaused"
 
     def _act(self, name, why, now):
-        """Hand the action to a thread of its own.
+        """Hand the action to a separate thread.
 
         The caller is the poll loop. `runner` is bzcli, which starts Wine cold
         and can take the better part of a minute, and a window boundary that
@@ -212,7 +213,7 @@ class Scheduler:
     def _run(self, name, why, now):
         try:
             ok, msg = self.runner(name)
-        except Exception as exc:      # the thread is on its own; nothing catches it
+        except Exception as exc:      # nothing else in this thread catches it
             ok, msg = False, str(exc)
         with _lock:
             self.last = {"action": name, "ok": ok, "at": int(now), "why": why}

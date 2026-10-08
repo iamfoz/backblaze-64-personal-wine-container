@@ -9,7 +9,7 @@
 #
 # So: py_compile every Python file, `sh -n` every POSIX shell file, and
 # `node --check` every <script> block lifted out of the web page. All of it
-# passes today; this is what keeps it passing.
+# passes today, and this keeps it passing.
 #
 # Run:  sh tests/test-parse.sh
 set -u
@@ -32,12 +32,12 @@ bad() {
 
 # ---- Python -------------------------------------------------------------------
 # py_compile rather than a bare compile() so the error text is the one the
-# container's own start-up would print. The output goes to the temporary
+# container's start-up would print. The output goes to the temporary
 # directory rather than the default __pycache__: `python3 -m py_compile` writes
 # the .pyc whatever PYTHONDONTWRITEBYTECODE says, and these files ship in the
 # image, so a stray .pyc beside them is noise in the build context.
 check_py() {
-    # The error is printed on its own rather than as a traceback through
+    # The error is printed without a traceback through
     # py_compile: what matters here is the file, the line and the message.
     if out="$(python3 -c 'import py_compile, sys
 try:
@@ -78,8 +78,8 @@ check_sh() {
 }
 
 # __pycache__ is pruned rather than filtered: a stale .pyc left by an earlier run
-# of another suite is a binary file whose first "line" is not worth reading.
-# Unquoted on purpose, to split the list; no path in either tree has a space.
+# of another suite is a binary file with no readable first "line".
+# Unquoted to split the list. No path in either tree has a space.
 for f in $(find "$ROOT/rootfs" "$ROOT/rootfs-beta" \
                 -name __pycache__ -prune -o -type f -print | sort); do
     case "$(sed -n 1p "$f")" in
@@ -88,8 +88,8 @@ for f in $(find "$ROOT/rootfs" "$ROOT/rootfs-beta" \
             continue
             ;;
         '#!/bin/bash'|'#!/usr/bin/env bash')
-            # startapp.sh is the one deliberate bash script; check it with bash
-            # when there is one, and say so rather than silently skipping.
+            # startapp.sh is the only intended bash script. Check it with bash
+            # when there is one, and report a skip with a message.
             if command -v bash >/dev/null 2>&1; then
                 if out="$(bash -n "$f" 2>&1)"; then
                     ok "bash    $(printf '%s' "$f" | sed "s#^$ROOT/##")"
@@ -104,8 +104,8 @@ for f in $(find "$ROOT/rootfs" "$ROOT/rootfs-beta" \
             continue
             ;;
     esac
-    # The bb-doctor drop-ins are sourced fragments with no shebang of their own.
-    # Dockerfile.beta runs sh -n over exactly these at build time; this is the
+    # The bb-doctor drop-ins are sourced fragments with no shebang.
+    # Dockerfile.beta runs sh -n over these at build time. This is the
     # same check, before a build is spent finding out.
     case "$f" in
         */usr/local/lib/*.sh) check_sh "$f" ;;
@@ -115,8 +115,8 @@ done
 # ---- the inline page scripts ------------------------------------------------------
 # The pages are built as Python strings, so a broken script block is a valid
 # Python file that serves a page which does nothing. The blocks must also stay
-# ES5-ish (no arrow functions, no let/const) for older browsers, which node will
-# not tell us, but a parse error it will.
+# ES5-ish (no arrow functions, no let/const) for older browsers. node does not
+# check that, but it does report a parse error.
 JSDIR="$TMP/js"
 mkdir -p "$JSDIR"
 # The blocks are lifted from the page strings as Python evaluates them, not
@@ -131,7 +131,7 @@ tree = ast.parse(src)
 # The pages are assembled from literals and shared pieces (THEME_CSS, PAGE_CSS)
 # by concatenation, so each module-level string assignment is evaluated in
 # turn with the ones before it in scope. Anything that is not a string
-# expression over those is skipped; the pages are.
+# expression over those is skipped. The pages are such expressions.
 env, n = {}, 0
 for node in tree.body:
     if not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):

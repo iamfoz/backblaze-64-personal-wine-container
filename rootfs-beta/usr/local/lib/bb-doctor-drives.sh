@@ -1,22 +1,22 @@
 # Two checks on the mapped drives, for bb-doctor. Sourced by a beta-only patch
-# after the drive-mapping section; fold into that script at the next stable release.
+# after the drive-mapping section. Fold into that script at the next stable release.
 #
 # Both come from one support thread. A user moved to this container, inherited the
 # backup, and got "No files are selected" followed by permission skips and then a
 # safety freeze. Two container-shaped faults sat under that: a share the container
 # user could not read, which the skipped-file check finds only after the client has
 # given up on files, and a drive whose identity the client no longer recognised.
-# Neither was named by anything, and both can be, cheaply, before the client has
-# to fail first.
+# Nothing reported either, and both can be found quickly, before the client
+# fails on them.
 #
-# Nothing here is repaired. The first is the user's files on their share; the
+# Nothing here is repaired. The first is the user's files on their share. The
 # second is the identity of their backup. The wrong repair to either costs more
 # than the fault.
 
 echo "Source drives"
 _drives=0
 
-# Set one attribute of a drive stamp to a value the client itself wrote
+# Set one attribute of a drive stamp to a value the client wrote
 # elsewhere, under --fix. The file must be laid out the way the client writes
 # it, one <bzvolume vguid=... associated_hguid=... /> line, or nothing is
 # touched: a stamp in any other shape is not one this container understands
@@ -34,12 +34,12 @@ _stamp_repair() {
     printf '%s\n' "$_sr_new" > "$_sr_file" || return 1
     grep -q "${_sr_attr}=\"${_sr_val}\"" "$_sr_file"
 }
-# Device number of a path; a function so the test suite can stand in for it.
+# Device number of a path. A function so the test suite can stand in for it.
 _dev() { stat -c %d "$1" 2>/dev/null; }
 for _link in "${PREFIX}dosdevices"/[d-z]:; do
     [ -L "$_link" ] || continue
     _root="$(readlink -f "$_link" 2>/dev/null)"
-    # Wine's own z: -> / is the container, not a drive the user mapped, and a
+    # Wine's default z: -> / is the container, not a drive the user mapped, and a
     # note that the client has not taken ownership of it reads as a fault.
     [ "$_root" = "/" ] && continue
     _drives=$((_drives+1))
@@ -92,7 +92,7 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
     # appdata as a dataset of its own, so mapping the pool's root maps nothing
     # but mount points. On the test host the cache pool as Y: produced a
     # 101-byte file list for a pool full of files (2026-10-07). Compared by
-    # device number; .bzvol is skipped, being the client's own.
+    # device number. .bzvol is skipped because it belongs to the client.
     _rdev="$(_dev "$_root")"
     _mnts=""; _mn=0; _top=0
     for _e in "$_root"/* "$_root"/.[!.]*; do
@@ -123,12 +123,12 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
     # seconds per chunk from /mnt/user, so however many threads the client had,
     # one or two were ever busy (2026-09-22). 64 MB from a quarter of the way
     # into one large file, so a file the client just read is less likely to
-    # come from cache; the figure is an upper bound on what the pass will see.
+    # come from cache. The figure is an upper bound on what the pass will see.
     # How deep to look is a setting (Settings tab, or DOCTOR_READ_DEPTH):
     # three levels by default, or until a file is found. Either way the search
     # is bounded in time, because a share with millions of small files and no
-    # large one would otherwise hold the doctor for minutes; find stops at the
-    # first match, so a large file near the top costs almost nothing.
+    # large one would otherwise hold the doctor for minutes. find stops at the
+    # first match, so a large file near the top takes almost no time.
     _rs_conf="/config/bb-api/doctor.json"
     _rs_depth="${DOCTOR_READ_DEPTH:-3}"
     _rs_until=""
@@ -143,7 +143,7 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
         _rs_how="anywhere under ${_root} (60 s limit)"
     else
         _big="$(timeout 20 find "$_root" -maxdepth "$_rs_depth" -type f -size +67108864c 2>/dev/null | head -1)"
-        _rs_how="within ${_rs_depth} level$([ "$_rs_depth" = 1 ] || echo s) of ${_root} (20 s limit; the depth is a setting on the Settings tab)"
+        _rs_how="within ${_rs_depth} level$([ "$_rs_depth" = 1 ] || echo s) of ${_root} (20 s limit, set the depth on the Settings tab)"
     fi
     _fs="$(df -T "$_root" 2>/dev/null | awk 'NR==2{print $2}')"
     if [ -z "$_big" ]; then
@@ -158,7 +158,7 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
             _ms=$(( (_t1 - _t0) / 1000000 ))
             [ "$_ms" -lt 1 ] && _ms=1
             _mbs=$(( 64000 / _ms ))
-            # A chunk is 10 MB; the parent's other work per chunk is well under a second.
+            # A chunk is 10 MB. The parent's other work per chunk is well under a second.
             _cpm=$(( _mbs * 6 ))
             if [ "$_mbs" -ge 40 ]; then
                 OK "${_letter}: reads at about ${_mbs} MB/s (64 MB sample), enough for ${_cpm}+ chunks a minute"
@@ -168,7 +168,7 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
                 WARN "${_letter}: reads at about ${_mbs} MB/s (64 MB sample), so the pass can stage at most about ${_cpm} chunks (10 MB) a minute from here, whatever the thread setting"
                 case "$_fs" in
                     shfs|fuse*) NOTE "this drive is a ${_fs} mount, Unraid's user-share layer. Map the disk or pool path underneath (/mnt/cache/... or /mnt/diskN/...) instead of /mnt/user/... and the reads skip that layer." ;;
-                    *) NOTE "the client reads each 10 MB chunk from here before it can upload it; a faster path to these files is the only lever." ;;
+                    *) NOTE "the client reads each 10 MB chunk from here before it can upload it. Only a faster path to these files helps." ;;
                 esac
             fi
         else
@@ -181,9 +181,9 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
     # <bzvolume vguid="v00..." associated_hguid="..." />, the volume id being
     # "v00" followed by 25 hex characters (captured 2026-09-22). The hguid ties
     # the drive to the computer identity and is never printed here. Backblaze's
-    # own README in that directory says deleting it removes the drive's files
+    # README in that directory says deleting it removes the drive's files
     # from the datacenter, so no note below ever suggests removing it.
-    # and lists the drives it knows in bzvolumes.xml, each with the mount point
+    # The client also lists the drives it knows in bzvolumes.xml, each with the mount point
     # as hex: 443a5c is D:\. When the stamp and the list disagree the client
     # shows the drive as ticked and backs nothing up. Three cases, told apart
     # by the list: the id is known under another letter (the mapping moved), the
@@ -196,9 +196,9 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
     _vols="${BZ}/bzvolumes.xml"
     _hex="$(printf '%s:\\' "$_letter" | od -An -tx1 | tr -d ' \n')"
     if [ ! -d "$_vol" ]; then
-        NOTE "${_letter}: no .bzvol yet; the client has not taken ownership of this drive"
+        NOTE "${_letter}: no .bzvol yet. The client has not taken ownership of this drive"
     elif [ ! -r "$_vols" ]; then
-        NOTE "${_letter}: .bzvol present; bzvolumes.xml not readable, identity not checked"
+        NOTE "${_letter}: .bzvol present, but bzvolumes.xml is not readable, so identity is not checked"
     else
         _id="$(grep -oE 'vguid="v[0-9a-f]{27}"' "$_idf" 2>/dev/null | grep -oE 'v[0-9a-f]{27}' | head -1)"
         # The list can hold several records for one letter, one per drive that
@@ -214,16 +214,16 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
             if [ -f "$_idf" ]; then
                 WARN "${_letter}: .bzvol/bzvol_id.xml carries no volume id, so the client cannot match this drive to its backup"
                 if [ -n "$_known" ]; then
-                    NOTE "the client's own record for ${_letter}: is ${_known}. With the container stopped, set vguid in"
+                    NOTE "the client's record for ${_letter}: is ${_known}. With the container stopped, set vguid in"
                     NOTE "${_idf} to that id, and the existing backup of this drive carries on. Not done by --fix: an"
                     NOTE "empty stamp is not laid out the way the client writes it. Never delete .bzvol: Backblaze"
                     NOTE "removes the drive's backed-up files when it goes."
                 else
                     NOTE "the client has no record of a drive at ${_letter}: either. Untick and re-tick it in the client's"
-                    NOTE "settings; the client stamps it afresh and its upload starts over."
+                    NOTE "settings. The client stamps it afresh and its upload starts over."
                 fi
             else
-                NOTE "${_letter}: .bzvol present but no bzvol_id.xml yet; the client has not taken ownership of this drive"
+                NOTE "${_letter}: .bzvol present but no bzvol_id.xml yet. The client has not taken ownership of this drive"
             fi
         elif printf '%s\n' "$_ids_here" | grep -qx -- "$_id"; then
             OK "${_letter}: the client recognises this drive (id ${_id})"
@@ -237,16 +237,16 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
             if [ -n "$_hg" ] && [ -n "$_mine" ] && [ "$_hg" != "$_mine" ]; then
                 if [ "$FIX" = 1 ]; then
                     if _stamp_repair "$_idf" associated_hguid "$_mine"; then
-                        OK "${_letter}: repaired: the stamp now carries this install's computer identity; the previous stamp is kept beside it"
+                        OK "${_letter}: repaired: the stamp now carries this install's computer identity. The previous stamp is kept beside it"
                         NOTE "restart the container so the client re-reads it."
                     else
-                        BAD "${_letter}: could not repair ${_idf}: not laid out the way the client writes it, or not writable; nothing changed"
+                        BAD "${_letter}: could not repair ${_idf}: not laid out the way the client writes it, or not writable. Nothing changed"
                     fi
                 else
                     WARN "${_letter}: the drive is stamped for a different computer identity than this install's"
                     NOTE "an inherit or a reinstall gave this install a new identity, and the client will not back up a drive"
-                    NOTE "stamped for the old one. Re-run with --fix to set associated_hguid in ${_idf} to this install's;"
-                    NOTE "the previous stamp is kept beside it. Never delete .bzvol: Backblaze removes the drive's backed-up"
+                    NOTE "stamped for the old one. Re-run with --fix to set associated_hguid in ${_idf} to this install's."
+                    NOTE "The previous stamp is kept beside it. Never delete .bzvol: Backblaze removes the drive's backed-up"
                     NOTE "files when it goes."
                 fi
             fi
@@ -259,21 +259,21 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
         else
             if [ -n "$_known" ] && [ "$FIX" = 1 ]; then
                 if _stamp_repair "$_idf" vguid "$_known"; then
-                    OK "${_letter}: repaired: vguid set to ${_known}, the client's own record for this drive; the previous stamp is kept beside it"
+                    OK "${_letter}: repaired: vguid set to ${_known}, the client's record for this drive. The previous stamp is kept beside it"
                     NOTE "restart the container so the client re-reads it."
                 else
-                    BAD "${_letter}: could not repair ${_idf}: not laid out the way the client writes it, or not writable; nothing changed"
+                    BAD "${_letter}: could not repair ${_idf}: not laid out the way the client writes it, or not writable. Nothing changed"
                 fi
             elif [ -n "$_known" ]; then
                 WARN "${_letter}: the client does not recognise this drive's identity (${_id} is not in bzvolumes.xml)"
-                NOTE "the client's own record for ${_letter}: is ${_known}: another install stamped this drive, or an"
+                NOTE "the client's record for ${_letter}: is ${_known}. Another install stamped this drive, or an"
                 NOTE "inherit brought a different record. Re-run with --fix to set vguid in ${_idf} to that id and"
-                NOTE "keep the existing backup of this drive; the previous stamp is kept beside it. Never delete .bzvol:"
+                NOTE "keep the existing backup of this drive. The previous stamp is kept beside it. Never delete .bzvol:"
                 NOTE "Backblaze removes the drive's backed-up files when it goes."
             else
                 WARN "${_letter}: the client does not recognise this drive's identity (${_id} is not in bzvolumes.xml)"
                 NOTE "the client has no record of a drive at ${_letter}: at all. Untick and re-tick it in the client's"
-                NOTE "settings; the client stamps it afresh and its upload starts over. If you inherited, check that"
+                NOTE "settings. The client stamps it afresh and its upload starts over. If you inherited, check that"
                 NOTE "the right computer was chosen."
             fi
         fi

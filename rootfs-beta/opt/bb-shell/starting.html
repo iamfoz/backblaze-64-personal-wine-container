@@ -3,7 +3,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Upload Monitor &bull; starting</title>
 <style>
-  /* Deliberately close to the dashboard's default theme so the transition to the
+  /* Close to the dashboard's default theme so the transition to the
      real page is not a jolt. */
   html,body{height:100%;margin:0;}
   body{background:#0a1830;color:#d7e6ff;display:flex;align-items:center;
@@ -25,9 +25,9 @@
      load the dashboard as soon as it is ready.</p>
 </div>
 <script>
-// Served by nginx when the dashboard's own service is not listening yet, which
+// Served by nginx when the dashboard's service is not listening yet, which
 // happens for a few seconds after the container starts. Without this the tab
-// showed a bare 502 and stayed there: the shell loads the frame once, so nothing
+// showed a bare 502 and stayed there. The shell loads the frame once, so nothing
 // retried until the whole page was reloaded by hand.
 //
 // Polls the same relative path the dashboard uses, so it works both inside the
@@ -52,7 +52,7 @@
         if(tries === 5){                 // only after it stops looking routine
           document.getElementById('detail').textContent =
             'Still waiting after ' + (tries * 2) + ' seconds. Backblaze itself is '
-            + 'unaffected; this is only the dashboard.';
+            + 'unaffected. Only the dashboard is waiting.';
         }
         setTimeout(attempt, 2000);
       });

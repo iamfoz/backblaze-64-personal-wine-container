@@ -50,21 +50,21 @@ It runs the Backblaze client and starts a virtual X server and a VNC server with
 
 This docker should just work for most people. But if you for example have a complex permissions setup in the filesystem you are trying to back up you will need good knowledge of docker to get it set up.
 
-Still please be attentive during the install process: The docker by design has read/write access to all the data you are trying to back up and if you make a grave mistake you could delete stuff.
+Still please be attentive during the install process: The docker has read/write access to all the data you are trying to back up and if you make a grave mistake you could delete stuff.
 
 ## Known Limitations
 
-Backblaze 10.x (64-bit, Windows 10-only) installs, signs in, and backs up reliably under Wine. Two caveats are worth knowing: neither corrupts or blocks your backups.
+Backblaze 10.x (64-bit, Windows 10-only) installs, signs in, and backs up reliably under Wine. There are two caveats. Neither corrupts or blocks your backups.
 
-- **Upload speed is throttled by a bug in Wine, not by the container or your network.** An `iperf3` test from inside the container reaches full line speed. The cause has since been traced: Wine reports a socket as "not writable" while its send buffer still has room, so the client's sending loop waits out a full one-second timeout instead of sending, capping a single stream at roughly 140 KB/s. This is filed as [WineHQ bug 59893](https://bugs.winehq.org/show_bug.cgi?id=59893) with a fix submitted upstream, and the standard images will pick it up automatically once it ships in a Wine release. See [Optional: Wine Upload-Speed Patch](#optional-wine-upload-speed-patch) if you would rather have it now.
+- **Upload speed is throttled by a bug in Wine, not by the container or your network.** An `iperf3` test from inside the container reaches full line speed. The cause has since been traced. Wine reports a socket as "not writable" while its send buffer still has room, so the client's sending loop waits out a full one-second timeout instead of sending, capping a single stream at roughly 140 KB/s. This is filed as [WineHQ bug 59893](https://bugs.winehq.org/show_bug.cgi?id=59893) with a fix submitted upstream, and the standard images will pick it up automatically once it ships in a Wine release. See [Optional: Wine Upload-Speed Patch](#optional-wine-upload-speed-patch) if you would rather have it now.
 
-  In the meantime, set the thread count under Settings → Performance to **Manual, 4 to 8 threads**. More threads is the obvious workaround, and it does raise throughput, but leave it on Automatic and Backblaze can spin up dozens: enough concurrent uploads to deadlock Wine's pipe handling and stall the transfer completely. Throughput is also far lower while grinding through many small files than on large ones, so expect it to climb as the backup progresses.
+  In the meantime, set the thread count under Settings → Performance to **Manual, 4 to 8 threads**. More threads do raise throughput, but on Automatic Backblaze can spin up dozens, enough concurrent uploads to deadlock Wine's pipe handling and stall the transfer completely. Throughput is also far lower while grinding through many small files than on large ones, so expect it to climb as the backup progresses.
 
-- **"Permission Issue … `bzdata\bzreports`" warning.** A false positive: Backblaze's permission self-check misbehaves under Wine, but it writes to that directory fine and backups run normally. Safe to ignore.
+- **"Permission Issue ... `bzdata\bzreports`" warning.** A false positive. Backblaze's permission self-check misbehaves under Wine, but it writes to that directory fine and backups run normally. Safe to ignore.
 
-> The control panel previously rendered unstyled (black background, blank dialog text). That turned out **not** to be an unfixable GDI+ incompatibility: `bzbui.exe` references its hi-DPI skin assets with hyphenated names (`*-4x.gif`) while the bypass install ships them underscored (`*_4x.gif`), so the skin failed to load and the main window couldn't build. The container now creates the hyphen-named aliases at startup, so the panel renders correctly on first launch.
+> The control panel previously rendered unstyled (black background, blank dialog text). The cause was a naming mismatch, not an unfixable GDI+ incompatibility. `bzbui.exe` references its hi-DPI skin assets with hyphenated names (`*-4x.gif`) while the bypass install ships them underscored (`*_4x.gif`), so the skin failed to load and the main window couldn't build. The container now creates the hyphen-named aliases at startup, so the panel renders correctly on first launch.
 
-> Backblaze's installer, and more importantly its in-app **self-update**, runs a .NET MSI custom action (`CheckVersions`) inside `rundll32.exe`. Under Wine's Windows 8.1+ "version lie", an *unmanifested* process is told it is running Windows 8 (6.2) regardless of what the registry reports, so that check aborts with `MajorVerTooOld` / "unsupported OS" even though the prefix is forced to Windows 10. The first install sidesteps this by bypassing the MSI (it drives `bzdoinstall.exe` directly), but a self-update runs the MSI itself. The container therefore writes an external `rundll32.exe.manifest` declaring a Windows 10/11 `supportedOS` into `system32` and `syswow64` at startup and enables `PreferExternalManifest`, so `GetVersionEx` reports the real version and self-updates do not break on the OS gate.
+> Backblaze's installer, and more importantly its in-app **self-update**, runs a .NET MSI custom action (`CheckVersions`) inside `rundll32.exe`. Under Wine's Windows 8.1+ "version lie", an *unmanifested* process is told it is running Windows 8 (6.2) regardless of what the registry reports, so that check aborts with `MajorVerTooOld` / "unsupported OS" even though the prefix is forced to Windows 10. The first install sidesteps this by bypassing the MSI (it drives `bzdoinstall.exe` directly), but a self-update runs the MSI itself. So the container writes an external `rundll32.exe.manifest` declaring a Windows 10/11 `supportedOS` into `system32` and `syswow64` at startup and enables `PreferExternalManifest`, so `GetVersionEx` reports the real version and self-updates do not break on the OS gate.
 
 ## Docker Images
 ### Content
@@ -104,15 +104,15 @@ Here are the main components of this image:
 | ubuntu24 | Ubuntu 24.04 LTS build (same image as `latest`) |
 | ubuntu26 | Ubuntu 26.04 LTS build, early-access, for hardening before it becomes the default |
 | main | Automatic build of the `main` branch (may be unstable) |
-| beta | Ubuntu 26.04 with the Wine upload-speed fix built in.  Not the supported path; see below |
-| vX.Y.Z | A specific release (Ubuntu 24.04); `vX.Y.Z-ubuntu26` for the 26.04 variant |
+| beta | Ubuntu 26.04 with the Wine upload-speed fix built in.  Not the supported path. See below |
+| vX.Y.Z | A specific release (Ubuntu 24.04), or `vX.Y.Z-ubuntu26` for the 26.04 variant |
 
 **LTS policy.** The image tracks the **two most recent Ubuntu LTS releases** at a
-time. The **older** of the two is the default (`latest`), chosen for stability;
-the **newer** ships alongside (currently `ubuntu26`) so problems can be found and
+time. The **older** of the two is the default (`latest`), chosen for stability,
+and the **newer** ships alongside (currently `ubuntu26`) so problems can be found and
 fixed before it ever becomes the default. Interim bugfixes and base/runtime
 uplifts are released against both as they land. When an LTS reaches end of
-support it is retired: the newer LTS becomes the new default and the next LTS is
+support it is retired. The newer LTS becomes the new default and the next LTS is
 added as the early-access variant. So `latest` always points at a mature,
 well-supported LTS, while the newer-LTS tag lets you opt in early if you want it.
 
@@ -134,8 +134,8 @@ The older `ubuntu22` / `ubuntu20` / `ubuntu18` variants are no longer published.
 Only `linux/amd64` is realistic. Backblaze Personal Backup ships as an x86-64 Windows
 binary, so a non-x86 host would have to emulate the instruction set underneath Wine as
 well as translating the Windows API, slow enough to be useless for a backup client that
-is already working hard to keep uploads saturated. `linux/386` is out for a different
-reason: Backblaze 10.x dropped 32-bit entirely. Neither is a packaging gap that a future
+is already working hard to keep uploads saturated. `linux/386` is out because
+Backblaze 10.x dropped 32-bit entirely. Neither is a packaging gap that a future
 release will close.
 
 ## Environment Variables
@@ -148,8 +148,8 @@ Environment variables can be set by adding one or more arguments `-e "<VAR>=<VAL
 |`ENABLE_WATCHDOG`| When `true`, the container recovers automatically from the known stall conditions: it deletes a stale four-hour lock left behind by an out-of-memory kill, and stops a pass stuck on a lost upload child so the service starts a fresh one. Every action is logged. Off by default because it deletes a file and kills processes. The beta's Settings tab has a switch that overrides this without a restart. See [Health and Auto-Recovery](#health-and-auto-recovery). | false |
 |`DISABLE_AUTOUPDATE` | When set to true, skip the startup update check and just launch the installed client. When false (the default), the container checks Backblaze for a newer client on each start and updates if one is available. | false |
 |`FORCE_LATEST_UPDATE`| When `true` (the default), the updater downloads the newest Backblaze client from Backblaze's servers on each start. When `false`, the installed version is kept and the update check is skipped. | true |
-|`BACKBLAZE_VERSION` | Pin the client to one exact version, for example `10.0.1.1069`. On each start the container installs that version if a different one is installed, newer or older, and skips the update check. Empty leaves the choice to `FORCE_LATEST_UPDATE` and `DISABLE_AUTOUPDATE`; set, it wins over both, and `DISABLE_AUTOUPDATE` then only stops the search for a newer client. Client 10.0.3.1075 loses its four-hour lock under Wine and completes no backup pass, so the stable image pins 10.0.1.1069. The beta's Wine carries the fix, so the beta leaves this empty and follows Backblaze's newest client. | `10.0.1.1069` (stable), empty (beta) |
-|`API_CORS_ORIGINS`| Comma-separated list of origins allowed to call the HTTP API from a browser. Unset by default, meaning no cross-origin request succeeds. There is deliberately no wildcard: a key is still required either way, but with one, any page the browser loaded could poll the container in the background. See [HTTP API](#http-api). | (unset) |
+|`BACKBLAZE_VERSION` | Pin the client to one exact version, for example `10.0.1.1069`. On each start the container installs that version if a different one is installed, newer or older, and skips the update check. Empty leaves the choice to `FORCE_LATEST_UPDATE` and `DISABLE_AUTOUPDATE`. When set, it wins over both, and `DISABLE_AUTOUPDATE` then only stops the search for a newer client. Client 10.0.3.1075 loses its four-hour lock under Wine and completes no backup pass, so the stable image pins 10.0.1.1069. The beta's Wine carries the fix, so the beta leaves this empty and follows Backblaze's newest client. | `10.0.1.1069` (stable), empty (beta) |
+|`API_CORS_ORIGINS`| Comma-separated list of origins allowed to call the HTTP API from a browser. Unset by default, meaning no cross-origin request succeeds. There is no wildcard. A key is still required either way, but with one, any page the browser loaded could poll the container in the background. See [HTTP API](#http-api). | (unset) |
 |`UMASK`| Mask that controls how file permissions are set for newly created files. The value of the mask is in octal notation.  By default, this variable is not set and the default umask of `022` is used, meaning that newly created files are readable by everyone, but only writable by the owner. See the following online umask calculator: http://wintelguy.com/umask-calc.pl | (unset) |
 |`TZ`| [TimeZone] of the container.  Timezone can also be set by mapping `/etc/localtime` between the host and the container. | `Etc/UTC` |
 |`APP_NICENESS`| Priority at which the application should run.  A niceness value of -20 is the highest priority and 19 is the lowest priority.  By default, niceness is not set, meaning that the default niceness of 0 is used.  **NOTE**: A negative niceness (priority increase) requires additional permissions.  In this case, the container should be run with the docker option `--cap-add=SYS_NICE`. | (unset) |
@@ -158,7 +158,7 @@ Environment variables can be set by adding one or more arguments `-e "<VAR>=<VAL
 |`CLEAN_TMP_DIR`| When set to `1`, all files in the `/tmp` directory are deleted during the container startup. | `1` |
 |`DISPLAY_WIDTH`| Width (in pixels) of the virtual screen's window. (Has to be divisible by 4) | `900` |
 |`DISPLAY_HEIGHT`| Height (in pixels) of the virtual screen's window. (Has to be divisible by 4) | `700` |
-|`WEB_AUTHENTICATION`| When set to `1`, the web interface asks for a login before it lets anyone in; this requires `SECURE_CONNECTION=1` as well. Off by default, which means anything on the LAN that can reach the container can reach the monitor's controls. | `0` |
+|`WEB_AUTHENTICATION`| When set to `1`, the web interface asks for a login before it lets anyone in. This requires `SECURE_CONNECTION=1` as well. Off by default, which means anything on the LAN that can reach the container can reach the monitor's controls. | `0` |
 |`SECURE_CONNECTION`| When set to `1`, an encrypted connection is used to access the application's GUI (either via a web browser or VNC client).  See the [Security](#security) section for more details. | `0` |
 |`VNC_PASSWORD`| Password needed to connect to the application's GUI.  See the [VNC Password](#vnc-password) section for more details. | (unset) |
 |`X11VNC_EXTRA_OPTS`| Extra options to pass to the x11vnc server running in the Docker container.  **WARNING**: For advanced users. Do not use unless you know what you are doing. | (unset) |
@@ -169,7 +169,7 @@ On Unraid, the edit window shows the template the container was installed from, 
 current one, so a variable added since then (such as `BACKBLAZE_VERSION` or
 `FORCE_LATEST_UPDATE`) does not appear until you add it: *Add another Path, Port, Variable,
 Label or Device*, Config Type *Variable*, Key `BACKBLAZE_VERSION`, Value as needed. The
-image's own default applies until you do.
+image's default applies until you do.
 
 ## Config Directory
 Inside the container, wine's configuration and with it Backblaze's configuration is stored in the
@@ -195,7 +195,7 @@ A minimum of 2 volumes need to be mounted to the container
 
   * /config - This is where Wine and Backblaze will be installed
   * Config folder on Unraid - prefer `/mnt/cache/appdata/<name>` to `/mnt/user/appdata/<name>`. Every file Wine holds open is also open in Unraid's shfs, which shares one open-file limit with everything else on `/mnt/user`, so a handle leak in the client can make other containers fail.
-  * Backup drives - map folders that hold files, not a ZFS pool's root: the client does not cross a mount point inside a drive, and each share on an Unraid ZFS pool is a dataset of its own, so `/mnt/cache` as a drive backs up nothing while `/mnt/cache/<share>` works. bb-doctor flags this.
+  * Backup drives - map folders that hold files, not a ZFS pool's root. The client does not cross a mount point inside a drive, and each share on an Unraid ZFS pool is a separate dataset, so `/mnt/cache` as a drive backs up nothing while `/mnt/cache/<share>` works. bb-doctor flags this.
   * Backup drives - these are the locations you wish to backup, any volume that is mounted as /drive_**driveletter** (from d up to z) will be mounted automatically for use in Backblaze with their equivalent letter, for example /drive_d will be mounted as D:. Mount these **read-write** - Backblaze creates a `.bzvol` folder in each drive's root, so a read-only mount will fail (the volume can't be tracked or its backup state inherited).
 
 You can mount drives with different paths, but these will need to be mounted manually within wine using the following method
@@ -248,20 +248,20 @@ Two things matter more than the raw numbers:
 
 - **Have swap, or headroom.** The failure mode on a tight host is the kernel's
   out-of-memory killer terminating `bztransmit` mid-pass. That leaves a stale lock behind
-  and every following pass fails to start, so the backup silently stops making progress:
-  see [Health and Auto-Recovery](#health-and-auto-recovery). A modest swap file absorbs
+  and every following pass fails to start, so the backup stops making progress with no error.
+  See [Health and Auto-Recovery](#health-and-auto-recovery). A modest swap file absorbs
   the peak and avoids this entirely.
 - **Watch file count, not bytes.** A few large media files cost almost nothing. Hundreds
   of thousands of small ones, such as bundled downloads, package caches and generated
-  thumbnails, are what pushes memory up. Excluding directories of regenerable junk is the cheapest fix
+  thumbnails, are what pushes memory up. Excluding directories of regenerable junk is the simplest fix
   available, though note that excluding a path that was previously backed up starts its
   retention clock, so only exclude things you would not want to restore.
 
 ## Health and Auto-Recovery
 
-The container reports the state of the **backup** as its Docker health status, not merely
+The container reports the state of the **backup** as its Docker health status, not only
 whether a process is alive. On Unraid the container shows as healthy or unhealthy on the
-Docker page; `docker inspect` and `docker ps` show it anywhere else. You can also ask
+Docker page, and `docker inspect` and `docker ps` show it anywhere else. You can also ask
 directly at any time:
 
 ```
@@ -271,35 +271,17 @@ docker exec <container> bb-health
 It reports one of:
 
 - `OK`: nothing is wrong. An idle container, a fresh install, or one that is signed out
-  is healthy: a backup tool with nothing to do right now is not broken.
+  is healthy, because a backup tool with nothing to do is not broken.
 - `HANG`: a backup pass is stuck on its chunk uploads: the transmit log has stopped with an
   upload child alive, an upload child has been alive for 20 minutes without finishing its 10 MB
   chunk, or the pass has been waiting 20 minutes for children that no longer exist. The pass
   has no timeout for a lost child, so it waits forever.
 - `DOWN`: the client is up but its service, bzserv, is not running, so no pass can start. The
-  container's service watch restarts it within five minutes; if it is still down half an hour
+  container's service watch restarts it within five minutes. If it is still down half an hour
   later the watchdog starts it itself. This state shows that one of them had to.
 
-The Settings tab's Exclusions panel manages rules in the exclusions file the client keeps,
-`bzexcluderules_editable.xml`. The client applies each rule to every drive, so one rule excludes a
-folder on every disk you have mapped, where the client's Exclusions window needs the folder added
-drive by drive; a rule can also match an extension, the end of a path, or text the path contains or
-must not contain. The rules made here sit between two comment markers in the file, and the rules the
-client wrote and any hand edits are left untouched. The client reads the file at the start of each
-pass. The managed rules travel in the settings export.
-
-The Settings tab's Backup and restore panel exports everything the container keeps for itself as
-one JSON file, and imports one: API keys, notification endpoints and events, quiet hours, warning
-choices and dismissals, and the Backblaze client's own settings as values. The API keys and the
-endpoints are the secrets. With a passphrase they go into the file encrypted, using scrypt and
-HMAC from Python's standard library, which is all the image has. Without one they are left out
-and the file records which sections are missing. The file carries a version, so a later build
-can read an older file. It does not carry the backup or its identity: the computer id, the drive
-stamps, the drive selections and the client's file lists stay in appdata and on the drives, and
-moving a backup to another host is still a copy of appdata or an inherit through the client.
-`bb-settings export` and `bb-settings import` do the same from the console.
-- `WEDGE`: a stale four-hour lock is blocking every pass. This is what an out-of-memory
-  kill or a container restart mid-pass leaves behind: the lock file outlives the process
+- `WEDGE`: a stale four-hour lock is blocking every pass. An out-of-memory kill
+  or a container restart mid-pass leaves it behind. The lock file outlives the process
   that owned it, and every subsequent pass fails to acquire it. It usually shows as a
   respawn loop: `bztransmit` is relaunched every few seconds and each attempt exits
   with "Failed to grab fourHourLock", which keeps every log fresh and hides the fault
@@ -307,7 +289,7 @@ moving a backup to another host is still a copy of appdata or an inherit through
 
 Both states are reported only on corroborated evidence. For `WEDGE`, the lock must be
 present *and* accompanied by repeated failures in the log *and* too old to belong to any
-`bztransmit` still inside its start-up grace window; a pass that has been running longer
+`bztransmit` still inside its start-up grace window. A pass that has been running longer
 than that window is always assumed to own the lock. A healthy backup is never
 flagged.
 
@@ -316,22 +298,22 @@ flagged.
 Set `ENABLE_WATCHDOG=true` to have the container fix both conditions itself. It checks
 every five minutes and takes the smallest action that clears the fault: deleting the stale
 lock for `WEDGE`, or killing the upload children and the pass for `HANG` so that bzserv starts a fresh pass.
-A `DOWN` is left to the service watch the first time; if the service is still down when the
+A `DOWN` is left to the service watch the first time. If the service is still down when the
 cooldown ends, the watchdog starts it with the same bounded `net start` the watch uses, so a
 watch that has died is not the only thing standing between a dead service and a backup that
-never resumes. Every cycle it also checks Wine's open files: client 10.0.3.1075's service leaks a
+never resumes. Every cycle it also checks Wine's open files. Client 10.0.3.1075's service leaks a
 handle on its `Backup.sql` database every few seconds, and at wineserver's limit nothing in the
 prefix can open a file, so upload children cannot start and the service itself dies. At 85% of
-the limit the watchdog restarts the service, which releases every leaked handle; on a busy host
+the limit the watchdog restarts the service, which releases every leaked handle. On a busy host
 that is every few hours. Pinning `BACKBLAZE_VERSION=10.0.1.1069` avoids the leak altogether.
 Every action is logged, shown as a warning row on the Status tab's timeline, sent as an
 "Automatic recovery acted" notification and counted in the metrics. After detecting a fault it waits 30 minutes before acting
-again - whether or not the recovery succeeded - so a fault it cannot fix produces one
+again, whether or not the recovery succeeded, so a fault it cannot fix produces one
 log line per cooldown rather than a retry storm. The cooldown always stays longer
 than the stall threshold, so the watchdog can never re-kill the healthy pass it just
 restarted before that pass has had time to prove itself in the log.
 
-The thresholds can be tuned if the defaults do not fit your setup - for instance a
+The thresholds can be tuned if the defaults do not fit your setup, for instance a
 very slow uplink where more than 20 minutes between transmit-log writes is normal:
 
 | Variable | Meaning | Default |
@@ -344,16 +326,15 @@ very slow uplink where more than 20 minutes between transmit-log writes is norma
 |`FD_RESTART_PCT`| The watchdog restarts the Backblaze service when Wine's open files reach this percentage of the limit, to release the handles client 10.0.3.1075 leaks | `85` |
 |`COOLDOWN_MIN`| Minutes the watchdog waits after acting before it may act again (raised automatically if set at or below `STALL_MIN`) | `30` |
 
-All six take plain whole numbers; anything else falls back to the default.
+All seven take plain whole numbers. Anything else falls back to the default.
 
-It is **opt-in** because it deletes a lock file and kills processes, which should be a
-deliberate choice rather than a surprise. Leaving it off costs nothing: the health status
-still tells you when something is wrong.
+It is **opt-in** because it deletes a lock file and kills processes. With it off, the
+health status still tells you when something is wrong.
 
 ## Upload Monitor
 
-The GUI shows little while a large file uploads: no percentage, no live speed. The
-container therefore ships `bb-monitor`, a terminal dashboard that reads Backblaze's own
+The GUI shows no percentage and no live speed while a large file uploads. The
+container ships `bb-monitor`, a terminal dashboard that reads Backblaze's
 transmit state directly.
 
 On Unraid, click the container's icon on the Docker page, choose **Console**, and run:
@@ -371,16 +352,35 @@ docker exec -it Backblaze64 bb-monitor
 It shows live upload speed, the files each thread is sending right now with estimated
 progress bars, recently completed files with size and speed, active thread count,
 chunks per minute, the session total, and container memory plus host swap gauges.
-Files larger than ~100 MB are split into parts by Backblaze: the parts appear
+Files larger than ~100 MB are split into parts by Backblaze. The parts appear
 individually while uploading, then bundle into a single row once completed, with the
 thread column showing parts done out of total. Scroll with the arrow keys or
 PgUp/PgDn when many files are in flight, and quit with `q`.
 
+The Settings tab's Exclusions panel manages rules in the exclusions file the client keeps,
+`bzexcluderules_editable.xml`. The client applies each rule to every drive, so one rule excludes a
+folder on every disk you have mapped, where the client's Exclusions window needs the folder added
+drive by drive. A rule can also match an extension, the end of a path, or text the path contains or
+must not contain. The rules made here sit between two comment markers in the file, and the rules the
+client wrote and any hand edits are left untouched. The client reads the file at the start of each
+pass. The managed rules travel in the settings export.
+
+The Settings tab's Backup and restore panel exports everything the container keeps for itself as
+one JSON file, and imports one: API keys, notification endpoints and events, quiet hours, warning
+choices and dismissals, and the Backblaze client settings as values. The API keys and the
+endpoints are the secrets. With a passphrase they go into the file encrypted, using scrypt and
+HMAC from Python's standard library, which is all the image has. Without one they are left out
+and the file records which sections are missing. The file carries a version, so a later build
+can read an older file. It does not carry the backup or its identity: the computer id, the drive
+stamps, the drive selections and the client's file lists stay in appdata and on the drives, and
+moving a backup to another host is still a copy of appdata or an inherit through the client.
+`bb-settings export` and `bb-settings import` do the same from the console.
+
 ## HTTP API
 
 The container serves a key-authenticated API on the same port as the web interface, for
-anything outside the browser: a status display, an automation system, a script, or a plugin
-of your own. It reports everything the upload monitor knows, in raw units, and can start or
+anything outside the browser: a status display, an automation system, a script, or a plugin.
+It reports everything the upload monitor knows, in raw units, and can start or
 pause a backup.
 
 It is off until you create a key, and answers `404` until then. Create one from the **API**
@@ -397,17 +397,17 @@ curl -H "Authorization: Bearer <key>" https://<host>:<port>/api/v1/status
 ```
 
 Permissions are granted per operation, so a display that shows progress can be given
-`read` alone and nothing else: not the names of your files, and no ability to touch the
-backup. Pausing uses the backup client's own mechanism rather than killing anything.
+`read` alone, which gives it no file names and no ability to touch the
+backup. Pausing uses the backup client's pause mechanism and kills nothing.
 
-Keys never expire unless you give them a lifetime, which suits something long-running; put a
+Keys never expire unless you give them a lifetime, which suits something long-running. Put a
 date on one you are handing to someone for a one-off. A consumer running in a browser needs
 its origin naming in `API_CORS_ORIGINS` before it can call the API cross-origin, and there is
 no wildcard.
 
 **Full reference: [docs/api-v1.md](docs/api-v1.md)**: endpoints, permissions, every field
 with its units, and the schema-versioning promise. Build against that rather than against
-the monitor's own web feed, which is an internal shape and can change without notice.
+the monitor's web feed, which is an internal shape and can change without notice.
 
 ## Checking Versions
 
@@ -419,9 +419,9 @@ Reports the container image and Wine versions, the Backblaze client version you 
 installed, and the version Backblaze is currently serving, plus whether an update is
 pending and, if one is being held back, which setting is holding it.
 
-Backblaze publishes release notes **ahead of** actually serving a build, so a version
+Backblaze publishes release notes **ahead of** serving a build, so a version
 number you read about there is often not yet installable. `bb-version` queries the same
-API the updater polls, so it answers the question that actually matters: what will happen
+API the updater polls, so it reports what will happen
 on the next container restart. With the default `FORCE_LATEST_UPDATE=true`, a newer client
 is picked up automatically once Backblaze serves it. There is nothing to do by hand.
 
@@ -432,8 +432,8 @@ revision, LTS variant and build date it was built from:
 docker exec <container> bb-monitor --version
 ```
 
-The tools always ship together inside an image, so that build stamp, rather than a
-separate version per tool, is what identifies exactly what you are running.
+The tools always ship together inside an image, so that build stamp identifies
+exactly what you are running. There is no separate version per tool.
 
 This output is also the most useful thing to include when reporting a problem.
 
@@ -444,7 +444,7 @@ docker exec <container> bb-doctor
 docker exec <container> bb-doctor --fix
 ```
 
-Checks the installation against the problems this project has actually run into: the
+Checks the installation against the problems this project has run into: the
 Wine prefix and reported Windows version, the manifest that lets client self-updates
 past the OS check, drive mappings and their readability, control panel skin files,
 permissions and free space, RAM and swap against your file count, zombie processes,
@@ -454,22 +454,22 @@ With `--fix` it repairs what can be repaired safely: the reported Windows versio
 the supportedOS manifest, missing drive links, missing skin aliases, a stale lock left behind
 by an out-of-memory kill, a stopped Backblaze service, a pass stuck waiting for a lost upload
 child, and a drive stamp (`.bzvol/bzvol_id.xml`) whose volume id or computer
-identity differs from the client's own record, restored to the value the client wrote with the
+identity differs from the client's record, restored to the value the client wrote with the
 previous stamp kept beside it. Repairs are idempotent and are skipped whenever the diagnosis is
-ambiguous; the stamp repair is the one that touches the backup's identity, and it writes only a
-value the client itself recorded, never a guess: a tool that "fixes" a misdiagnosis is worse than
-one that just reports. It also names the directories the client's scanner could not open, from the
-scanner's own log, with the reason: a quote or another character Windows does not allow in a name,
+ambiguous. The stamp repair is the only one that touches the backup's identity, and it writes only a
+value the client itself recorded. A tool that "fixes" a misdiagnosis is worse than
+one that only reports. It also names the directories the client's scanner could not open, from the
+scanner's log, with the reason: a quote or another character Windows does not allow in a name,
 trailing dots, or ownership the container user cannot read through. Linux allows all of these and
-Windows does not; a disk's file list stops at the first such directory and nothing after it is
+Windows does not. A disk's file list stops at the first such directory and nothing after it is
 backed up, which otherwise shows only as "producing file lists" for hours. The Monitor raises the
-same as a warning. Anything it will not fix on its own (too little RAM, no swap,
+same as a warning. Anything it will not fix (too little RAM, no swap,
 a full disk, a wedged transfer) is reported with what to do about it.
 
 On the beta image the Tools tab of the web interface runs `bb-doctor`, `bb-health` and
 `bb-version` from the browser and shows the output on the page, with `--fix` as a
-checkbox that asks for confirmation. It runs the same programs as the console; there is
-no second copy. The Status tab lists everything the client says needs attention,
+checkbox that asks for confirmation. It runs the same programs as the console.
+The Status tab lists everything the client says needs attention,
 with the reason for a pause and what to do about a safety freeze, and has a Copy status
 summary button that gives the five lines a maintainer asks for first.
 
@@ -478,22 +478,22 @@ warning band, for the case where you have looked at it and know the state is fin
 neither, because both mean nothing is being backed up: a safety freeze, and passes losing their
 four-hour lock. A dismissed warning stays off the Status tab, the Monitor, the terminal
 monitor's title bar and the `bb64_health_warning` metric, so an alert cannot keep firing on
-something you have already decided about; the API still reports it, marked dismissed. The
+something you have already decided about. The API still reports it, marked dismissed. The
 Warnings and events list on the Settings tab has every kind of warning with a Show box and,
 where a notification event exists for it, a Notify box, lists what has been dismissed and when,
 and has a Reset that puts the dismissed ones back without touching the Show choices. Two drives never raise the "set to back up nothing"
-warning in the first place: `C:` is the Wine prefix and whichever letter Wine maps to the
+warning in the first place. `C:` is the Wine prefix and whichever letter Wine maps to the
 container root is the container itself, so neither holds anything that wants backing up.
 
 The beta `bb-doctor` also checks each mapped drive: that the container user can read its
 root and its first-level folders, that the client still recognises the drive's identity, and
-that the client is actually set to back the drive up. That last one is the fault behind
-"No files are selected": the client keeps a filter list with one entry per drive, and a drive
+that the client is set to back the drive up. That last one is the fault behind
+"No files are selected". The client keeps a filter list with one entry per drive, and a drive
 whose entry reads "none" appears ticked in the settings window and backs up nothing.
 
 It also reads what Backblaze report about the account: whether the licence is active, whether
 a renewal has failed, whether the backup is safety-frozen, whether a private encryption key is
-set, and whether the container's own config directory is sitting inside a backed-up drive
+set, and whether the container's config directory is sitting inside a backed-up drive
 without being excluded.
 
 A note on the console. `docker exec` enters the container as root, and root passes every
@@ -526,21 +526,21 @@ with a download and a delete button for each.
 posted publicly: the per-thread XMLs carry a live authentication token, the AES key and
 IV, and the wrapped file encryption key; the `bz_done` files are a complete listing of
 everything on your machine. None of these are collected, ever. The bundle is built from
-an explicit list of safe sources rather than by scrubbing whatever is lying around: a
+an explicit list of safe sources rather than by scrubbing whatever is lying around. A
 list of what to exclude only has to be wrong once.
 
 **How file names are handled.** Names are replaced with keyed hashes, one per path
 component:
 
 ```
-D:\MediaStore\Photos\Holiday\IMG_0042.CR2   ->   D:\9f2c1a4b7e88\3d5a1c9b2e77\...\a71c….CR2
+D:\MediaStore\Photos\Holiday\IMG_0042.CR2   ->   D:\9f2c1a4b7e88\3d5a1c9b2e77\...\a71c....CR2
 ```
 
 Because each component is hashed separately, files in the same folder share a folder
 hash. That is enough to see that everything failing sits in one directory, or that the
 same file keeps failing, without revealing what any of them are called. Drive letters
 and the conventional mount roots (`/drive_d`, `/mnt`, ...) are kept, and recognised
-file extensions survive on file names - they say what kind of file was involved and
+file extensions survive on file names, because they say what kind of file was involved and
 identify nobody. A mount root you named yourself is treated as part of the data and
 hashed like everything beneath it, and container-internal paths (`/usr`, `/config`,
 ...) stay readable so the diagnostics remain legible.
@@ -550,7 +550,7 @@ salt that is generated once, stored in your config folder readable only by you, 
 **never included in a bundle**.
 
 **Linking bundles, and unlinking them.** The same name always produces the same hash, so
-if you send two bundles while chasing one problem, they can be compared: the same
+if you send two bundles while chasing one problem, they can be compared, and the same
 folder or file is recognisable across both. That also means the two bundles are
 identifiable as coming from the same machine. When you would rather they were not:
 
@@ -562,7 +562,7 @@ This rotates the salt, so future bundles share nothing with earlier ones. It ask
 confirmation first, because it permanently breaks the connection with anything you have
 already sent, including bundles attached to an issue that is still open. Each bundle
 notes a short *hash epoch* identifier so it is clear which bundles can be compared with
-each other; the identifier reveals nothing about your files.
+each other. The identifier reveals nothing about your files.
 
 Have a look through the bundle before you post it. It is your machine, and you should be
 comfortable with what is in it.
@@ -582,9 +582,9 @@ It differs from the stable images in four ways:
 
 - The Wine in it is **built from source with a patch that WineHQ has not yet
   reviewed**. The fix is filed as [WineHQ bug 59893](https://bugs.winehq.org/show_bug.cgi?id=59893)
-  and submitted upstream; until it is accepted, this is a change no one else has
+  and submitted upstream. Until it is accepted, this is a change no one else has
   vetted.
-- It tracks **Ubuntu 26.04**, the newer LTS, rather than the stable default.
+- It tracks **Ubuntu 26.04**, the newer LTS.
 - It is rebuilt on a schedule rather than pinned to a release, so it moves.
 - The web interface has Monitor, Status, Tools, API and Settings tabs beside the desktop,
   and the key-authenticated HTTP API. Settings holds Notifications (ntfy, Pushbullet,
@@ -592,13 +592,13 @@ It differs from the stable images in four ways:
   files, a stall, a pause the client chose, and more) and Quiet hours (pause windows on a
   weekly schedule). These are described in the changelog and in
   [`docs/api-v1.md`](docs/api-v1.md). A notification endpoint cannot point at the
-  container's own loopback address or a link-local one; sending a test only ever reports
-  "delivered" or "not delivered", from a small fixed vocabulary, and the endpoint's actual
+  container's loopback address or a link-local one. Sending a test only ever reports
+  "delivered" or "not delivered", from a small fixed vocabulary, and the endpoint's
   reply is written to the container log instead. While a quiet hours action is still in
-  flight, its last-result state briefly reads as unknown rather than success or failure.
+  flight, its last-result state briefly reads as unknown.
 
 Use the stable tags unless upload speed is the reason you are here. When the fix
-reaches a Wine release the stable images pick it up on their own and the beta stops
+reaches a Wine release the stable images pick it up automatically and the beta stops
 being necessary.
 
 `bb-version` reports `beta-ubuntu26` as its variant, so a bug report always says
@@ -607,12 +607,12 @@ which image it came from.
 Wine is licensed under the LGPL. This image contains a modified Wine built from the
 public source at [gitlab.winehq.org](https://gitlab.winehq.org/wine/wine) with the
 patch in [`patches/`](https://github.com/iamfoz/backblaze-64-personal-wine-container/tree/main/patches)
-applied; both are available at those locations.
+applied. Both are available at those locations.
 
 ## Optional: Wine Upload-Speed Patch
 
 Single-stream uploads run far slower under Wine than they should. The cause is a bug in
-Wine's `select()` writability reporting, not in Backblaze or this container: Wine reports
+Wine's `select()` writability reporting, not in Backblaze or this container. Wine reports
 a socket as "not writable" while its send buffer still has room, so the sending loop waits
 out a full timeout instead of sending. This is filed as
 [WineHQ bug 59893](https://bugs.winehq.org/show_bug.cgi?id=59893) with a fix submitted
@@ -638,8 +638,8 @@ Use `Dockerfile.ubuntu26` instead for the Ubuntu 26.04 variant.
 The patch itself is [`patches/wine-writability-fix.patch`](patches/wine-writability-fix.patch)
 (it is not part of the standard images). It is byte-identical to the series submitted
 to WineHQ for review, and the build applies it with `git apply --check` first, so a
-mismatch with Wine's source stops the build rather than silently producing a mispatched
-Wine. Wine is licensed under the LGPL; the patched build is produced from Wine's public
+mismatch with Wine's source stops the build before it can produce a mispatched
+Wine. Wine is licensed under the LGPL. The patched build is produced from Wine's public
 source with the patch in this repository applied, both of which are available at the
 links above.
 
@@ -872,7 +872,7 @@ container.
 ## Additional Information
 
 1. Warning: The Backblaze client is not an init system (who knew) and doesn't clean up its zombie children. This will cause it to fill up your system's PID limit within a few hours which prevents new processes from being created system-wide, would not recommend.  
-The `--init` flag installs a tiny process that can actually do a few init things like wait()ing children in place of the backblaze client as PID 1.  
+The `--init` flag installs a tiny process that can do a few init things like wait()ing children in place of the backblaze client as PID 1.  
 2. Backblaze will create a `.bzvol` directory in the root of every hard drive it's configured to back up in which it'll store a full copy of files >100M split into 10M parts. Mount accordingly if you want to preserve SSD erase cycles.
 3. You can browse the files accessible to Backblaze using:
     ````shell
@@ -893,7 +893,7 @@ The `--init` flag installs a tiny process that can actually do a few init things
 
 It builds directly on [@JonathanTreffler](https://github.com/JonathanTreffler/backblaze-personal-wine-container)'s Backblaze Personal Wine Community Container. Huge thanks to Jonathan, whose project this is forked from. That project was originally developed by [@Atemu](https://github.com/Atemu/backblaze-personal-wine-container) and is built on [@jlesage](https://github.com/jlesage/docker-baseimage-gui)'s excellent GUI base image.
 
-The Backblaze name, logo and application are the property of Backblaze, Inc. This image does not redistribute the Backblaze application; it is downloaded from the official Backblaze servers during installation.
+The Backblaze name, logo and application are the property of Backblaze, Inc. This image does not redistribute the Backblaze application. It is downloaded from the official Backblaze servers during installation.
 
 ## Contributors:
 

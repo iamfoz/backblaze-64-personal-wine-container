@@ -20,9 +20,9 @@ mkdir -p "$BZ/bzlogs/bztransmit" "$BZ/bzbackup" "${PFX}drive_c" "$FX/proc" "$FX/
 LOGCUR="$BZ/bzlogs/bztransmit/bztransmit$(date +%d).log"
 LOCK="$BZ/bzbackup/lock_bzfileid_4_hour_lock.lck"
 
-# Point the script's /proc scans at the fixture; the data paths follow from
+# Point the script's /proc scans at the fixture. The data paths follow from
 # WINEPREFIX. Stub the two external commands: bb-health answers OK so the
-# doctor's own check is what decides, and curl answers reachable instantly.
+# doctor's check decides, and curl answers reachable instantly.
 sed -e "s#/proc/\[0-9\]\*/cmdline#$FX/proc/[0-9]*/cmdline#g" \
     -e "s#^MEMINFO=.*#MEMINFO=$FX/meminfo#" \
     -e "s#^CG_EVENTS=.*#CG_EVENTS=$FX/memory.events#" \
@@ -38,7 +38,7 @@ printf '#!/bin/sh\necho OK\n' > "$FX/bin/bb-health"
 printf '#!/bin/sh\nexit 0\n' > "$FX/bin/curl"
 chmod +x "$FX/bin/bb-health" "$FX/bin/curl"
 # The doctor bounds its Wine calls with coreutils timeout and util-linux setsid,
-# both in the image. A dev laptop may lack either; stand-ins that just run the
+# both in the image. A dev laptop may lack either. Stand-ins that just run the
 # command keep the test about the doctor rather than the machine it runs on.
 if ! command -v setsid >/dev/null 2>&1; then
     printf '#!/bin/sh\nexec "$@"\n' > "$FX/bin/setsid"; chmod +x "$FX/bin/setsid"
@@ -78,13 +78,13 @@ mkproc(){ rm -rf "$FX/proc"; mkdir -p "$FX/proc"; echo "$UP.00 $UP.00" > "$FX/pr
 # the 20th field after the comm). mkproc assigns pids from 100 in argument
 # order. Without a stat file the process age is unreadable, and the doctor must
 # treat it as old enough to own the lock (fail safe).
-# The third argument is the parent pid; a live parent when omitted.
+# The third argument is the parent pid, a live parent when omitted.
 procage(){ printf '%s (bztransmit.exe) S %s 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 %s 0\n' \
   "$1" "${3:-99}" $(( (UP - $2) * 100 )) > "$FX/proc/$1/stat"; }
 agef(){ perl -e 'my $t=time-$ARGV[1]; utime $t,$t,$ARGV[0]' "$1" "$2"; }
 spam(){ for i in $(seq 1 "$1"); do echo "10:00:0$i - Failed to grab fourHourLock lock (DoBackupPass.cpp:111)"; done; }
 # --fix actions are recorded through bb-record.sh into the recovery log the
-# monitor reads; the library is sourced by absolute path, redirected here.
+# monitor reads. The library is sourced by absolute path, redirected here.
 sed -i.bak "s#^\. /usr/local/lib/bb-record.sh#. $HERE/../rootfs/usr/local/lib/bb-record.sh#" "$FX/bb-doctor" && rm -f "$FX/bb-doctor.bak"
 export BB_RECOVERY_LOG="$FX/recovery.log"
 run(){ env WINEPREFIX="$PFX" PATH="$FX/bin:$PATH" "$FX/bb-doctor" "$@" 2>/dev/null; }
@@ -162,7 +162,7 @@ rm -f "$FX/meminfo"
 
 # ---- the three on-demand repairs: service, stuck pass, manifest ---------------------
 # The fixture's wine stub "starts" the service by putting a bzserv.exe entry in
-# the fake process table; stop_process is stood in for by removing an entry.
+# the fake process table. stop_process is stood in for by removing an entry.
 cat > "$FX/bin/wine" <<EOF
 #!/bin/sh
 case "\$1 \$2 \$3" in "net start bzserv") mkdir -p "$FX/proc/900"; printf 'C:\\\\Program Files\\\\Backblaze\\\\bzserv.exe' > "$FX/proc/900/cmdline";; esac
@@ -203,10 +203,10 @@ PR="$(env PATH="$FX/bin:$PATH" sh -c 'BZ="$1"; OK(){ echo "[ok] $*"; }; WARN(){ 
 has "$PR" "inherit of the backup state is in progress: tbs_after_files_swap, 60%" "passes: a fresh progress file is still an inherit in progress"
 rm -rf "$BZ/bzinherit"
 
-# ---- the beta's source-drive drop-in: identity by the client's own format --------
-# bzvol_id.xml carries bzVolumeGuid="v00" + 25 hex; bzvolumes.xml maps each id to
+# ---- the beta's source-drive drop-in: identity by the client's format ------------
+# bzvol_id.xml carries bzVolumeGuid="v00" + 25 hex. bzvolumes.xml maps each id to
 # a mount point as hex (443a5c is D:\). Captured from a live container on
-# 2026-09-21; the earlier check looked for a GUID shape that never occurs and
+# 2026-09-21. The earlier check looked for a GUID shape that never occurs and
 # raised a false warning on one user's drive while missing a real one.
 DROP="$HERE/../rootfs-beta/usr/local/lib/bb-doctor-drives.sh"
 VOLS="$BZ/bzvolumes.xml"
@@ -214,7 +214,7 @@ KNOWN_D=v00121e7007550b3825692e70910; KNOWN_E=v000d1c7004550b3825692e70910
 printf '<bzvolumes>\n<bzvolume bzVolumeGuid="%s" mountPointPathHex="443a5c" typeOfVolumeTwoCharCode="gm" />\n<bzvolume bzVolumeGuid="%s" mountPointPathHex="453a5c" typeOfVolumeTwoCharCode="gm" />\n</bzvolumes>\n' "$KNOWN_D" "$KNOWN_E" > "$VOLS"
 # The stamp as captured: <bzvolume vguid="..." associated_hguid="..." />.
 mkdrive(){ mkdir -p "$FX/drive_$1/.bzvol"; ln -sfn "$FX/drive_$1" "${PFX}dosdevices/$1:"; [ -n "$2" ] && printf '<?xml version="1.0" encoding="UTF-8" ?>\n<contents>\n<bzvolume vguid="%s" associated_hguid="%s" />\n</contents>\n' "$2" "${3:-a279b04955a1845499e60219}" > "$FX/drive_$1/.bzvol/bzvol_id.xml"; :; }
-# This install's own identity, as bzinstall.xml carries it (attribute name captured 2026-09-22).
+# This install's identity, as bzinstall.xml carries it (attribute name captured 2026-09-22).
 mkdir -p "${PFX}drive_c/Program Files/Backblaze"
 printf '<?xml version="1.0"?>\n<bzinstall hguid="a279b04955a1845499e60219" version="10.0.3.1075" />\n' > "${PFX}drive_c/Program Files/Backblaze/bzinstall.xml"
 mkdrive d "$KNOWN_D"                         # stamped with the id the client has for D:
@@ -233,7 +233,7 @@ printf '<bzvolume bzVolumeGuid="%s" mountPointPathHex="4b3a5c" typeOfVolumeTwoCh
 mkdrive k "$CUR_K"
 printf '<bzvolume bzVolumeGuid="%s" mountPointPathHex="4c3a5c" typeOfVolumeTwoCharCode="gm" lastTimeVolumeWasSeenAttachedGmtMillis="1700000000000" />\n<bzvolume bzVolumeGuid="%s" mountPointPathHex="4c3a5c" typeOfVolumeTwoCharCode="gm" lastTimeVolumeWasSeenAttachedGmtMillis="1790000000000" />\n' "v000000000000000000000000003" "v000000000000000000000000004" >> "$VOLS"
 mkdrive l "v00fffffffffffffffffffffffff"
-# One drive with a large sparse file for the read-speed sample; the others have none.
+# One drive with a large sparse file for the read-speed sample. The others have none.
 mkdir -p "$FX/drive_d/media"; dd if=/dev/zero of="$FX/drive_d/media/film.mkv" bs=1M count=0 seek=300 2>/dev/null
 DR="$(cd "$FX" && sh -c 'PREFIX="$1"; BZ="$2"; OK(){ echo "[ok] $*"; }; WARN(){ echo "[warn] $*"; }; BAD(){ echo "[FAIL] $*"; }; NOTE(){ echo "  $*"; }; . "$3"' _ "$PFX" "$BZ" "$DROP" 2>&1)"
 if date +%s%N 2>/dev/null | grep -qE '^[0-9]{16,}$'; then
@@ -243,7 +243,7 @@ else
 fi
 has "$DR" "E: read speed not measured: no file over 64 MB within 3 levels" "drives: no large file means no measurement, said plainly, three levels by default"
 # The depth setting: a file four levels down is missed at the default and found
-# with "until a file is found"; the conf file is what the Settings tab writes.
+# with "until a file is found". The Settings tab writes the conf file.
 mkdir -p "$FX/drive_e/a/b/c"; dd if=/dev/zero of="$FX/drive_e/a/b/c/deep.mkv" bs=1M count=0 seek=200 2>/dev/null
 DRS="$(cd "$FX" && sh -c 'PREFIX="$1"; BZ="$2"; OK(){ echo "[ok] $*"; }; WARN(){ echo "[warn] $*"; }; BAD(){ echo "[FAIL] $*"; }; NOTE(){ echo "  $*"; }; sed "s#/config/bb-api/doctor.json#$4#" "$3" > "$4.sh"; . "$4.sh"' _ "$PFX" "$BZ" "$DROP" "$FX/doctor.json" 2>&1)"
 has "$DRS" "E: read speed not measured: no file over 64 MB within 3 levels" "drives: a file four levels down is not found at the default depth"
@@ -276,7 +276,7 @@ mkdir -p "$FX/drive_j/.bzvol"; ln -sfn "$FX/drive_j" "${PFX}dosdevices/j:"
 printf '<bzvolume vguid="v00aaaaaaaaaaaaaaaaaaaaaaaaa" associated_hguid="x" />\n<bzvolume vguid="v00bbbbbbbbbbbbbbbbbbbbbbbbb" associated_hguid="x" />\n' > "$FX/drive_j/.bzvol/bzvol_id.xml"
 printf '<bzvolume bzVolumeGuid="%s" mountPointPathHex="4a3a5c" typeOfVolumeTwoCharCode="gm" />\n' "v00ccccccccccccccccccccccccc" >> "$VOLS"
 DF="$(cd "$FX" && sh -c 'FIX=1; PREFIX="$1"; BZ="$2"; OK(){ echo "[ok] $*"; }; WARN(){ echo "[warn] $*"; }; BAD(){ echo "[FAIL] $*"; }; NOTE(){ echo "  $*"; }; . "$3"' _ "$PFX" "$BZ" "$DROP" 2>&1)"
-has "$DF" "\[ok\] E: repaired: vguid set to $KNOWN_E" "fix: a stamp from another install gets the client's own id"
+has "$DF" "\[ok\] E: repaired: vguid set to $KNOWN_E" "fix: a stamp from another install gets the client's id"
 grep -q "vguid=\"$KNOWN_E\" associated_hguid=\"a279b04955a1845499e60219\"" "$FX/drive_e/.bzvol/bzvol_id.xml" && echo "PASS fix: the file carries the new vguid and the untouched hguid" || { echo "FAIL fix: drive_e stamp not rewritten as expected"; FAILED=$((FAILED+1)); }
 ls "$FX/drive_e/.bzvol/"bzvol_id.xml.bak-* >/dev/null 2>&1 && echo "PASS fix: the previous stamp is kept beside it" || { echo "FAIL fix: no backup of the stamp"; FAILED=$((FAILED+1)); }
 has "$DF" "\[ok\] I: repaired: the stamp now carries this install's computer identity" "fix: a stamp for another identity gets this install's"
@@ -309,14 +309,14 @@ has "$out" "\[warn\] 2 directories the scanner cannot open, so nothing inside th
 has "$out" 'D:\\Senary\\Joe "Fingers" Webster - a character Windows does not allow' "scan: the quoted name with its reason"
 has "$out" 'Father of All... - trailing dots or spaces' "scan: the trailing dots with theirs"
 mv "$FX/drive_d/Senary/Joe \"Fingers\" Webster" "$FX/drive_d/Senary/Joe Fingers Webster"; mv "$FX/drive_d/Music/Father of All..." "$FX/drive_d/Music/Father of All"
-has "$(run)" "\[ ok \] 3 directories the scanner could not open have since been renamed, removed or made readable" "scan: after the renames the doctor says so"
+has "$(run)" "\[ ok \] 3 directories the scanner could not open have since been renamed, removed or made readable" "scan: after the renames the doctor reports them fixed"
 rm -f "$BZ/bzlogs/bzfilelist/bzfilelist07.log"
 : > "$BZ/bzlogs/bzfilelist/bzfilelist08.log"
 has "$(run)" "the scanner opened every directory it tried" "scan: a clean log is an ok line"
 
 # ---- the config drop-in: the config directory reached through a mapped pool ----
 # Same directory, two mounts: a bind of a path inside the pool as /config and the
-# pool itself as Y:. Resolved paths differ; device and inode do not.
+# pool itself as Y:. Resolved paths differ, but device and inode do not.
 CDROP="$HERE/../rootfs-beta/usr/local/lib/bb-doctor-config.sh"
 mkdir -p "$FX/pool/appdata/Backblaze64/wine" "$FX/pool/other"
 CF="$(env PATH="$FX/bin:$PATH" sh -c 'eval "$(sed -n "/_cfg_find_config_in()/,/^    _cfg_config_dir=/p" "$1" | sed "\$d")"; _cfg_find_config_in "$2" "$(stat -c %d:%i "$3")"' _ "$CDROP" "$FX/pool" "$FX/pool/appdata/Backblaze64")"
@@ -325,7 +325,7 @@ CF="$(env PATH="$FX/bin:$PATH" sh -c 'eval "$(sed -n "/_cfg_find_config_in()/,/^
 [ -z "$CF" ] && echo "PASS config: and not under a drive that does not hold it" || { echo "FAIL config: found '$CF' under the wrong root"; FAILED=$((FAILED+1)); }
 
 # ---- the drives drop-in: folders that are separate filesystems -----------------
-# A ZFS pool mapped at its root: every share is a dataset of its own, and the
+# A ZFS pool mapped at its root: every share is a separate dataset, and the
 # client does not cross mount points. Device numbers come from a .fakedev file
 # here, since a test cannot mount anything.
 mkdrive m ""; mkdir -p "$FX/drive_m/FozStore" "$FX/drive_m/appdata"

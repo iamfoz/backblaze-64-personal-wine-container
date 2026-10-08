@@ -4,12 +4,12 @@
 bb-report produces a bundle intended to be posted publicly on a forum or issue
 tracker, built from files that contain a live authentication token, the AES key
 and IV, the wrapped file encryption key, and the full path of whatever is being
-uploaded. A sanitiser bug here does not cause a crash - it quietly publishes
-someone's private data - so this runs in CI rather than depending on anyone
+uploaded. A sanitiser bug here publishes someone's private data
+without any error, so this runs in CI instead of relying on anyone
 remembering to check.
 
 The fixtures use the real shapes seen in this container, not invented ones. Two
-genuine leaks were caught this way during development: path matching stopped at
+real leaks were caught this way during development: path matching stopped at
 the first space, and then at the first apostrophe, leaving names like
 "Jane's Old Hard Disk\\tax return 2019.pdf" sitting in the output in full.
 

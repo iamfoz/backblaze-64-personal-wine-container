@@ -1,5 +1,5 @@
 # Run bb-doctor as the container user, not as root. Sourced by a beta-only patch
-# near the top of bb-doctor; fold it into that script at the next stable release.
+# near the top of bb-doctor. Fold it into that script at the next stable release.
 #
 # `docker exec` enters the container as root, and root passes every permission
 # test. The checks that matter most in this container are permission tests:
@@ -10,15 +10,14 @@
 # the README said to and was told the files could be read.
 #
 # So when this runs as root it re-runs itself as the user the client runs as,
-# which is the user whose view of the files is the one that counts. The same
-# arguments are passed through. Nothing here changes what bb-doctor checks; it
-# changes who is asking.
+# whose view of the files is the one that counts. The same arguments are
+# passed through. Nothing here changes what bb-doctor checks, only who is
+# asking.
 #
 # The target is USER_ID:GROUP_ID, which the image sets for the client and which
 # `docker exec` inherits. When those are absent, the owner of /config is used,
 # because the client must own /config to run at all. A target of root means the
-# container really is configured to run as root, and then root is the right
-# answer and nothing is done.
+# container is configured to run as root, and then nothing is done.
 
 if [ "$(id -u 2>/dev/null)" = 0 ] && [ -z "${BB_DOCTOR_DROPPED:-}" ]; then
     _tu="${USER_ID:-}"; _tg="${GROUP_ID:-}"
@@ -35,9 +34,9 @@ if [ "$(id -u 2>/dev/null)" = 0 ] && [ -z "${BB_DOCTOR_DROPPED:-}" ]; then
         elif command -v su-exec >/dev/null 2>&1; then
             exec su-exec "${_tu}:${_tg}" "$0" "$@"
         fi
-        # No way to drop privileges in this image. Say so at the top, where it
-        # will be read, and let the checks run; the ones below that depend on
-        # permissions now say when they cannot be trusted.
+        # No way to drop privileges in this image. Warn at the top, where it
+        # will be read, and let the checks run. The ones below that depend on
+        # permissions now report when they cannot be trusted.
         WARN "running as root: permission checks cannot fail, so an unreadable file reads as readable"
         NOTE "run this as the container user instead: docker exec -u ${_tu}:${_tg} <container> bb-doctor"
         echo

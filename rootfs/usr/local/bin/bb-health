@@ -10,20 +10,20 @@
 #          Three shapes, any one of which is enough:
 #            - a push child is alive but the transmit log has not advanced for
 #              STALL_MIN minutes (the original deadlock in Wine's pipe handling);
-#            - a push child has itself been alive for STALL_MIN minutes. One
+#            - a push child has been alive for STALL_MIN minutes. One
 #              chunk is 10 MB and takes seconds; a child that old never reached
 #              its upload, as when Wine's process start-up hangs;
 #            - the pass's last log line says it is waiting for "sub_threads"
 #              and has been for STALL_MIN minutes, and no push child exists at
 #              all. A child that died before it could report leaves the parent
 #              waiting forever, while its heartbeat keeps the log looking fresh.
-#          The pass on its own does not recover from any of these: it has no
+#          The pass does not recover from any of these, because it has no
 #          timeout for a child. A long wait with young children coming and
-#          going is a slow link, not a hang, and stays OK.
+#          going is a slow link and stays OK.
 #
-#   DOWN   The client is up but its service, bzserv, is not. bzserv is what
+#   DOWN   The client is up but its service, bzserv, is not. bzserv
 #          starts every pass, so nothing backs up until it is back. It died
-#          silently on 2026-09-20 (exit 1067) and bb-health said OK for six
+#          on 2026-09-20 (exit 1067) and bb-health said OK for six
 #          hours. The GUI is allowed SERVICE_GRACE_MIN minutes to bring the
 #          service up after a start before this is reported.
 #
@@ -35,9 +35,9 @@
 #          that has been running for LOCK_GRACE_MIN minutes. A pass writes its
 #          lock only after it starts, so a lock older than the grace window
 #          cannot belong to any process younger than it, and a live holder is
-#          never second-guessed. On top of that, either the lock is older than
-#          LOCK_AGE_MIN, or it is older than LOCK_GRACE_MIN with failures
-#          still being written now. The second form catches the respawn loop:
+#          never second-guessed. The lock must also be older than LOCK_AGE_MIN,
+#          or older than LOCK_GRACE_MIN with failures still being written
+#          now. The second form catches the respawn loop:
 #          bzserv relaunches bztransmit every few seconds, each attempt dies
 #          on the lock, and the constant restarts keep every mtime fresh, so
 #          only process age can corroborate it. It is a WEDGE rather than a
@@ -66,7 +66,7 @@ EOF
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 
 # Report which image build this came from. The tools ship together inside an image,
-# so the build stamp is the identifier worth having in a bug report.
+# so the build stamp is the identifier to put in a bug report.
 if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-V" ]; then
     echo "bb-health (Backblaze 64 container)"
     cat /etc/bb-build 2>/dev/null || echo "version=unknown (no build stamp)"
@@ -135,7 +135,7 @@ oldest_proc_min() {
 # Age of a file in whole minutes, or empty if it cannot be read. This uses stat
 # and epoch arithmetic rather than find's -newermt date parsing. A stall check has
 # to fail safe: with find, any error (unparsable date, file rotated away mid-check)
-# gave the same empty output as a genuinely stale file and produced a HANG, whose
+# gave the same empty output as a stale file and produced a HANG, whose
 # recovery kills live upload threads. A read failure here yields "" and is
 # skipped by the caller.
 age_min() {
@@ -164,7 +164,7 @@ if proc_match -threadpush; then
     fi
 elif [ -n "$log" ] && proc_match "bztransmit.exe"; then
     # No child at all, yet the pass says it is waiting for one. Its heartbeat
-    # line carries how long it has waited, so the log's own age says nothing.
+    # line carries how long it has waited, so the log file's age says nothing.
     # Only the last line counts: an old wait further up belongs to a pass that
     # has since moved on. And only while a pass is alive: once the watchdog
     # has killed it, its last heartbeat stays the last line of the log until
@@ -182,9 +182,9 @@ fi
 # After HANG, not before: a stuck pass can outlive the service that launched
 # it, and while DOWN came first the watchdog was told DOWN every cycle and
 # never heard about the pass it could have stopped (182 minutes, 2026-09-23).
-# bzbui.exe is what startapp launches, so its age is how long the container has
+# startapp launches bzbui.exe, so its age is how long the container has
 # been trying. An unreadable age must not read as DOWN: the verdict turns the
-# health check red and the container's own recovery starts the service.
+# health check red and the container's recovery starts the service.
 if proc_match bzbui.exe && ! proc_match bzserv.exe; then
     gui_age="$(oldest_proc_min bzbui.exe "")"
     if [ -n "$gui_age" ] && [ "$gui_age" -ge "$SERVICE_GRACE_MIN" ]; then

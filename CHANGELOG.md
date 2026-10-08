@@ -7,30 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [beta] - 2026-08-09
 
 This release is for the beta channel only (the `:beta` tag). It has everything in 10.2.1, plus
-the additions below. The `:beta` tag is mutable, so each published build has its own number.
+the additions below. The `:beta` tag is mutable, so each published build has a separate number.
 
 ### Added
 
 - An Exclusions panel on the Settings tab that creates, edits and deletes rules in the client's
   `bzexcluderules_editable.xml`. One rule there excludes a folder on every mapped drive at once,
-  or files by extension or by path, which is what a backup spread over twenty Unraid disks
-  needs and what the client's Exclusions window cannot do in one step. The rules sit between two
-  comment markers; the rules the client wrote and hand edits are kept byte for byte, the previous
+  or files by extension or by path. A backup spread over twenty Unraid disks needs this, and
+  the client's Exclusions window cannot do it in one step. The rules sit between two
+  comment markers. The rules the client wrote and hand edits are kept byte for byte, the previous
   file is kept beside it, and the managed rules travel in the settings export. From a forum
   user who was maintaining the file by hand.
 - bb-doctor fails a drive whose top-level folders are all separate filesystems, and warns when
   some are. The client does not cross a mount point inside a drive, and a ZFS pool on Unraid keeps
-  each share and appdata as a dataset of its own, so mapping the pool's root backs up nothing: on
+  each share and appdata as a separate dataset, so mapping the pool's root backs up nothing. On
   the test host the cache pool mapped as Y: produced an empty file list. The fix it names is to map
-  each dataset, such as `/mnt/cache/<share>`, as a drive of its own.
-- bb-doctor's drive selection check reads the client's own volume list. A drive is backed up
-  when it is among the `<bzvolume mountPointPath>` records in `bzinfo.xml`; the per-drive filter
+  each dataset, such as `/mnt/cache/<share>`, as a separate drive.
+- bb-doctor's drive selection check reads the client's volume list. A drive is backed up
+  when it is among the `<bzvolume mountPointPath>` records in `bzinfo.xml`. The per-drive filter
   entry the check used to look for is written only to override the default, so five newly added
   disks read as "no selection entry" while the client was scanning them. A drive missing from the
   list is now the warning, with the fix: tick it and press OK while the backup is paused, since a
-  save made while a pass is transmitting is abandoned by the client with a line in its own log.
+  save made while a pass is transmitting is abandoned by the client with a line in its log.
 - bb-doctor names the directories the client's scanner could not open, with the reason, read
-  from the scanner's own log: a character Windows does not allow in a name, trailing dots, or
+  from the scanner's log: a character Windows does not allow in a name, trailing dots, or
   ownership the container user cannot read through. A disk's file list stops at the first such
   directory and nothing after it is backed up, and until now the only sign was "producing file
   lists" for hours. On the test host every scan since 5 October had stopped at a directory with
@@ -38,12 +38,12 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   exists, and the notifier has an event for it. Directories renamed since, or made readable by
   the container user since, are reported as fixed.
 - bb-doctor finds the container's config directory inside a mapped drive by device and inode,
-  not only by path, so a pool mapped as a drive with the config bound from inside it is caught;
-  the path comparison read "not inside any mapped drive" on the test host. An XML exclusion rule
-  covering the directory counts as excluded, which is what the Exclusions panel makes for it.
+  not only by path, so a pool mapped as a drive with the config bound from inside it is caught.
+  The path comparison read "not inside any mapped drive" on the test host. An XML exclusion rule
+  covering the directory counts as excluded, and the Exclusions panel makes such a rule for it.
 - A sixth Wine patch makes scans and pass preparation much faster on FUSE file systems such as
   Unraid user shares. After every failed exact-name lookup Wine checked whether the directory was
-  case sensitive, calling fstatfs() each time; on shfs that call takes about 21 ms, and a user's
+  case sensitive, calling fstatfs() each time. On shfs that call takes about 21 ms, and a user's
   trace measured it at half the wall time of a pass. The answer is now cached per device. Mapping
   disks and pools rather than `/mnt/user` remains the faster setup, since shfs is slower at every
   other call too. From a forum user's strace measurements, with thanks.
@@ -51,22 +51,22 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   its source. wineserver kept every closed descriptor on a locked file open, because a classic
   POSIX lock belongs to the whole server process and closing any descriptor drops all of them.
   The client's SQLite database is always locked, so every close was kept: 120 descriptors a
-  minute on the test host. The patch takes open file description locks, which belong to the one
+  minute on the test host. The patch takes open file description locks, which belong to a single
   descriptor as a Windows lock belongs to its handle, so a closed descriptor can close. 11.19 also
   fixes the 11.18 start-up fault that killed chunk children ("failed to create main module"), and
   includes the 11.18 fix for an 11.17 regression that hung processes opening device names.
 - The watchdog restarts the Backblaze service before leaked file handles exhaust Wine's open-file
   limit, and bb-doctor reports wineserver's open files against that limit. Client 10.0.3.1075's
-  service opens its `Backup.sql` database every few seconds and never closes it; on the test host
+  service opens its `Backup.sql` database every few seconds and never closes it. On the test host
   that was 120 handles a minute. At wineserver's 40,960 limit nothing in the prefix can open a file:
   upload children cannot start and the pass hangs on them, the scanner fails with Windows error 4,
   and the service dies on "unable to open database file". This is the daily bzserv death seen
   since 1075, and the hung pass that came before it. The restart comes at 85% (`FD_RESTART_PCT`),
-  is recorded on the timeline, and releases every leaked handle; `bb-doctor --fix` does the same
+  is recorded on the timeline, and releases every leaked handle. `bb-doctor --fix` does the same
   on demand. The README now advises keeping `/config` on `/mnt/cache` on Unraid, so a leak cannot
   exhaust shfs for the rest of the server. From issue #13, with thanks for the measurements.
 - The Status section's drive bars are in drive-letter order, lined up in one grid, and the backup
-  gauge and the drive bars each have a line of their own. Sorted by size, the drives reordered
+  gauge and the drive bars each have a separate line. Sorted by size, the drives reordered
   themselves whenever one was added or remapped, and in the same flow as everything else every
   change in the ETA's width moved the drives and the rest of the section. A letter that has
   carried two volumes, as a remap leaves it, shows the current one first and the older one
@@ -74,37 +74,37 @@ the additions below. The `:beta` tag is mutable, so each published build has its
 - Removed: the orphan rule added on 6 October, which stopped Backblaze processes whose parent was
   the container's init. Wine starts every Windows process with a double fork, so every Wine
   process has init as its parent from the moment it starts: the live pass, its upload children,
-  bzserv and the scanner alike. The rule therefore stopped working processes, first scans of
+  bzserv and the scanner alike. So the rule stopped working processes, first scans of
   several disks at twenty minutes and then a live upload process, which hung the pass waiting
-  for it. If you ran builds from 6 to 8 October with Automatic recovery on, update; nothing it
-  stopped was lost, the client redoes the work.
+  for it. If you ran builds from 6 to 8 October with Automatic recovery on, update. Nothing it
+  stopped was lost, because the client redoes the work.
 - The watchdog starts the Backblaze service itself when it has stayed down past one cooldown.
   The first sighting of `DOWN` is still left to the service watch, which acts within five
-  minutes; a second sighting half an hour later means the watch did not manage it, and the
+  minutes. A second sighting half an hour later means the watch did not manage it, and the
   watchdog then runs the same bounded `net stop` and `net start`, polls the process table for
   a minute and records the outcome. Two hosts sat `DOWN` for six and seven hours with the
   broken watch of the 28 September build while the watchdog reported the state every half
-  hour, which is the gap this closes.
+  hour. This closes that gap.
 - Diagnostic bundles now carry the recovery log (what the watchdog, the service watch and
-  `bb-doctor --fix` did, with timestamps) and the tail of the bzserv service log, which is the
-  one place that may say why the service stopped. Both go through the bundle's sanitiser.
+  `bb-doctor --fix` did, with timestamps) and the tail of the bzserv service log, the only
+  place that may say why the service stopped. Both go through the bundle's sanitiser.
 - Every recovery action the container takes for itself is now visible where people look: a
   warning-coloured row on the Status tab's timeline, an "Automatic recovery acted"
   notification event, a `recovery` list in the API and a `bb64_recovery_actions_24h` metric.
   The watchdog's kills and lock removals, the service watch's restarts of bzserv and
   bb-doctor's `--fix` repairs all write to one recovery log. From a user who wanted to know
-  whether the timeline's normal pass cycle was an automatic restart; it wasn't, and now a
-  restart would say so.
+  whether the timeline's normal pass cycle was an automatic restart. It was not, and a
+  restart would now be recorded there.
 - An Automatic recovery switch on the Settings tab. It overrides `ENABLE_WATCHDOG` and takes
-  effect within a minute without a restart: the watchdog's service script polls the switch while
+  effect within a minute without a restart. The watchdog's service script polls the switch while
   parked and the watchdog reads it every cycle, so no watchdog process exists while it is off,
   the same as with the variable unset. "Follow the variable" hands the decision back. The switch
   travels in the settings export.
 - Settings export and import, from a user request. The Settings tab's Backup and restore panel
   writes one JSON file with the API keys, notification endpoints and events, quiet hours, warning
-  choices and dismissals, and the Backblaze client's own settings as values, and reads one back,
+  choices and dismissals, and the Backblaze client settings as values, and reads one back,
   replacing each section the file holds and writing the client settings through bzcli. The API
-  keys and the endpoints are the secrets: with a passphrase they go in encrypted, without one they
+  keys and the endpoints are the secrets. With a passphrase they go in encrypted. Without one they
   are left out and the file records which sections are missing. The file carries a version, so a
   later build can read an older file. `bb-settings export` and `bb-settings import` do the same from the console.
 - The Monitor's warning band now shows one row per warning with an X to dismiss it, and no
@@ -112,30 +112,30 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   because both mean nothing is being backed up: a safety freeze, and passes losing their lock.
   A dismissed warning still appears under Settings until warnings are reset.
 - Settings has one "Warnings and events" list in place of the Events list under Notifications
-  and the separate Warnings box: each warning kind has a Show box and, where a notification event
-  exists for it, a Notify box; events with no warning behind them have Notify alone. A warning
+  and the separate Warnings box. Each warning kind has a Show box and, where a notification event
+  exists for it, a Notify box, and events with no warning behind them have Notify alone. A warning
   switched off is still in the API, marked hidden, and Reset warnings leaves that preference
   alone. Both were user requests.
-- A "Backblaze client updated" notification event, alongside "Container updated": it names the
+- A "Backblaze client updated" notification event, alongside "Container updated". It names the
   version now running and the one before. The container's updater installs Backblaze's newest
   client at every start, so this is the event to line up with a backup that has started
-  misbehaving. On by default like the other events; the Settings tab turns it off.
+  misbehaving. On by default like the other events. The Settings tab turns it off.
 
 ### Fixed
 
 - The service watch died the first time it had something to say. The build of 28 September
   that put its events on the recovery log wrapped its logging function in a function of the
   same name, which called itself until bash crashed, so a bzserv that stopped after that build
-  stayed stopped: on the test host it was down for seven hours while the watchdog reported
+  stayed stopped. On the test host it was down for seven hours while the watchdog reported
   DOWN every half hour and deferred to a watch that no longer existed. Found from that host.
 - The completed table showed every split file a few parts short (59/60, 57/60) with the
   size to match. A part is counted when the thread slot that carried it moves on, and the slot
-  file is named for the thread, not the push: a slot that had finished one part and started
+  file is named for the thread, not the push. A slot that had finished one part and started
   the next of the same film inside the two seconds between polls looked unchanged, so that
   part was never counted. Each push is now told apart by its start stamp and chunk hash,
   every completion line the thread wrote since the last poll is counted rather than only
   the newest, a push gone before its line reached the log is held over for a few polls,
-  and the total comes from the client's own chunk map while the file is the one in hand.
+  and the total comes from the client's chunk map while the file is still uploading.
 - The Settings tab's Warnings and events list and its Dismissed table now follow dismissals made
   on the Status tab or the Monitor without a reload. Both are polled every half minute and
   redrawn only when the answer changed, so checkboxes being edited are left alone.
@@ -143,31 +143,31 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   ever. A user's client left the file at "after files swap, 60%" for days while passes ran
   normally, and the Status tab, the terminal monitor and bb-doctor all kept announcing an
   inherit. A live inherit rewrites the file as it goes, so a file an hour older than the transmit
-  log, with a pass started since, now counts as finished; bb-doctor says so in a note, and
+  log, with a pass started since, now counts as finished. bb-doctor notes this, and
   bb-report collects the file with its age.
 - The memory figure on the Monitor, in the terminal monitor, in the API and in the metrics is now
-  the container's processes' own memory, with the page cache shown beside it. It used to follow
-  `docker stats`, which charges the cache for every file the client has read to the container;
-  a dedup scan over a large file set reads them all, and one user saw 36 GB there while the
+  the memory of the container's processes, with the page cache shown beside it. It used to follow
+  `docker stats`, which charges the cache for every file the client has read to the container.
+  A dedup scan over a large file set reads them all, and one user saw 36 GB there while the
   host called most of it free. `memory.cache_bytes` and `bb64_memory_cache_bytes` carry the cache.
 - bb-doctor no longer warns about missing swap on a large host. The client's passes peak at 4 to
   6 GB, which a host with 16 GB or more absorbs, so there the line is an info line, a new kind
-  that keeps the run green and is counted in the summary; under 16 GB without swap it stays a
+  that keeps the run green and is counted in the summary. Under 16 GB without swap it stays a
   warning. Evidence of pressure warns on any host: out-of-memory kills counted against the
   container by the kernel, Backblaze processes named as victims in the kernel log, the kernel's
   memory-pressure figure for the last five minutes, or swap three quarters used with under 1 GB
   of RAM left. From a user's report of a warning on a 62 GB host.
-- The service watch launches no Wine helper unless the service is down, and then two rather
-  than three: the `sc query` that decided whether to stop first is gone, and a restart is a
-  stop followed by a start. Wine helper launches on a schedule are the one thing that changed
+- The service watch launches no Wine helper unless the service is down, and then two, down
+  from three. The `sc query` that decided whether to stop first is gone, and a restart is a
+  stop followed by a start. Wine helper launches on a schedule are the only thing that changed
   on FozStore before the file errors and service deaths of 23 and 24 September began.
-- How deep bb-doctor's read-speed sample looks for a large file is a setting: a bb-doctor panel
+- How deep bb-doctor's read-speed sample looks for a large file is a setting. A bb-doctor panel
   on the Settings tab holds the number of levels (three by default) and a switch to search until a
   file is found, whatever the depth. The search is bounded in time either way, and the doctor's
   note says how far it looked. Also `DOCTOR_READ_DEPTH` for the console. Travels in the settings
   export.
 - Every Wine call the service watch and bb-doctor's service repair make is bounded, and a hung
-  helper is killed with what it started: an `sc query` sat for 53 minutes on 24 September and
+  helper is killed with what it started. An `sc query` sat for 53 minutes on 24 September and
   the watch waited behind it while the service stayed down.
 - bb-health's "pass waiting for children that no longer exist" rule requires a live pass. After
   the watchdog killed such a pass, its last heartbeat stayed the last line of the transmit log
@@ -180,20 +180,20 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   starting.
 - bb-health reports HANG before DOWN. With DOWN first, a pass stuck during a service outage was
   never reported to the watchdog, which can act on HANG itself, and one sat for three hours.
-- bb-doctor's drive identity check reads every record the client holds for a letter, not the
-  first: a machine where drives have been re-added or reinstalled keeps one record per drive that
+- bb-doctor's drive identity check reads every record the client holds for a letter, not only the
+  first. A machine where drives have been re-added or reinstalled keeps one record per drive that
   ever sat at that letter, and taking the first read a healthy drive as "known as D:, not D:".
   A stamp matching any record for its letter is recognised, and the value `--fix` restores is the
   record most recently seen attached.
 - bb-doctor measures each source drive's read speed with a 64 MB sample from a large file and says
   how many 10 MB chunks a minute the pass can stage from it. The pass reads, hashes and stages each
   chunk before it launches the child that uploads it, so a slow read caps the rate whatever the
-  thread setting; on a user-share (shfs) mount the note says to map the disk or pool path instead.
+  thread setting. On a user-share (shfs) mount the note says to map the disk or pool path instead.
 - bb-doctor gained three repairs under `--fix`, each also reported without it: it starts the
   Backblaze service when the GUI is up and the service is not; it stops a pass that bb-health
   reports as stuck, children first, so bzserv starts a fresh one; and it writes the supportedOS
   manifest when it is missing, the same text startapp writes at every start.
-- bb-doctor's drive identity check now reads the client's own id format: `v00` followed by 25
+- bb-doctor's drive identity check now reads the client's id format: `v00` followed by 25
   hex characters in `.bzvol/bzvol_id.xml`, matched against the mount point the client records
   for that letter in `bzvolumes.xml`. It looked for a GUID shape that never occurs, so it warned
   about a user's drive on a stray token and said "no volume id found" on drives that were fine.
@@ -201,8 +201,8 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   (the mapping moved), the client has a different id for this letter (another install stamped the
   drive, or an inherit), or the client has no record of the letter at all. It also compares the
   computer identity in the stamp with this install's, since an inherit or a reinstall changes it
-  and the client then refuses the drive however right its volume id is; neither value is printed.
-  Every note says never to delete `.bzvol`, which Backblaze's own README there says removes the
+  and the client then refuses the drive however right its volume id is. Neither value is printed.
+  Every note says never to delete `.bzvol`, which the Backblaze README there says removes the
   drive's files from the datacenter. Under `--fix` the doctor repairs the two cases whose correct
   value the client itself wrote elsewhere, setting `vguid` or `associated_hguid` in the stamp
   with the previous stamp kept beside it, and only when the stamp is laid out the way the client
@@ -214,7 +214,7 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   arrived. It asked once when the page opened, so a page opened before the reading stayed on
   "not been read yet" until it was reloaded by hand. It asks again every fifteen seconds until
   the reading is there, and not after, because the section holds fields being edited.
-- The Status tab stopped rendering in the previous beta build: every warning vanished and the
+- The Status tab stopped rendering in the previous beta build. Every warning vanished and the
   client panel said the client had not been read yet. An apostrophe in the lost-lock notice
   ended the script's string early, and the parse test read the page from the source file, where
   the escape looked fine, rather than as served. The test now checks the pages as they are
@@ -227,41 +227,41 @@ the additions below. The `:beta` tag is mutable, so each published build has its
   rotated at midnight. bb-doctor says when passes complete again after earlier losses. The advice
   also now depends on the image: the pin to 10.0.1.1069 is for stable, and on the beta, whose
   Wine carries the fix, a loss means something else and asks for a bundle. The wording no longer
-  claims the lock file is on disk throughout; the service deletes it.
+  claims the lock file is on disk throughout. The service deletes it.
 - bb-health reports `DOWN` when the client's GUI is up but its service, bzserv, is not. bzserv is
-  what starts every pass; it died silently on 20 September (exit code 1067) and the container
+  what starts every pass. It died on 20 September (exit code 1067) and the container
   reported OK for six hours while nothing backed up. startapp now also watches the service every
-  five minutes and starts it again if it has stopped, logging each attempt, in addition to the
+  five minutes and starts it again if it has stopped, logging each attempt, as well as the
   boot-time check. The Status tab, the terminal monitor and the "Backup stalled" notification
   treat `DOWN` like a hang.
 - bb-health now catches the hang that client 10.0.3 produces when a chunk-upload child dies or
-  never starts: the pass waits for it forever, logging "Some sub_threads busy" every six seconds,
+  never starts. The pass waits for it forever, logging "Some sub_threads busy" every six seconds,
   so the log never looks idle and the old check saw nothing. `HANG` is now also reported when an
   upload child has been alive for `STALL_MIN` minutes, or when the pass has been waiting that long
   for children that no longer exist. A long wait with young children coming and going is a slow
   link and stays `OK`. bb-watchdog's `HANG` recovery now kills the pass as well as the children,
-  because the pass never gives up on a lost child by itself; bzserv starts a fresh pass within
+  because the pass never gives up on a lost child by itself. bzserv starts a fresh pass within
   seconds and it carries on from its bz_done files. Two such hangs on 19 and 20 September each
   cost hours of backup time with bb-health reporting OK throughout.
 - The container now checks that Backblaze's service, bzserv, is running a minute after the GUI
-  starts, and starts it if not, with one retry. Wine's service manager normally starts it on its
-  own, but on 19 September it died 60 ms into a boot that followed a Wine version change and
+  starts, and starts it if not, with one retry. Wine's service manager normally starts it,
+  but on 19 September it died 60 ms into a boot that followed a Wine version change and
   nothing restarted it: the GUI came up, bb-health said OK, and no pass ran for half an hour.
   Applies to the stable images too from their next release.
 
 ### Changed
 
 - Wine moved from 11.14 to 11.17. All four patches in `patches/` apply to it unchanged. 11.18 was
-  published for a few hours on 19 September and withdrawn: its new process start-up can place
-  Wine's own data at the address bztransmit.exe must load at, and the executable has no relocations,
+  published for a few hours on 19 September and withdrawn. Its new process start-up can place
+  Wine's data at the address bztransmit.exe must load at, and the executable has no relocations,
   so about one chunk-upload child in several hundred dies before it runs and the pass then waits
-  for it forever. Symptom: "Some sub_threads busy" repeating in the transmit log for hours, one
+  for it forever. The symptoms are "Some sub_threads busy" repeating in the transmit log for hours, one
   thread, no upload sockets, and `wine: failed to create main module ... status c0000018` in the
   container log.
 - The jlesage GUI base image moved from `v4.12.6` to `v4.14.0` for the beta. The base now defines
   the `app` user and group the same way as every other account, updates nginx to 1.30.4 and fixes
   supplementary groups from `SUP_GROUP_IDS_INTERNAL_*` not reaching the `app` user. The stable images
-  moved to `v4.14.0` too on 8 October, after three weeks on the beta: `v4.13.0` and `v4.13.1` fixed
+  moved to `v4.14.0` too on 8 October, after three weeks on the beta. `v4.13.0` and `v4.13.1` fixed
   web authentication and web interface security issues, and `v4.13.2` a log monitor that leaked
   zombie processes.
 `bb-version` reports that number, and the monitors show it as `beta+<n>`. Give that number in a
@@ -275,12 +275,12 @@ a stable release.
 - A second Wine patch, `patches/wine-fdwrite-rearm.patch`. It re-arms FD_WRITE after a poll
   shows that a socket cannot accept a send. After Wine reports FD_WRITE one time, it masks
   POLLOUT for that socket and gives no further notification. An application that waits on the
-  event thus sleeps until its own timeout, although the socket drained milliseconds later.
+  event then sleeps until its timeout, although the socket drained milliseconds later.
   Measured against the existing writability patch alone, on a live backup: the aggregate upload
   rate increased from 13.0-13.9 Mbit/s to 40.9. The per-connection ceiling did not change, so
   the increase is recovered idle time and not a faster connection. **This is a workaround, not
   a fix.** It differs from Windows, which does not signal FD_WRITE again when a poll shows that
-  a socket is not writable. It is deliberately not submitted upstream. The upstream work is a
+  a socket is not writable. It is not submitted upstream. The upstream work is a
   larger redesign, which is in discussion with the Wine maintainers. This patch will be removed
   as soon as that redesign is available. Only `Dockerfile.beta` applies the patch, and CI makes
   a stable build fail if a patched `wineserver` ever occurs in one.
@@ -290,18 +290,18 @@ a stable release.
 - `bb-monitor` also has a settings dialog. `s` opens it. `Tab` moves between the Preferences
   tab and the About tab. `Enter` opens the theme chooser, and the arrow keys move through it
   with a live preview. `bb-monitor` keeps the theme choice in `/config/bb-monitor.conf`. All
-  thirteen themes are available on any terminal, each with its own low-colour version.
+  thirteen themes are available on any terminal, each with a low-colour version.
 - An upload sparkline in `bb-monitor`. It uses the same forty-sample window as the web
   dashboard.
-- `bb-monitor-web`, the upload dashboard over HTTP instead of the terminal. The session thus
+- `bb-monitor-web`, the upload dashboard over HTTP instead of the terminal, so the session
   continues when you close the console window. It shows the overall backup progress with an
   ETA, which is weighted by the completed transfers. It also shows the files remaining, a live
   rate sparkline and the uptime. Contributed by rogman.
 - The container serves the dashboard through the existing web interface at `/monitor/`, and not
-  on a second port. The dashboard thus uses the `WEB_AUTHENTICATION` and `SECURE_CONNECTION`
+  on a second port. So the dashboard uses the `WEB_AUTHENTICATION` and `SECURE_CONNECTION`
   settings you configured for the GUI. The service itself binds to loopback only.
 - The web interface opens a tabbed shell with the Wine desktop and the upload monitor. The
-  WebUI button thus gives you both, and not only the desktop. When you change tabs, the shell
+  WebUI button now gives you both. When you change tabs, the shell
   hides the desktop but does not unload it, so the VNC session continues while you look at the
   monitor. The shell loads the monitor frame when you first use it, so the monitor never polls
   for a user who does not open it. The desktop stays directly available at `/desktop/`, if the
@@ -326,8 +326,8 @@ a stable release.
   The About tab reports the running build, the licence and the credits.
 - The state now comes from the client, in `overviewstatus.xml`, instead of being inferred. The
   `cur_state` field is coarse: it reads `transmitting` through work that is nothing of the
-  sort. The monitors thus take the activity from `current_file`. When there is no file,
-  `current_file` holds a phrase and not a name: a scan reports "Producing file lists" instead
+  sort. So the monitors take the activity from `current_file`. When there is no file,
+  `current_file` holds a phrase in place of a name. A scan reports "Producing file lists" instead
   of the part in flight.
 - An API tab in the web interface, and a key-authenticated read feed at `/api/v1/status`. The
   feed is for anything outside the browser: a dashboard, an automation system, or a script. It
@@ -335,7 +335,7 @@ a stable release.
   graph or format the data for itself. Every response has a schema version, because a consumer
   is released independently of this container.
 
-  The feed is the one path that does not use the web login, so it defends itself with a bearer
+  The feed is the only path that does not use the web login, so it defends itself with a bearer
   key instead. It answers 404, and not 403, until a key exists. Key management stays behind the
   web login. Keys are 256-bit random values. The API shows a key one time and stores only its
   SHA-256. `bb-apikey` does the same job from a terminal.
@@ -343,12 +343,12 @@ a stable release.
   The feed carries everything the monitors know. It gives the rate, the backup progress and
   ETA, the scan progress, the container memory and swap, and the round-trip time. It also gives
   the health warnings, the skipped files, the compression saved, the uploads and failures for
-  the day, and Backblaze's own measured throughput. Last, it gives the in-flight and recently
+  the day, and the throughput Backblaze measures. Last, it gives the in-flight and recently
   completed files with their chunk positions. A key granted `read` alone gets none of the file
   names, which is all a status display needs. `read:files` adds them.
 
-  The dashboard's own service speaks HTTP/1.1. A consumer that polls every couple of seconds
-  thus reuses one connection, and does not open a fresh one each time. Every response carries a
+  The dashboard service speaks HTTP/1.1, so a consumer that polls every couple of seconds
+  can reuse one connection. Every response carries a
   length, including the responses with no body. Without that length, a kept-alive connection
   stalls and waits for a body that never arrives.
 
@@ -359,24 +359,24 @@ a stable release.
   The state read as the literal string "None" when the client had nothing to report. The client
   writes `cur_state="none"`. The code capitalised that value instead of treating it as no
   answer, so a payload looked as though a null had leaked into it. The API now falls back to
-  what the running processes show, as it did before the client's own word was preferred.
+  what the running processes show, as it did before the client's word was preferred.
 
   The key store takes its ownership from `/config`. You normally run `bb-apikey` through
-  `docker exec`, which is root, while the service runs as the container's own user. A key
-  created on the command line thus landed in a root-owned directory that the service could not
+  `docker exec`, which is root, while the service runs as the container user. So a key
+  created on the command line landed in a root-owned directory that the service could not
   open. The key never appeared in the settings tab, and the API answered 404 as though no key
   existed.
 
   The container serialises changes to the key store against a lock. To record a key's last use
   is a read-modify-write, and to create a key is one as well. Without the lock, a key created
   while anything was polling could be written straight back out of existence. Forty of
-  forty-one were lost in a test of it. The lock covers this container's own threads and
+  forty-one were lost in a test of it. The lock covers this container's threads and
   `bb-apikey` in its separate process.
 
   Both monitors and the feed now report whether a backup is paused. They read this from
   `bzdata/pauseinfo.xml`, which the client writes only while a pause is set. Without the pause
   file, a pause read as "Uploading" with nothing moving, because the client stays running and
-  keeps naming the last file it had. A pause the client set for its own reasons looks the same
+  keeps naming the last file it had. A pause the client set itself looks the same
   as one asked for over the API.
 
   A `report` permission generates a diagnostic bundle and hands back a single-use link. The
@@ -395,35 +395,34 @@ a stable release.
   API expands the group when the key is created, so what is stored is always the explicit list.
   The API exposes only what the key presenting it holds. It does not tell a read-only key which
   control operations exist, and it does not tell a key granted one of them about the other. A
-  key can ask what it holds. A client thus offers the buttons it can use, and does not discover
-  its own limits from a run of refusals.
+  key can ask what it holds. So a client can offer the buttons it can use without learning
+  its limits from a run of refusals.
 
   The API starts a backup, or pauses a running one, through `bzcli`, which Backblaze ship with
-  the client for this purpose. The pause is cooperative: the client asks its transmit process
-  to stop, and no process is killed. A pause thus cannot leave the stale four-hour lock that
+  the client for this purpose. The pause is cooperative. The client asks its transmit process
+  to stop, and no process is killed. So a pause cannot leave the stale four-hour lock that
   `bb-watchdog` exists to clear. Backblaze document `--backup-now` as the way out of a pause.
   The same `bzcli` command group can also clear the private encryption key, which is
-  unrecoverable. The API thus whitelists the two safe verbs by name, and nothing from a request
+  unrecoverable. So the API whitelists the two safe verbs by name, and nothing from a request
   reaches their arguments. A `report` permission is defined, but the API refuses it until the
   bundle flow exists.
-- Both monitors name the file in hand. For most files this is the only way they appear at all.
-  A small file is usually gone before the next poll, and never gets a row of its own. The
+- Both monitors name the file being sent. For most files this is the only way they appear at all.
+  A small file is usually gone before the next poll, and never gets a separate row. The
   monitors also show what the client says it is doing with that file. The words are
   "Preparing", "Part N of", and "Finishing" for a multi-part file. When the client uploads its
-  own bookkeeping (`caNNN/bz_done_*.bzff`), the monitors label it as such, and do not pass it
-  off as one of your files.
+  bookkeeping (`caNNN/bz_done_*.bzff`), the monitors label it as such.
 - Progress for file-list scans, in both monitors. The monitors show the directories indexed out
   of the total, which they read from `topdirs.xml.future`. They also show a running count of
   the files and bytes found. The client exposes no other real percentage.
 - Chunk positions for the large file being split. The index, byte offset and SHA-1 of each
   chunk come from `bzcurrentlargefile/onechunk_seq*.dat`. That SHA-1 also appears in each
-  transfer's own record, so you can match a thread to the exact chunk it is carrying. The
+  transfer's record, so you can match a thread to the exact chunk it is carrying. The
   monitors show the chunks in their real positions. The chunks fill out of order as the threads
   finish, and the monitors mark the ones in flight differently. Chunks that completed before
   you opened the monitor stay unmarked, because the monitor cannot tell them apart from pending
   ones.
-- Warnings drawn from the client's own records: a safety freeze, a failed file check, or no
-  recent completed backup. The number of days comes from your own settings. The staleness
+- Warnings drawn from the client's records: a safety freeze, a failed file check, or no
+  recent completed backup. The number of days comes from your settings. The staleness
   warning applies only once the backup has caught up, because `bzstat_lastbackupcompleted.xml`
   marks a pass finishing rather than the whole set. On the machine this was developed against,
   it read four days old while 87% of 85 TB was still unsent. A warning about that would be a
@@ -431,8 +430,7 @@ a stable release.
 - A pause button in the top bar of the web dashboard. While a pause is set, the same button
   starts the backup again. It uses the browser session you are already logged in with, so no
   API key is involved. It goes through the same fixed whitelist of client actions as everything
-  else. The page never guesses: the button reflects what the next poll reports, and not what
-  the click hoped for.
+  else. The button reflects what the next poll reports.
 - The status panel says what a backup is made of: "2.4M files: 1.0M photos, 401k docs, 75k
   music, 53k video". The client has counted by category all along, but nothing showed the
   counts. The tooltip gives the exact counts. The categories always account for the whole, and
@@ -446,16 +444,14 @@ a stable release.
   consumer wants. It ignores unknown names instead of refusing them, so something built against
   a newer container keeps working on an older one.
 - The backup ETA is also given as a date. "171 days" is a number, but "17 Feb 2027" is a day
-  you can picture. The resolution is one day on purpose, because an estimate from a moving
+  you can picture. The resolution is one day, because an estimate from a moving
   average cannot know the hour. This is in both monitors and in the feed.
 - A seven-day upload chart, in both monitors and in the feed. The client has kept one row per
-  day all along, but the monitors read only the newest row. The chart answers the question
-  anyone running a long backup actually has: did the backup do anything while they were not
-  looking?
-- On the day a first backup catches up, both monitors say so, plainly, for a week. They give
+  day all along, but the monitors read only the newest row. The chart shows whether the
+  backup did anything while nobody was looking.
+- On the day a first backup catches up, both monitors show it for a week. They give
   how much was uploaded and how many days it took. The monitors latch the moment on disk, so it
-  fires once, and files added later cannot replay it. After months of watching a progress bar,
-  this is better than a banner that quietly disappears.
+  fires once, and files added later cannot replay it.
 - The upload counter no longer calls retried attempts "failed". The figure it shows is the
   attempts a storage vault turned away, because the vault was too busy or full. The client
   retries such an attempt against another vault, and the file still goes up. The red "5 failed"
@@ -466,83 +462,81 @@ a stable release.
 - Both monitors and the API now name the program that uses the most memory. The memory figure
   alone does not say which program uses it. A user reported high memory after an update, and
   the cause was the client, which reads a large file list into memory during a scan. The
-  figure now reads "Mem 8.1/16 GB (bzfilelist)", which answers the question that the number
-  asks.
+  figure now reads "Mem 8.1/16 GB (bzfilelist)".
 - The skipped-file check misread every line of the client's list. Backblaze is a Windows
   program and writes the file with CRLF, so the shell `read` command leaves a carriage return
-  on each line. A path built from such a line names a file that cannot exist. The check thus
-  reported a file sitting right there as "no longer exists, so nothing to fix". That is the
-  opposite of the truth, on the one check whose job is finding what is wrong. The same loop
+  on each line. A path built from such a line names a file that cannot exist. So the check
+  reported a file sitting right there as "no longer exists, so nothing to fix". The same loop
   also examined the report's header and reported it as a line it could not understand. The
   monitor was never affected, because Python strips the line ending and the shell does not.
 - A container 21.9% through its first backup announced that the backup was complete, and
   latched that to disk for a week. The completion check reused the same helper as the staleness
   warning. That helper answers "yes" when there are no totals to judge against, so that a
-  missing figure cannot raise a false warning. That default is right for a warning but exactly
-  wrong for declaring something finished, and during a file-list scan the totals are absent.
+  missing figure cannot raise a false warning. That default suits a warning but not a check that
+  declares something finished, and during a file-list scan the totals are absent.
   The check now requires positive evidence, and says nothing when it cannot tell.
 
   The same check took its day count from a figure that is only available while a backup is in
-  progress. Every completion would thus have read "in 0 days". It now reads the client's own
+  progress. So every completion would have read "in 0 days". It now reads the client's
   record of when the first file went up.
-- A pause now reads as "Pausing" until it has actually taken. The client finishes the transfers
-  already in flight before it stops. To say "Paused" the moment the request landed was thus
-  ahead of the truth, because uploads were still completing. Backblaze's own window appeared
-  not to notice a pause, but it was right all along and ours was early. The feed carries a
+- A pause now reads as "Pausing" until it has taken effect. The client finishes the transfers
+  already in flight before it stops. To say "Paused" the moment the request landed was
+  early, because uploads were still completing. The Backblaze window appeared
+  not to notice a pause, but it was right and the monitors were early. The feed carries a
   `draining` flag for the same distinction.
 - While a pause was set, the monitors said "Preparing <file>" beside a state of Paused. That
   reads as stalled, and says the opposite of what is happening. The client parks on the file it
-  was about to take. While a pause is set, this is thus the next file and not the current one.
-  Both monitors now say so.
+  was about to take. While a pause is set, this is the next file.
+  Both monitors now label it that way.
 - A Skipped Files tab in the web interface. It lists the files Backblaze has given up on, with
   the reason for each one. It has a filter, and a breakdown you can click to narrow the list by
-  reason. The reasons read as words, and the tooltip keeps the client's own constant. Where the
+  reason. The reasons read as words, and the tooltip keeps the client's constant. Where the
   reason is a permissions problem, the page says what that means under this container. It
   points at `bb-doctor`, which diagnoses the problem and prints the command. The tab sits
-  behind the web login, like the rest of the dashboard, because a list of paths is worth
+  behind the web login, like the rest of the dashboard, because a list of paths needs
   protecting. On the API, the same list is withheld from any key without `read:files`.
 - Buttons and chips drawn on the border colour had near-black text hardcoded on them. In the
-  dark theme this text was 1.5:1 against a dark grey, and thus effectively invisible. They now
+  dark theme this text was 1.5:1 against a dark grey, and so effectively invisible. They now
   use the accent and background of the palette, and every theme guarantees contrast between
   those two.
 - The ETA no longer reports absurd figures while a backup gets going. A backup starts on its
   small files. A handful of those gives a per-byte rate low enough to extrapolate into
   thousands of years. One run read "4259966d", which is about 11,600 years. The trend feature
-  then dutifully compared today's nonsense against yesterday's. The monitors now withhold an
+  then compared today's nonsense against yesterday's. The monitors now withhold an
   estimate beyond a century instead of showing it. The trend ignores estimates resting on fewer
-  than three completed transfers, and does not record them. A bad reading thus cannot spoil the
-  next day's comparison either. A dismal estimate still shows: 100 TB on a 1 Mbit/s uplink is
-  about 25 years, and that is a true answer.
+  than three completed transfers, and does not record them. So a bad reading cannot spoil the
+  next day's comparison either. A long but real estimate still shows. 100 TB on a 1 Mbit/s uplink is
+  about 25 years.
 - With no usable estimate, the ETA now reads "not yet" rather than "stalled". Stalled was true
   when the only cause was a dead rate. It is wrong when the backup is uploading briskly and
   only the projection is unusable.
-- `bb-monitor` run without a terminal says so and names the fix, instead of dying in a two-deep
-  curses traceback. The usual way to have no terminal is `docker exec` without `-it`, which is
-  exactly what the message suggests.
-- The skipped-file check counted the list's own header as a skipped file: a clean list holding
+- `bb-monitor` run without a terminal prints a message that names the fix, instead of dying in a two-deep
+  curses traceback. The usual way to have no terminal is `docker exec` without `-it`, and the
+  message suggests adding it.
+- The skipped-file check counted the list's header as a skipped file. A clean list holding
   only "# SkippedFilesReportStarted" reported two files skipped. The check now counts only
   lines with a tab-separated reason, the same rule the monitor's counter always applied. This
   was found on the first run against a real machine. That run also confirmed that a directory
   ownership fix clears the list on the next scan.
-- `bb-doctor` works out why files were skipped. It groups them by the client's own reason. It
+- `bb-doctor` works out why files were skipped. It groups them by the client's reason. It
   then reads a sample, to tell the files apart. Some files no longer exist. Some are readable
   again and will clear on the next scan. Some this container still cannot read. For that last
   group it names the directory, its ownership and mode, and the command to run on the host.
 
-  `bb-doctor` repairs nothing, even with `--fix`. These are your own files on a mounted share,
-  often thousands of them, and other software on the host may depend on who owns them. To
-  change that from inside a container is the case this tool's own rule was written for.
+  `bb-doctor` repairs nothing, even with `--fix`. These are your files on a mounted share,
+  often thousands of them, and other software on the host may depend on who owns them. Changing
+  that from inside a container is what this tool's rule was written to prevent.
 - Files Backblaze has given up on are now reported. `bzlist_skipped_files.txt` records them
-  with a reason. The client neither queues nor retries these files, so nothing else tells you
+  with a reason. The client neither queues nor retries these files, so this report is the only sign
   that they are unprotected. Under this container the usual cause is a file the container user
-  cannot read. That points at ownership on the mounted source, and not at Backblaze.
+  cannot read. That points at ownership on the mounted source.
 - A first upload still working through the set now shows how long it has been running and how
-  far it has got. It thus does not look like something is wrong. The client exposes no "initial
+  far it has got, so it does not look like something is wrong. The client exposes no "initial
   backup finished" flag, so the monitors infer this from how much of the set has never been
   sent. It appears as a banner in the web dashboard and in the terminal title bar.
 - Upload counts for the most recent day. The monitors break the failures out by the client's
-  own categories, and show the bytes compression has saved.
-- Backblaze's own measured throughput, from `bzperf_measured_upload.xml`. On the machine this
+  categories, and show the bytes compression has saved.
+- Backblaze's measured throughput, from `bzperf_measured_upload.xml`. On the machine this
   was developed against, it reports 3578 kbit/s for files over a megabyte. That matches, to
   within two percent, the ceiling calculated from the send buffer and the round-trip time.
 - A compact view for multi-part uploads, in both monitors. It gives one row per file, with the
@@ -550,19 +544,19 @@ a stable release.
   default, and you toggle it beside the theme picker.
 
 - A Tools tab in the web interface. It runs `bb-doctor`, `bb-health` and `bb-version`
-  from the page and shows their output there. The page does not have its own copy of the
+  from the page and shows their output there. The page has no separate copy of the
   tools. It runs the same programs that the console runs, and shows what they print, so a
   change to a tool is a change to both views. A paste of the output into a forum post is
   the same text whichever way it was made. The page colours the lines by the prefixes that
   `bb-doctor` prints. A line with an unknown prefix is shown as plain text, so a change of
   wording in a tool cannot hide output. Each tool has a Run button, a Copy button and a
   Download button. `bb-doctor` has a checkbox for `--fix`. The page shows what `--fix` can
-  change and asks for confirmation before it runs. One run per tool at a time: a second
+  change and asks for confirmation before it runs. One run per tool at a time. A second
   click while a run is in progress joins the run. Every run is written to the container
   log with its command. The page runs as the container user, so the permission checks test
   the right user. The tab sits behind the web login, like the rest of the dashboard.
 
-  `bb-health` shows its answer in its own card, with a tick, a warning sign or a cross,
+  `bb-health` shows its answer in a separate card, with a tick, a warning sign or a cross,
   and the tool's lines under it. Its output is a verdict, so it has no output box and no
   Download button. The output boxes of `bb-doctor` and `bb-version`
   have a Hide button and a Show button. Every card has a Clear result button, which
@@ -583,7 +577,7 @@ a stable release.
   attention: the health warnings, a pause and whether it has taken yet, a first backup in
   progress or just finished, and then the skipped files under them. A warning that
   `bb-doctor` can diagnose links to the Tools tab. When there is nothing to report, the
-  page says so. The red band in the Monitor tab links to the Status tab.
+  page says there is nothing to report. The red band in the Monitor tab links to the Status tab.
 
 - The pause says why, and until when. The client writes a reason code and a deadline with
   every pause, and the data layer read both, but the pages showed a flag. Now the Monitor's
@@ -591,24 +585,24 @@ a stable release.
   with the client's code in a tooltip: "Paused from here" for a pause set from the Monitor,
   the API or bzcli; "Paused by the client" with the cause when the client chose it, for
   example when Backblaze's cluster authority is not answering, which is usually their
-  maintenance and resumes on its own. A pause set from here is ended from the Monitor; one
+  maintenance and resumes on its own. A pause set from here is ended from the Monitor. One
   the client chose ends when the client decides. The page says which.
 - Notifications. The Settings tab has a Notifications section. Add an ntfy topic, a Pushbullet,
   Discord, Slack or Gotify endpoint, a webhook that receives JSON, or a custom JSON body with
   placeholders for anything else, with an optional bearer token or basic auth, and choose the
   events:
   safety freeze, files skipped from a threshold, no completed backup within the client's
-  own limit, a stall that `bb-health` reports, a pause the client chose, first backup
+  limit, a stall that `bb-health` reports, a pause the client chose, first backup
   complete, a milestone, and a container build change. Each event is sent once when it
   starts and once when it clears, and the conditions are remembered on disk so a restart
-  does not send them again. Delivery makes three attempts and then logs the failure; there
+  does not send them again. Delivery makes three attempts and then logs the failure. There
   is no queue. No file names are sent. A Test button
   sends a message to one endpoint. Tokens are stored in `/config/bb-api`, readable by the
   container user only, because they have to be sent and so cannot be hashed.
 - Quiet hours. The Settings tab has a schedule of pause windows: days of the week, a start and
   an end, in the container's time zone. At the start of a window the container asks the
-  client to pause; at the end it starts the backup again. The client's own pause lasts
-  about two hours, so inside a window the container renews it and says so in the log. A
+  client to pause, and at the end it starts the backup again. A client pause lasts
+  about two hours, so inside a window the container renews it and logs the renewal. A
   backup started by hand inside a window stays running until the window ends. The Status
   tab reads "Paused for quiet hours" with the time it resumes.
 - Copy status summary. A button in the Monitor's settings and on the Status tab copies
@@ -621,7 +615,7 @@ a stable release.
   to give up on files. It also compares the volume id the client wrote under `.bzvol` with
   the volumes the client lists in `bzvolumes.xml`. A drive the client no longer recognises
   is the "No files are selected" state after an inherit onto a fresh install, and nothing
-  reported it before. No repair for either: these are the user's files and the backup's
+  reported it before. No repair for either, because these are the user's files and the backup's
   identity. Beta only, through the same build-time patch as the other additions.
 - `bb-health` reports FROZEN, exit 1, when Backblaze has safety-frozen the backup, so a
   frozen backup shows unhealthy in the Docker tab instead of healthy. `bb-watchdog` acts
@@ -629,7 +623,7 @@ a stable release.
   cross. Beta only, as an anchored patch on the stable `bb-health`.
 - The API has a switch. When a live key exists, the API tab shows a toggle that turns the
   API off and on without revoking anything. Off, every path answers 404 and the keys are
-  kept; on, they work again at once. A revoked or expired key has a Delete button in the
+  kept. On, they work again at once. A revoked or expired key has a Delete button in the
   table, which removes the row. An active key cannot be deleted, only revoked.
 - More on the API. `GET /api/v1/metrics` gives the numbers in Prometheus text format with
   a `bb64_` prefix. `GET /api/v1/events` is a server-sent event stream with one message
@@ -637,19 +631,11 @@ a stable release.
   milestones, and a keep-alive every fifteen seconds. `GET /api/v1/openapi.json` is the
   OpenAPI 3.1 document, also in the repository at `docs/openapi.json`. The command-line
   tools are reachable at `/api/v1/tools` behind two new permissions: `diagnose` runs the
-  checks and reads their output; `diagnose:repair` is needed as well to switch on
+  checks and reads their output, and `diagnose:repair` is needed as well to switch on
   `bb-doctor --fix`. The status payload gains `pause_label`, `milestones` and
   `progress_history`.
 - The Status tab shows more. Milestones, each once for a week: a quarter, half, three
   quarters of the way, and the first terabyte. The last 24 hours as a list in a box that
-- The timeline summary line counted a multi-part file once per part, each time at its running total, so a day of large files reported around ten times the bytes sent (11.5 TB for about 1 TB on a live container). A bundle is now one file at its final size, and one already landing parts when a spell starts counts only what it gains during the spell.
-- An inherit of the backup state shows while it runs: the stage, the percentage and the part, on the Status tab, the Monitor's first line, the terminal monitor, `bb-doctor` and the API, with a Prometheus gauge. A reinstall that loses `bzinstall.xml` starts one, and until it finishes nothing is backed up and every counter reads zero.
-- The licence status reads as a date. The client reports `expires_20261004001046`; the Status tab, the terminal monitor and `bb-doctor` now say "valid until 4 October 2026", and it is a warning only inside two weeks of the date or past it, rather than for any status other than `billing_active`.
-- Two more Wine patches, and with them the cause of the lost lock. Client 10.0.3.1075's bzserv supervises the backup pass it launches by opening it by pid every ten seconds; the pass denies everyone access to its own process object, and on Windows the service gets through only because it runs as LocalSystem, whose `SeDebugPrivilege` bypasses a process's DACL. Wine ran services with the ordinary admin token, the privilege disabled, and no bypass in its server, so the open failed with access denied, bzserv concluded the pass had died, deleted its lock and started another. `patches/wine-debug-privilege-bypass.patch` makes `OpenProcess` and `OpenThread` honour `SeDebugPrivilege` as Windows does and enables it in the default token; `patches/wine-token-localsystem.patch` adds the LocalSystem group to that token. Confirmed on a live container: 10.0.3.1075 completes its passes on this Wine, so the beta no longer pins the client and follows Backblaze's newest again. The stable images keep the pin; their Wine is unpatched.
-- A warning when the client loses its four-hour lock. Client 10.0.3.1075 loses it under Wine on every pass: the lock file is on disk and the client's own check says it is not, so the pass aborts at the transmit step and bzserv starts another a few minutes later that does the same, while large files keep uploading through the chunk path so nothing else looks wrong. The Status tab, the terminal monitor, the metrics, notifications and bb-doctor now say so, from the log's own error line.
-- `BACKBLAZE_VERSION` pins the client. On each start the container installs that exact version from Backblaze's versioned installer if a different one is installed, newer or older, and skips the update check. The updater's "newest on every start" is what put 10.0.3.1075 on every container, so the image pins 10.0.1.1069 by default; set the variable empty to let the updater decide. The pinned client goes in over the existing install, so the machine identity in `bzinstall.xml` survives and no inherit of the backup state is needed.
-- The monitor no longer boots Wine. Reading the client's settings through bzcli started the Wine prefix, and with it bzserv and a backup pass, before startapp.sh had installed or updated the client; on a live container that put a pass and the installer on the same files at once. Nothing automatic runs bzcli until the client startapp.sh launches is up.
-- bb-doctor no longer lists Wine's own `Z:` mapping of the container root as a source drive, or warns that the client has no selection entry for it: that is the right state for a drive that must never be backed up. The swap line no longer repeats what the RAM line already said.
   scrolls, newest first: every change of state, and after each spell of uploading one line
   with what it amounted to, for example "Uploaded 28 files (1.4 GB) in 9m, 40 already backed
   up: average 40.0 Mbit/s, 8.0 threads, mem 1.9 GB, swap 95 MB". A spell that runs for hours
@@ -662,6 +648,14 @@ a stable release.
   in this container: delete the client's program
   directory and restart, and never recreate the Wine prefix, which would destroy the backup
   state.
+- The timeline summary line counted a multi-part file once per part, each time at its running total, so a day of large files reported around ten times the bytes sent (11.5 TB for about 1 TB on a live container). A bundle is now one file at its final size, and one already landing parts when a spell starts counts only what it gains during the spell.
+- An inherit of the backup state shows while it runs: the stage, the percentage and the part, on the Status tab, the Monitor's first line, the terminal monitor, `bb-doctor` and the API, with a Prometheus gauge. A reinstall that loses `bzinstall.xml` starts one, and until it finishes nothing is backed up and every counter reads zero.
+- The licence status reads as a date. The client reports `expires_20261004001046`. The Status tab, the terminal monitor and `bb-doctor` now say "valid until 4 October 2026", and it is a warning only inside two weeks of the date or past it, rather than for any status other than `billing_active`.
+- Two more Wine patches, and with them the cause of the lost lock. Client 10.0.3.1075's bzserv supervises the backup pass it launches by opening it by pid every ten seconds. The pass denies everyone access to its own process object, and on Windows the service gets through only because it runs as LocalSystem, whose `SeDebugPrivilege` bypasses a process's DACL. Wine ran services with the ordinary admin token, the privilege disabled, and no bypass in its server, so the open failed with access denied, bzserv concluded the pass had died, deleted its lock and started another. `patches/wine-debug-privilege-bypass.patch` makes `OpenProcess` and `OpenThread` honour `SeDebugPrivilege` as Windows does and enables it in the default token. `patches/wine-token-localsystem.patch` adds the LocalSystem group to that token. Confirmed on a live container: 10.0.3.1075 completes its passes on this Wine, so the beta no longer pins the client and follows Backblaze's newest again. The stable images keep the pin, because their Wine is unpatched.
+- A warning when the client loses its four-hour lock. Client 10.0.3.1075 loses it under Wine on every pass. The lock file is on disk but the client's check says it is not, so the pass aborts at the transmit step and bzserv starts another a few minutes later that does the same, while large files keep uploading through the chunk path so the backup otherwise looks healthy. The Status tab, the terminal monitor, the metrics, notifications and bb-doctor now raise it, from the error line in the log.
+- `BACKBLAZE_VERSION` pins the client. On each start the container installs that exact version from Backblaze's versioned installer if a different one is installed, newer or older, and skips the update check. The updater's "newest on every start" put 10.0.3.1075 on every container, so the image pins 10.0.1.1069 by default. Set the variable empty to let the updater decide. The pinned client goes in over the existing install, so the machine identity in `bzinstall.xml` survives and no inherit of the backup state is needed.
+- The monitor no longer boots Wine. Reading the client's settings through bzcli started the Wine prefix, and with it bzserv and a backup pass, before startapp.sh had installed or updated the client. On a live container that put a pass and the installer on the same files at once. Nothing automatic runs bzcli until the client startapp.sh launches is up.
+- bb-doctor no longer lists Wine's `Z:` mapping of the container root as a source drive, or warns that the client has no selection entry for it, since that is the right state for a drive that must never be backed up. The swap line no longer repeats what the RAM line already said.
 - The status panel is arranged in named rows: Now, Progress, Today and System. Twenty
   readings in one wrapped line had become a wall of text. A row with nothing to show is left
   out rather than drawn as a label with nothing after it.
@@ -695,32 +689,32 @@ a stable release.
 - The desktop pane can reconnect. When noVNC reports the connection is gone, a notice with a
   Reconnect button appears above the pane and reloads the frame.
 - Every page honours every theme. The thirteen palettes were defined in the Monitor's page
-  only; the Status, Tools and API pages knew one of them. The palettes now live in one
+  only. The Status, Tools and API pages knew one of them. The palettes now live in one
   block spliced into every page, so a theme chosen in the Monitor applies everywhere. The
   dim text colour is derived from whichever palette is in force and now lives with the
-  palettes: it was defined for the plain pages only, so the Monitor's progress chart had no
+  palettes. It was defined for the plain pages only, so the Monitor's progress chart had no
   value to resolve and its axis labels fell back to the SVG default, which is black on a
   dark theme.
 - Text uses the width of the window. The Status, Tools and API pages capped prose at 70
-  characters and the permission list at 52, which is about 375 pixels; the pages now use
+  characters and the permission list at 52, which is about 375 pixels. The pages now use
   the same 1100-pixel measure as the Monitor, with prose at 100 characters inside it.
 - Accessibility. The health band, the completion banner and the Status notices are
   announced to a screen reader when they change. Animations stop when the browser asks for
   reduced motion.
 - `bb-health`'s description on the Tools tab reads "with diagnostic information".
 - The container asks the client about itself. Backblaze ship `bzcli` with the client, and
-  its report command answers a query path with that part of its own account of itself. The
+  its report command answers a query path with that part of its report on itself. The
   container now reads five of those paths on a slow cycle. It never reads the whole
-  document and never asks for `/backup/account`: both carry the account email and the
+  document and never asks for `/backup/account`. Both carry the account email and the
   login, and querying by path keeps them out of this container altogether.
 - A warning when the licence lapses or a renewal fails. Backblaze report both, and until now
-  the container had no way of knowing. A card that expires stops the backup quietly, with
+  the container had no way of knowing. A card that expires stops the backup with
   nothing on the dashboard to say why. It now appears in both monitors, in the API, in the
   Prometheus gauges and as a notification event, the same as a safety freeze.
 - Per drive, whether the client is set to back it up. The client keeps a filter list with one
   root entry per drive, and that entry decides whether the drive backs up at all. A drive
-  whose root reads "none" shows as ticked in the client's own settings window and backs up
-  nothing, which is the state behind "No files are selected". A user hit exactly this after
+  whose root reads "none" shows as ticked in the client's settings window and backs up
+  nothing, which is the state behind "No files are selected". A user hit this after
   moving containers and it took several rounds to work out. It now appears on the Status tab,
   in the terminal monitor and in `bb-doctor`, named for what it is.
 - Whether a private encryption key is set, on the Status tab and in the terminal monitor.
@@ -728,74 +722,74 @@ a stable release.
 - The assigned datacentre cluster, read from the client rather than inferred. The monitor
   worked it out by matching sockets on the owning process, which cannot answer while nothing
   is uploading. The client states it. The socket reading stays as the fallback.
-- `bb-doctor` checks the client's own settings. The licence, the safety freeze, the
+- `bb-doctor` checks the client's settings. The licence, the safety freeze, the
   encryption key, whether each mapped drive is set to be backed up, and whether the
-  container's own config directory sits inside a backed-up drive without being excluded,
-  which is the loop where the client backs up its own bookkeeping for ever.
+  container's config directory sits inside a backed-up drive without being excluded,
+  which sets up a loop where the client backs up its bookkeeping for ever.
 - The Settings tab can change some of the client's settings: the thread count, the automatic
   and manual throttle, the largest file to back up, the staleness threshold, the name shown
   in your Backblaze account, network tests and backing up on battery. The description under
-  each is the client's own wording, so it says what the Backblaze settings window says.
+  each is the client's wording, the same as in the Backblaze settings window.
   The manual throttle is megabits per second per thread rather than for the backup as a
   whole, which is easy to misread, so the page multiplies it out by your thread count. The
   thread count is shown next to the per-thread ceiling the round trip imposes, since raising
   it only helps while that ceiling is not already what is holding the rate down.
 
-  What cannot be changed from here: anything deciding what is backed up. The file selection,
-  the exclusions and the schedule are absent by design, because a wrong edit there stops a
+  Nothing that decides what is backed up can be changed from here. The file selection,
+  the exclusions and the schedule are absent, because a wrong edit there stops a
   backup rather than slowing one, and the private encryption key verbs are unreachable as
   they always were. Backblaze cannot recover a forgotten key.
 
   Changing a setting is written to the client's configuration at once. Whether a running
   client honours it without the container being restarted has not been established, and the
-  page says so rather than claiming either way.
+  page states that.
 - `GET /api/v1/client` gives the same reading under `read`. `POST /api/v1/client` changes a
   setting under a new `configure` permission, which no existing key holds. The drive list
-  and the exclusions name directories on your own share, so a key without `read:files` does
+  and the exclusions name directories on your share, so a key without `read:files` does
   not get them, the same rule the skipped list follows.
 - The diagnostic bundle carries the client's settings. "What are your threads set to" is a
   question that gets asked every time. The name shown in your Backblaze account is removed
-  from the capture first: the bundle hashes file and directory names, but a bare value is
+  from the capture first. The bundle hashes file and directory names, but a bare value is
   not a path and would have reached the bundle whole, and a machine name is often a person's.
 - The backup total is shown to two decimal places. At one place a TB reading only moves
   every 102.4 GB, which on an 87 TB backup is most of a day of uploading, and a whole
-  percent is several days; the terminal monitor showed a whole percent, which is worse. A
+  percent is several days. The terminal monitor showed a whole percent, which is worse. A
   correct figure sat still long enough to be reported as a stuck counter. It now reads
-  20.31 TB and 23.37%, both of which move about hourly. Other figures keep one place: a
+  20.31 TB and 23.37%, both of which move about hourly. Other figures keep one place. A
   file size in the completed table gains nothing from a second. The Backup gauge's tooltip
   also gives what this session has sent, which moves continuously. Two places brings the
-  figure from a day to about two hours, so the session figure beside it is still the one
+  figure from a day to about two hours, so the session figure beside it is still the figure
   that moves while you watch. Every other displayed figure was checked for the same fault
   and moves within about ninety seconds. The first-backup percentage had it and now reads
   two places as well.
 - Progress per drive, when more than one is mapped. Both files the totals come from carry a
-  figure per volume that nothing read until now, so each drive gets its own bar with the
-  files it has left. A single-share container shows nothing new, because the one bar would
+  figure per volume that nothing read until now, so each drive gets a bar with the
+  files it has left. A single-share container shows nothing new, because a single bar would
   repeat the total.
 - What is left, against what has gone. The client gives no size breakdown of the files
   still to send, but the average size of the remainder against the average of what has
   already gone is available, and it is the figure that explains a long estimate. On a live
-  container what remained averaged 602 MB a file against 8 MB for what had gone, which is
-  why 96% of the files was 23% of the bytes. It sits beside Files Remaining.
+  container what remained averaged 602 MB a file against 8 MB for what had gone, so
+  96% of the files was 23% of the bytes. It sits beside Files Remaining.
 - The rate's tooltip says what bounds it. Wine answers the ideal-send-backlog query with a
   fixed 64 KB, so an upload connection holds at most that much in flight and its rate is
   limited by that divided by the round trip. The monitor knows the round trip and the thread
   count, so it can state the modelled limit and whether the observed rate is at it, below it
-  or above it. Stated as a measurement rather than as advice about thread counts: on a live
+  or above it. It is stated as a measurement, not as advice about thread counts. On a live
   container the observed rate was above what the model predicts, so the figure is a floor of
-  unknown tightness and the container does not pretend otherwise.
+  unknown tightness.
 - The state reads "Checking" while the client is checking files it has already sent. After a
   restart the client re-checks the small files between its checkpoint and where it had got
-  to; nothing is sent and no thread runs, so the state read "Transmitting" with everything
+  to. Nothing is sent and no thread runs, so the state read "Transmitting" with everything
   at zero, which looks like a stall and was reported as one.
 - Each notification endpoint shows how its last delivery went, on the Settings page. A
   delivery that fails at three in the morning went to the container log, where nobody looks.
   The state covers this run of the service and is not kept across a restart, because a stale
   verdict would be worse than none.
 - Notifications send the shape each service wants. A Pushbullet user found that the generic
-  webhook did not work: Pushbullet requires `{"type": "note", "title", "body"}` and answers
-  400 to anything else, and Discord (`content`) and Slack (`text`) have requirements of their
-  own. There are now named kinds for Pushbullet, Discord, Slack and Gotify, each sending the fields that
+  webhook did not work. Pushbullet requires `{"type": "note", "title", "body"}` and answers
+  400 to anything else, and Discord (`content`) and Slack (`text`) have different
+  requirements. There are now named kinds for Pushbullet, Discord, Slack and Gotify, each sending the fields that
   service documents and, for Gotify, its `X-Gotify-Key` header. A custom kind takes a JSON
   body you write with `{title}`, `{message}`, `{event}`, `{container}`, `{build}`, `{state}`,
   `{time}` and `{priority}` placeholders, escaped for you, and it is checked as JSON when you
@@ -803,11 +797,11 @@ a stable release.
   expect. The Settings page shows a hint and the right URL for each kind.
 - Recently Completed says "already backed up" for a small file the client checked and did
   not send. After a restart the client re-checks the small files between its checkpoint and
-  where it had got to, one round trip each, and names each one as it goes; those rows showed
+  where it had got to, one round trip each, and names each one as it goes. Those rows showed
   dashes in every column. The client's
   transmission report records each such check as "dedup - 0 bytes", and the monitors now
-  read those rows and say so. The API row carries `dedup: true`. Confirmed on a live
-  container: the report row for a file appeared three seconds before the monitor saw the
+  read those rows and label them. The API row carries `dedup: true`. Confirmed on a live
+  container, where the report row for a file appeared three seconds before the monitor saw the
   client move on from it.
 - A warning can be dismissed. Every notice on the Status tab now carries a Dismiss link,
   for the case where you have read it and know the state is fine. A dismissed warning stays
@@ -818,14 +812,14 @@ a stable release.
   a dashboard can still show it. A new Warnings panel on the Settings tab lists what was
   dismissed, with the wording and the date, and a Reset that puts all of it back. The
   dismissals are kept in `/config/bb-api/dismissed.json`, owner-readable only like the rest
-  of that directory. Notifications are unaffected: they fire on a transition rather than on
+  of that directory. Notifications are unaffected, because they fire on a transition rather than on
   a steady state, so a warning that has stood long enough to be dismissed has already sent
   its message.
 
 ### Changed
 - The tabs in the web interface are Desktop, Monitor, Status, Tools, API and Settings.
   "Upload Monitor" is now "Monitor" and "Skipped Files" is now "Status". Settings holds
-  notifications and quiet hours; API holds the keys.
+  notifications and quiet hours, and API holds the keys.
 - The tab row scrolls sideways when it does not fit the screen. A phone showed five tabs
   and no sign of the sixth. Now a finger swipes the row, a mouse drags it, a fade with a
   chevron at either edge says there is more in that direction, and the chosen tab is
@@ -837,24 +831,24 @@ a stable release.
   a skipped file, so from the console both always said yes. Now, when it starts as root, it
   restarts itself as `USER_ID:GROUP_ID`, or as the owner of `/config` when those are not
   set, with the same arguments. The output is then the answer for the user the client
-  runs as. When the image has no way to drop privileges, the tool says so at the top of
+  runs as. When the image has no way to drop privileges, the tool states this at the top of
   its output and gives the `docker exec -u` command to run instead. Beta only, through the
   same build-time patch as the skipped-file check.
-- The dark theme is properly black rather than dark grey. It uses rogman's values.
+- The dark theme is now black in place of dark grey. It uses rogman's values.
 - The web dashboard now works on a mobile browser.
 - `bb-monitor` and `bb-monitor-web` share one data layer,
   `/usr/local/lib/bb-monitor/bbdata.py`, so a feature appears in both or in neither.
 
 ### Fixed
 - The Status tab warned that `C:` was set to back up nothing. `C:` is the Wine prefix, which
-  holds the client's own install and the Windows layer it runs on, so the client is right not
+  holds the client install and the Windows layer it runs on, so the client is right not
   to be selecting it and the warning was wrong on every container. Whichever letter the prefix
   maps to `/`, usually `Z:`, is Wine's view of the container root and is the same story. Both
-  are now marked as the container's own drives. They raise no warning, they are stated as
+  are now marked as the container's drives. They raise no warning, they are stated as
   "No, nothing (the container's own drive; nothing here needs backing up)" in the per-drive
   table rather than in the colour used for a fault, and the terminal monitor writes them as
-  "(container)" in its ordinary colour. A mounted share set to back up nothing is unchanged:
-  that one really is the fault behind "No files are selected".
+  "(container)" in its ordinary colour. A mounted share set to back up nothing is unchanged,
+  because that is the fault behind "No files are selected".
 - `bb-doctor` reported a share with the wrong owner as readable, when it was run from the
   console. The readability test is `[ -r ]`, and the console is root, so the test could not
   fail. A user with the most common fault this container has ran the tool as the README
@@ -865,19 +859,19 @@ a stable release.
   also pushes small files in bundles rather than singly, so the log holds no per-file record of
   them either. The monitors now take them from the client, which names each one in turn. They
   are listed without a thread, size or rate, because none of those exist for them.
-- The compact multi-part view drew one row per thread. Nine threads on one film thus gave nine
+- The compact multi-part view drew one row per thread. So nine threads on one film gave nine
   identical "0/21" rows, plus the chunk strip above them. The compact row now counts the file's
-  parts rather than the thread's own progress. There is thus one row per file, and no row at
+  parts rather than the thread's progress, so there is one row per file, and no row at
   all for the file the strip is already showing in full.
 - The compact multi-part view showed a file that was not being uploaded. One example is "0/21
   chunks" against a film while the client was producing file lists. The container does not
   clear `bzcurrentlargefile/` when a file finishes, so it still described the last file split.
-  The view now appears only while that file is the one being worked on.
-- Multi-part totals were wrong again, in a different way: a 221 MB file with 10 MB parts listed
+  The view now appears only while that file is being worked on.
+- Multi-part totals were wrong again, in a different way. A 221 MB file with 10 MB parts listed
   as "22/236". The part size is constant for a file, but the code remembered a reading only
-  when it came from the fallback path. A line that carried the size thus returned it without
+  when it came from the fallback path. So a line that carried the size returned it without
   recording it. A later line without the size then fell back to the live counter, which
-  describes the part a thread happens to be carrying. One short reading thus fixed a row's
+  describes the part a thread happens to be carrying. So one short reading fixed a row's
   total for good. The code now remembers the largest credible reading for a file, whichever
   path it came from, and a short one cannot undo it. It also no longer sets a total at all from
   a part size below a mebibyte, which cannot be the configured one.
@@ -896,7 +890,7 @@ a stable release.
 - Completed multi-part files showed nonsense part counts such as "21/6594". The count was
   derived from `numBytes_to_send_in_shm` in the thread instruction. That value describes the
   part a thread is carrying, and not the file's part size. Readings well below the part size
-  thus turned `filesize / part` into tens of thousands. The monitors now read the configured
+  turned `filesize / part` into tens of thousands. The monitors now read the configured
   part size from the `bz_done` line, which is constant for a file. A total that large also
   meant the record never reached completion, so every later upload of the same file kept
   accumulating into it. Multi-part files also produce one push beyond their part count. After
@@ -922,18 +916,18 @@ a stable release.
 - `per_volume` reached a key without `read:files` with the mount path and a stable
   identifier for the machine, although every other field naming a directory is withheld
   from that key. `per_volume` now drops the identifier and reduces the path to a bare drive
-  letter, or `null` when the client's own mount path is longer than that.
-- A notification endpoint could point at the container's own loopback address, a link-local
+  letter, or `null` when the client's mount path is longer than that.
+- A notification endpoint could point at the container's loopback address, a link-local
   address, or anything else reachable on the Docker network, and testing it echoed back the
-  remote's own status code or connection error. The container now resolves the host first
-  and refuses loopback, link-local and the unspecified address; a test now only ever reports
-  "delivered" or "not delivered", and the endpoint's actual reply goes to the container log
+  remote's status code or connection error. The container now resolves the host first
+  and refuses loopback, link-local and the unspecified address. A test now only ever reports
+  "delivered" or "not delivered", and the endpoint's reply goes to the container log
   instead.
 - The web routes carried no `X-Frame-Options`, `X-Content-Type-Options` or
   `Referrer-Policy` header, and nothing capped the size of a request body. Both are set on
   `/monitor/` now, and a body over 1 MB is rejected before it is read, at nginx and inside
   the service.
-- `GET /api/v1/report/download/<token>` answered before the API's own "no key means no
+- `GET /api/v1/report/download/<token>` answered before the API's "no key means no
   surface" check, so a container with no key configured still gave a real 404 with a schema
   field, unlike every other unconfigured path. The route now sits behind that same check.
 - The three routes that read a request body had no socket timeout and no check on
@@ -941,26 +935,26 @@ a stable release.
   indefinitely. The socket now times out after 30 seconds, and a body outside 0 to 1 MB is
   rejected with 413 before it is read.
 - An unwritable notification state file meant a state change could not be remembered, so the
-  same event could fire on every poll instead of once; the file was also rewritten on every
+  same event could fire on every poll instead of once. The file was also rewritten on every
   poll regardless of whether anything had changed. The state is now kept in memory as well,
   so a write failure does not lose it, one line goes to the container log the first time a
-  write fails, and a write happens only when the state has actually changed.
+  write fails, and a write happens only when the state has changed.
 - Pausing or resuming for a quiet hours window ran `bzcli` directly on the thread that also
-  collects the monitor's own data, so the whole monitor stalled for as long as a slow or
-  wedged client took to answer. The action now runs on its own thread.
+  collects the monitor's data, so the whole monitor stalled for as long as a slow or
+  wedged client took to answer. The action now runs on a separate thread.
 - `quiet.state()` published `window_end` even outside the window it describes, which read as
   though a window not yet reached had already ended. `window_end` is now `null` outside a
   window.
 - Quiet hours boundaries were computed by adding a wall-clock duration in seconds to the
   day's start, which is wrong on a clock-change day: a window computed this way could open
   or close an hour early or late in spring and autumn. Each boundary is now built from its
-  own date and wall time instead.
+  date and wall time instead.
 - Chunks completed in the last minute was measured against the newest line in the log tail
   rather than against the current time, so the figure froze at whatever the last burst
-  reached and stayed there for hours after uploads had actually stopped. It is now measured
+  reached and stayed there for hours after uploads had stopped. It is now measured
   against now.
 - A file the datacentre already held, and so did not need sending again, was matched by
-  splitting its log line on its last " - ", so a file whose own name contained that sequence
+  splitting its log line on its last " - ", so a file whose name contained that sequence
   ("Artist - Track.mp3") lost everything before it and was never recognised as already
   backed up. The match is now taken from the line's fixed prefix instead.
 - The first-terabyte milestone fired at a decimal terabyte while the gauge beside it renders
@@ -968,9 +962,9 @@ a stable release.
   milestone now uses the same tebibyte threshold the gauge does.
 - The improving/worsening ETA trend shown on the Status tab and in the terminal monitor did
   not appear in the plain-text summary used for support threads. `summary_text` now includes
-  it, worded the way the page already is ("better"/"slower" rather than bbdata's own
+  it, worded the way the page already is ("better"/"slower" rather than bbdata's
   "improving"/"worsening").
-- Several callers arriving on a stale client-settings cache each started their own sweep of
+- Several callers arriving on a stale client-settings cache each started a separate sweep of
   Wine, so four callers used to run twenty separate `bzcli` calls at once on a container
   with little memory to spare. A caller arriving while a sweep is already running now waits
   for it and shares its result.
@@ -981,10 +975,10 @@ a stable release.
   down with an unhandled traceback. It now keeps the last good screen, names the fault in
   the footer, and tries again on the next tick.
 - The diagnostic bundle's client-settings capture redacted `online_hostname` by replacing
-  the whole matching line, which is only correct for pretty-printed output; against the
+  the whole matching line, which is only correct for pretty-printed output. Against the
   compact single-line JSON `bzcli` can also produce, it erased every other setting on the
   line along with it. The redaction is now by value, and the same by-value redaction now
-  also covers every name in `bb-report`'s own list of secret keys, which that capture's JSON
+  also covers every name in `bb-report`'s list of secret keys, which that capture's JSON
   shape had been passing straight through.
 
 
@@ -992,11 +986,11 @@ a stable release.
 
 ### Fixed
 
-- Backblaze client 10.0.3.1075 completes no backup pass under Wine, and the updater's "newest on every start" installed it on every container that restarted after about 14 September. Its service supervises each backup pass by opening it by pid; the pass admits only `NT AUTHORITY\SYSTEM` to its own process object, which the service is on Windows and is not under Wine, so the open is denied, the service concludes the pass has died, deletes its four-hour lock and starts another. The symptom is "Producing file lists" forever, with large files still uploading and bb-health reporting OK.
-- `BACKBLAZE_VERSION` pins the client to one version, installed from Backblaze's versioned installer over a newer or older one in place, so the machine identity in `bzinstall.xml` survives. The image pins 10.0.1.1069 by default; the pin wins over `DISABLE_AUTOUPDATE` as well as `FORCE_LATEST_UPDATE`, so the advice to disable updates does not disarm it. Set it empty to let those two decide again once a client that works under Wine has shipped. Do not remove `Program Files\Backblaze` to force a reinstall: that drops the identity and forces an inherit of the backup state.
+- Backblaze client 10.0.3.1075 completes no backup pass under Wine, and the updater's "newest on every start" installed it on every container that restarted after about 14 September. Its service supervises each backup pass by opening it by pid. The pass admits only `NT AUTHORITY\SYSTEM` to its own process object, which the service is on Windows and is not under Wine, so the open is denied, the service concludes the pass has died, deletes its four-hour lock and starts another. The symptom is "Producing file lists" forever, with large files still uploading and bb-health reporting OK.
+- `BACKBLAZE_VERSION` pins the client to one version, installed from Backblaze's versioned installer over a newer or older one in place, so the machine identity in `bzinstall.xml` survives. The image pins 10.0.1.1069 by default. The pin wins over `DISABLE_AUTOUPDATE` as well as `FORCE_LATEST_UPDATE`, so the advice to disable updates does not disarm it. Set it empty to let those two decide again once a client that works under Wine has shipped. Do not remove `Program Files\Backblaze` to force a reinstall, because that drops the identity and forces an inherit of the backup state.
 - The docs' `docker exec` examples use the template's container name, `Backblaze64`.
 
-The beta carries the Wine fix for the client itself; see the beta section above.
+The beta carries the Wine fix for the client itself. See the beta section above.
 
 ## [10.2.1] - 2026-08-07
 
@@ -1006,15 +1000,15 @@ The beta carries the Wine fix for the client itself; see the beta section above.
   and `bb-monitor` shows it in the status bar as `v10.2.1+<n>`.
 
 ### Fixed
-- `bb-monitor` showed completion times in UTC while its own clock showed local time, so
+- `bb-monitor` showed completion times in UTC while its clock showed local time, so
   the two disagreed by an hour in the same panel wherever the container's `TZ` is not
-  UTC. Backblaze stamps its logs in UTC regardless of `TZ`; the completion times are now
+  UTC. Backblaze stamps its logs in UTC regardless of `TZ`. The completion times are now
   converted for display while the internal duration arithmetic stays in UTC.
 
 ## [10.2.0] - 2026-08-05
 
 ### Added
-- A Docker `HEALTHCHECK` that reports the state of the backup rather than just whether
+- A Docker `HEALTHCHECK` that reports the state of the backup, not only whether
   a process is alive, so a stalled backup shows as unhealthy on the Unraid Docker page.
   Run `docker exec <container> bb-health` to query it directly. It reports unhealthy only
   on corroborated evidence, so idle, freshly installed and signed-out containers stay
@@ -1026,7 +1020,7 @@ The beta carries the Wine fix for the client itself; see the beta section above.
 - `bb-version`, reporting the installed Backblaze client version alongside the one
   Backblaze is currently serving, plus the container and Wine versions. Backblaze
   publishes release notes ahead of serving a build, so a version in the notes is often
-  not yet installable; this queries the same API the updater polls and says whether an
+  not yet installable. It queries the same API the updater polls and says whether an
   update is pending or which setting is holding it back.
 - `bb-doctor`, which checks an installation against the problems this project has run
   into and, with `--fix`, repairs the ones that can be repaired safely (reported Windows
@@ -1041,7 +1035,7 @@ The beta carries the Wine fix for the client itself; see the beta section above.
   pass younger than it, and reports the loop as `WEDGE`, so the health status goes red and
   the watchdog clears it. `bb-doctor` diagnoses the same signature independently of
   the tunable thresholds, and `bb-doctor --fix` removes the lock only while the full
-  signature holds: a `bztransmit` past the grace window, or one whose age cannot be
+  signature holds. A `bztransmit` past the grace window, or one whose age cannot be
   read, always keeps its lock. CI covers both the detection and the repair gate.
 - `bb-report`, which builds a sanitised diagnostic bundle for a forum post or issue.
   Collection is allowlist-based, so the per-thread XMLs (live auth token, AES key and IV,
@@ -1054,7 +1048,7 @@ The beta carries the Wine fix for the client itself; see the beta section above.
   ship together inside an image, so the build is the identifier to quote in a bug
   report, and a single stamp cannot drift out of step with the tools it describes.
 - CI tests `bb-report`'s sanitiser on every change, using the real data shapes found
-  in this container. A sanitiser bug does not crash anything; it quietly publishes
+  in this container. A sanitiser bug crashes nothing and shows no error, but publishes
   private data in a bundle meant for a public issue tracker, so the check is gated
   rather than left to be run by hand.
 - A CI smoke test that boots each built image and verifies the Wine prefix builds, the
@@ -1072,7 +1066,7 @@ The beta carries the Wine fix for the client itself; see the beta section above.
 - Documentation for the optional Wine upload-speed patch, an opt-in self-built image
   carrying the fix for [WineHQ bug 59893](https://bugs.winehq.org/show_bug.cgi?id=59893)
   while it is under review upstream.
-- Guidance to keep the Backblaze thread count manual and modest (4 to 8 threads); the automatic
+- Guidance to keep the Backblaze thread count manual and modest (4 to 8 threads), because the automatic
   setting can spin up enough threads to deadlock Wine's pipe handling and stall
   transmits.
 
@@ -1080,13 +1074,13 @@ The beta carries the Wine fix for the client itself; see the beta section above.
   Wine built from source and the upload-speed fix applied, so the fix can be used
   without building it yourself. It is not the supported path, since it carries a
   Wine change WineHQ has not yet reviewed and tracks the newer LTS. It is built on
-  the weekly schedule and publishes only the `beta` tag; the stable tags are
+  the weekly schedule and publishes only the `beta` tag. The stable tags are
   produced by a separate job and CI checks the beta cannot write them.
 - The beta's Wine fix was reworked after extended testing. The original version
   measured send-buffer room by payload bytes, which near the blocking boundary
-  could report a socket writable when a send would block; Wine's full socket
+  could report a socket writable when a send would block. Wine's full socket
   test suite deadlocked on that state. The fix now reports writability from the
-  kernel's own send-accept accounting and applies the same condition to Wine's
+  kernel's send-accept accounting and applies the same condition to Wine's
   blocking-send path, which previously parked sends the kernel would accept.
   Verified against Wine's full `ws2_32:sock` suite (which now passes cleaner
   than stock Wine), against real Windows Server 2022 and 2025, and against a
@@ -1116,16 +1110,16 @@ The beta carries the Wine fix for the client itself; see the beta section above.
     is 30 minutes and always exceeds the stall threshold, preventing a re-kill
     loop; interval and cooldown values are validated.
   - `bb-doctor`: `--fix` no longer reports skin aliases as fixed unless every
-    link was actually created; drive relinking uses `ln -sfn` so a dangling
+    link was created; drive relinking uses `ln -sfn` so a dangling
     symlink can be repaired; connectivity probes all six Backblaze mirrors
     before declaring the API unreachable; thread counting uses live processes
     rather than the accumulated instruction files.
   - `bb-version` no longer claims "restart the container to install it" when
-    `FORCE_LATEST_UPDATE` is unset - the updater only runs when it is exactly
+    `FORCE_LATEST_UPDATE` is unset, because the updater only runs when it is exactly
     `true`, and the report now matches that.
   - Release images now stamp their real version: the stock Dockerfiles were
-    missing the `ARG` for `DOCKER_IMAGE_VERSION`, so Docker silently dropped
-    the value CI passes and published images would have identified as "dev".
+    missing the `ARG` for `DOCKER_IMAGE_VERSION`, so Docker dropped the value
+    CI passes without a warning and published images would have identified as "dev".
   - The CI smoke test asserts the stamp file exists and anchors on a field the
     no-stamp fallback text cannot produce, and the stall-detection tests now
     gate the build alongside the sanitiser tests.
@@ -1152,8 +1146,8 @@ The beta carries the Wine fix for the client itself; see the beta section above.
   an inline deb822 source, so the repository verifies under the stricter apt in
   Ubuntu 26.04 (which ignores a keyring saved with the old `.key` extension).
 - CI builds both LTS variants in a matrix. The shared `latest` / `main` / version
-  tags track the default (oldest supported) LTS; the newer LTS is published under
-  its own `ubuntuNN` tag.
+  tags track the default (oldest supported) LTS, and the newer LTS is published under
+  a separate `ubuntuNN` tag.
 
 ## [10.0.0] - 2026-06-05
 
@@ -1161,7 +1155,7 @@ The beta carries the Wine fix for the client itself; see the beta section above.
 - Re-engineered for Backblaze 10.x, which is 64-bit only and requires Windows 10.
   - 64-bit WineHQ install (`winehq-stable`) via the modern deb822 `.sources`
     repository method, replacing the brittle `apt-key` / `add-apt-repository`
-    setup that silently fell back to Ubuntu's old system Wine.
+    setup that fell back to Ubuntu's old system Wine without warning.
   - The Wine prefix is forced to report Windows 10 on every start (via the
     registry), fixing the installer's "unsupported operating system / Windows XP"
     error.
@@ -1183,10 +1177,10 @@ The beta carries the Wine fix for the client itself; see the beta section above.
 - Base image moved to Ubuntu 24.04 LTS (`jlesage/baseimage-gui:ubuntu-24.04-v4`),
   with WineHQ packages installed from the `noble` repository, for a longer
   security-support window and an up-to-date userspace.
-- CI builds only the `ubuntu24` image; the older `ubuntu22`, `ubuntu20`, and
+- CI builds only the `ubuntu24` image. The older `ubuntu22`, `ubuntu20`, and
   `ubuntu18` variants are no longer published.
 - Removed the dead "pinned version" update path (its archive.org URL 404s and
-  it was already disabled); `FORCE_LATEST_UPDATE=false` now simply keeps the
+  it was already disabled). `FORCE_LATEST_UPDATE=false` now keeps the
   installed client and skips the update check.
 - Added a Community Applications profile (`ca_profile.xml`) and a `<TemplateURL>`
   for the Unraid CA submission.

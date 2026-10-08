@@ -1,7 +1,7 @@
-# What the client will tell us about itself, through its own bzcli.
+# What the client will tell us about itself, through bzcli.
 #
-# bzcli report answers a query path with that subtree as JSON. That matters more
-# than it sounds: the whole document carries the account email, the login and the
+# bzcli report answers a query path with that subtree as JSON. This matters
+# because the whole document carries the account email, the login and the
 # host guid, and this container has no business holding any of them. Querying by
 # path means they never enter this process. PATHS below is the complete list of
 # what is read, and nothing from a request reaches a query string.
@@ -10,37 +10,37 @@
 # are cached for TTL seconds and refreshed after a write.
 #
 # The writable side is a separate whitelist again, with a validator per key,
-# because bzcli's own --print preview renders the resulting file without checking
+# because bzcli's --print preview renders the resulting file without checking
 # it: a preview of backup_schedule_type=nonsense came back with "nonsense" in it.
-# The client does validate on apply, but a control that offers a bad value and
-# lets the client reject it is a worse control than one that knows the answer.
+# The client does validate on apply, but a control here should know the valid
+# values and not offer a bad one.
 
 import calendar, json, os, re, signal, subprocess, threading, time
 
 BZCLI = "/config/wine/drive_c/Program Files/Backblaze/bzcli.exe"
 PREFIX = os.environ.get("WINEPREFIX", "/config/wine")
-TIMEOUT = 90              # a cold Wine start is slow; a hung call must not hold a worker
+TIMEOUT = 90              # a cold Wine start is slow, and a hung call must not hold a worker
 TTL = 300                 # seconds a reading stays good
 
-# The subtrees worth reading, and the only ones this container ever asks for.
-# /backup/account is deliberately absent: it holds the email and the login.
+# The subtrees to read, and the only ones this container ever asks for.
+# /backup/account is absent: it holds the email and the login.
 # /backup/installation is read whole for has_pek and version, which also brings
-# hguid and the install directory; both are dropped in _shape() rather than
+# hguid and the install directory. Both are dropped in _shape() rather than
 # queried, because one call for the subtree beats three for its leaves.
 PATHS = ("/backup/license", "/backup/installation", "/backup/datacenter",
          "/backup/status", "/settings")
 
-# Keys this container will write, with what each means in the client's own words
+# Keys this container will write, with what each means in the client's words
 # (from bzcli's help text, so the wording matches what the settings window says)
 # and a validator. A key absent from here cannot be written, whatever a request
 # asks for.
 #
-# Deliberately absent: bzdirfilter_* and excludefiletypes_*, which decide what is
+# Left out: bzdirfilter_* and excludefiletypes_*, which decide what is
 # backed up and where a wrong edit stops a backup; backup_schedule_*, because the
-# container's own quiet hours already cover that ground and two mechanisms
-# fighting over one behaviour is a fault waiting to happen; and lock_PEK,
+# container's quiet hours already cover that ground and two mechanisms
+# fighting over one behaviour would cause faults; and lock_PEK,
 # lock_schedule and lock_exclusion, which can leave someone unable to change
-# their own settings from either interface.
+# their settings from either interface.
 
 
 def _int_in(lo, hi):
@@ -63,7 +63,7 @@ def _bool(v):
     if str(v).lower() in ("false", "0", "no", "off"):
         return False
     # The message names what is accepted, so a caller typing "maybe" is told
-    # the whole vocabulary rather than a subset of it.
+    # the whole vocabulary.
     raise ValueError("must be true or false (1, 0, yes, no, on and off are read the same way)")
 
 
@@ -83,7 +83,7 @@ WRITABLE = {
         # each thread is also bounded by the send buffer divided by the round
         # trip, which is usually the smaller of the two limits.
         "note": "A ceiling rather than a target. Each thread is also limited by "
-                "the round trip; see the rate on the Monitor.",
+                "the round trip. See the rate on the Monitor.",
     },
     "net_auto_throttle": {
         "label": "Automatic throttle",
@@ -114,7 +114,7 @@ WRITABLE = {
         "does": "Days without a completed backup before the client warns.",
         "check": _int_in(1, 365),
         "unit": "days",
-        "note": "The monitor's own staleness warning reads the same figure.",
+        "note": "The monitor's staleness warning reads the same figure.",
     },
     "online_hostname": {
         "label": "Name shown in your Backblaze account",
@@ -132,8 +132,8 @@ WRITABLE = {
 _lock = threading.Lock()
 # Held across the whole query loop, so only one sweep of PATHS is ever in flight.
 # _lock guards the cache dictionary itself and is never held while wine runs.
-# "started" is when the sweep in flight began, which is what a forced caller has
-# to compare against: a sweep that began before the caller's write cannot be
+# "started" is when the sweep in flight began. A forced caller compares against
+# it, because a sweep that began before the caller's write cannot be
 # carrying the value the write just set.
 _sweep_lock = threading.Lock()
 _cache = {"at": 0, "data": None, "error": None, "started": 0}
@@ -198,7 +198,7 @@ def _kill_group(p):
     OOM wedge in the project's notes) leaves a child behind holding the pipes it
     inherited, and that child then runs for the life of the container. The
     caller starts the process with start_new_session=True, so the group holds
-    this one call and nothing else: the client's own long-running wineserver was
+    this one call and nothing else: the client's long-running wineserver was
     started elsewhere and is in another session, out of reach of this.
     """
     try:
@@ -213,7 +213,7 @@ def _kill_group(p):
 def _drain_after_kill(p):
     """Collect what a killed process left, without waiting on it for ever.
 
-    A grandchild that made a session of its own escapes _kill_group and keeps the
+    A grandchild that started a new session escapes _kill_group and keeps the
     write end open, so even this second read has to be bounded. The pipes are
     closed by hand in that case: the caller is giving up on them, and a hung
     call an hour ago should not still be holding two file descriptors.
@@ -276,7 +276,7 @@ def _query(path):
 def _tree(raw, path):
     """A subtree that must be an object. With the service down bzcli answers
     some paths with a bare message instead of JSON, which _query passes on as
-    a string; treating that as an empty object keeps the reading usable
+    a string. Treating that as an empty object keeps the reading usable
     instead of failing the whole poll (seen 2026-09-20 while bzserv was dead)."""
     val = raw.get(path)
     return val if isinstance(val, dict) else {}
@@ -306,7 +306,7 @@ def _shape(raw):
         "settings": {k: settings.get(k) for k in WRITABLE if k in settings},
         # The selection tree, which decides whether a drive is backed up at all.
         # Kept separate from the writable settings: it is read here and never
-        # written, and it names directories on the user's own share, so it is
+        # written, and it names directories on the user's share, so it is
         # withheld from a key without read:files the way the skipped list is.
         "drive_filters": settings.get("bzdirfilter_add"),
         "schedule": {k: settings.get(k) for k in
@@ -329,7 +329,7 @@ def read(force=False):
     # on a stale cache used to run twenty of them at once on a container with
     # little memory to spare, and each could block for len(PATHS) * TIMEOUT.
     # write() calls read(force=True) from a request thread, which the poll
-    # thread's own guard does not cover, so the serialising has to live here.
+    # thread's guard does not cover, so the serialising has to live here.
     with _sweep_lock:
         # The sweep we queued behind may already have fetched what we came for.
         with _lock:
@@ -428,9 +428,9 @@ def health(data=None):
     words = licence_words(lic)
     # billing_active is the healthy reading seen on a live container, and
     # expires_<stamp> is a licence with a date on it, seen after a reinstall.
-    # Anything else is reported rather than interpreted: the set of values is
-    # not established, and a wrong guess about someone's billing is worse than
-    # a plain statement of what the client said.
+    # Anything else is reported as the client gave it, because the set of
+    # values is not established and a wrong guess about someone's billing
+    # would mislead.
     if words["days_left"] is not None:
         if words["days_left"] < 0:
             out.append(("licence", "The licence expired on %s" % words["expires_on"]))
@@ -490,7 +490,7 @@ def drive_selection(data=None):
     backs up nothing, which is the state behind "No files are selected".
     Returns {"D:\\\\": {"whichfiles": "all", "backed_up": True, "system": False},
     ...} or None. "system" says the drive is the container rather than the
-    user's data; see _is_system_drive().
+    user's data (see _is_system_drive()).
     """
     d = data if data is not None else cached()
     filters = (d or {}).get("drive_filters")
@@ -513,13 +513,13 @@ def drive_selection(data=None):
 def _is_system_drive(letter):
     """Whether this drive letter is the container rather than the user's data.
 
-    Two of them are, on every container. C: is the Wine prefix: the client's own
+    Two of them are, on every container. C: is the Wine prefix: the client's
     install and the Windows layer it runs on, which nobody should be backing up
-    and which the client is right not to be selecting. Z: is Wine's own mapping
+    and which the client is right not to be selecting. Z: is Wine's mapping
     of the container root, and is the same story by a different route, so it is
     found rather than named: the letter Wine maps to "/" is a convention and not
     a promise, and a prefix that maps a different one should be read the same
-    way. Anything else is a mounted share, where a root set to "none" really is
+    way. Anything else is a mounted share, where a root set to "none" is
     the fault the warning describes.
     """
     if letter.upper() == "C":
