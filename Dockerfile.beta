@@ -61,6 +61,7 @@ COPY patches/wine-token-localsystem.patch /wine/patches/
 COPY patches/wine-debug-privilege-bypass.patch /wine/patches/
 COPY patches/wine-ofd-locks.patch /wine/patches/
 COPY patches/wine-case-cache.patch /wine/patches/
+COPY patches/wine-mountpoint-dirs.patch /wine/patches/
 # Partial (blobless) clone keeps the checkout small while still allowing WINE_REF
 # to be any tag, branch, or exact commit. Blobs are fetched on checkout.
 #
@@ -78,7 +79,11 @@ COPY patches/wine-case-cache.patch /wine/patches/
 # until the limit (issue #13). OFD locks let a closed fd close.
 # wine-case-cache.patch is independent too: the case-sensitivity check after
 # every failed lookup did an fstatfs() each time, 21 ms on Unraid's shfs, half
-# a scan's wall time. It now decides once per device. Each gets its
+# a scan's wall time. It now decides once per device.
+# wine-mountpoint-dirs.patch is independent as well and does nothing unless
+# WINE_MOUNTPOINTS_AS_DIRS is set: it lets Unix mount points under the named
+# drives (ZFS datasets on Unraid) show as plain folders instead of the
+# mount-point reparse points Backblaze skips. Each gets its
 # own --check first, so a context mismatch fails the build with the offending patch
 # named rather than half-applying. The patches are authored against Wine master while
 # WINE_REF pins a release, so a --check failure after a WINE_REF bump usually means
@@ -96,7 +101,9 @@ RUN git clone --filter=blob:none https://gitlab.winehq.org/wine/wine.git src \
  && git -C src apply --check /wine/patches/wine-ofd-locks.patch \
  && git -C src apply /wine/patches/wine-ofd-locks.patch \
  && git -C src apply --check /wine/patches/wine-case-cache.patch \
- && git -C src apply /wine/patches/wine-case-cache.patch
+ && git -C src apply /wine/patches/wine-case-cache.patch \
+ && git -C src apply --check /wine/patches/wine-mountpoint-dirs.patch \
+ && git -C src apply /wine/patches/wine-mountpoint-dirs.patch
 
 # Cap build parallelism by available RAM. Wine's parallel link steps are
 # memory-heavy, so -j<all-cores> on a high-core / modest-RAM host exhausts memory
@@ -352,6 +359,8 @@ RUN sh -n /usr/local/bin/bb-doctor \
  && sh -n /usr/local/lib/bb-doctor-drives.sh \
  && sh -n /usr/local/lib/bb-doctor-config.sh \
  && sh -n /usr/local/lib/bb-doctor-passes.sh \
+ && sh -n /usr/local/lib/bb-mountpoints.sh \
+ && grep -q "bb-mountpoints.sh" /startapp.sh \
  && sh -n /usr/local/bin/bb-health && grep -q "^FROZEN\|FROZEN Backblaze" /usr/local/bin/bb-health \
  && command -v setpriv >/dev/null
 

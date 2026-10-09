@@ -11,6 +11,17 @@ the additions below. The `:beta` tag is mutable, so each published build has a s
 
 ### Added
 
+- Datasets as folders: a per-drive switch on the Settings tab, and the `MOUNTPOINTS_AS_DIRS`
+  variable (`all` or drive letters), that lets the client back up the ZFS datasets inside a
+  mapped drive. Wine reports a folder on another filesystem as a mount point, and the client skips
+  mount points, so `/mnt/cache` as one drive backed up nothing and users ran out of letters
+  mapping one dataset each. A new Wine patch, `wine-mountpoint-dirs.patch`, reports them as plain
+  folders under the drives named in `WINE_MOUNTPOINTS_AS_DIRS`, which the container sets at start.
+  Without it Wine behaves as before. Symlinked folders and real reparse points are untouched.
+  bb-doctor reports the datasets under an included drive as included, warns when another mapped
+  drive sits inside one (its files would be backed up twice), and says when a change waits for a
+  restart. A dataset already backed up under its own letter is uploaded again under the new path.
+  The choice travels in the settings export.
 - An Exclusions panel on the Settings tab that creates, edits and deletes rules in the client's
   `bzexcluderules_editable.xml`. One rule there excludes a folder on every mapped drive at once,
   or files by extension or by path. A backup spread over twenty Unraid disks needs this, and

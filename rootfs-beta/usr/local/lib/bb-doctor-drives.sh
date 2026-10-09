@@ -36,6 +36,20 @@ _stamp_repair() {
 }
 # Device number of a path. A function so the test suite can stand in for it.
 _dev() { stat -c %d "$1" 2>/dev/null; }
+
+# Which drives show their mount points as plain folders (MOUNTPOINTS_AS_DIRS or
+# the Settings tab). What the running client sees is the value startapp.sh
+# exported, so that is what decides; the configured value only says what the
+# next start will do.
+_mp_lib="${BB_MOUNTPOINTS_LIB:-/usr/local/lib/bb-mountpoints.sh}"
+_mp_next=""; _mp_now=""
+if [ -r "$_mp_lib" ]; then
+    . "$_mp_lib"
+    _mp_next="$(bb_mountpoints_value)"
+    _mp_applied="${BB_MOUNTPOINTS_APPLIED:-/tmp/.bb-mountpoints-applied}"
+    if [ -f "$_mp_applied" ]; then _mp_now="$(head -1 "$_mp_applied")"; else _mp_now="$_mp_next"; fi
+fi
+_mp_covers() { [ -r "$_mp_lib" ] && bb_mountpoints_covers "$1" "$2"; }
 for _link in "${PREFIX}dosdevices"/[d-z]:; do
     [ -L "$_link" ] || continue
     _root="$(readlink -f "$_link" 2>/dev/null)"
@@ -106,14 +120,35 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
             [ "$_mn" -le 5 ] && _mnts="${_mnts} $(basename "$_e")"
         fi
     done
-    if [ "$_mn" -gt 0 ]; then
+    if [ "$_mn" -gt 0 ] && _mp_covers "$_mp_now" "$_letter"; then
+        # The beta's Wine shows them as plain folders on this drive, so the
+        # client walks into them. What to watch for then is a second drive
+        # mapped inside this one, which backs the same files up twice.
+        OK "${_letter}: ${_mn} folder(s) under ${_root} are separate filesystems, included because mount points show as folders on this drive:${_mnts}"
+        _mp_cover_root="$_root"
+        for _olink in "${PREFIX}dosdevices"/[d-z]:; do
+            [ -L "$_olink" ] && [ "$_olink" != "$_link" ] || continue
+            _oroot="$(readlink -f "$_olink" 2>/dev/null)"
+            case "$_oroot" in
+                "$_mp_cover_root"/*) WARN "${_letter}: $(basename "$_olink" | cut -c1 | tr 'a-z' 'A-Z'): (${_oroot}) is inside this drive, so its files are backed up twice. Unmap one of them." ;;
+            esac
+        done
+        _mp_covers "$_mp_next" "$_letter" || NOTE "the setting is now off for this drive: from the next container restart the client skips these again."
+    elif [ "$_mn" -gt 0 ]; then
         if [ "$_mn" = "$_top" ]; then
             BAD "${_letter}: every folder under ${_root} is a separate filesystem, so the client backs up nothing on this drive:${_mnts}"
         else
             WARN "${_letter}: ${_mn} folder(s) under ${_root} are separate filesystems and the client skips them:${_mnts}"
         fi
-        NOTE "the client does not cross mount points. Map each one as a drive of its own instead of"
-        NOTE "the parent (a ZFS pool's datasets, for example /mnt/cache/<share> rather than /mnt/cache)."
+        if _mp_covers "$_mp_next" "$_letter"; then
+            NOTE "showing them as folders is turned on for this drive and takes effect at the next container restart."
+        else
+            NOTE "the client does not cross mount points. Map each one as a drive of its own instead of"
+            NOTE "the parent (a ZFS pool's datasets, for example /mnt/cache/<share> rather than /mnt/cache)."
+            if [ -r "$_mp_lib" ]; then
+                NOTE "Or turn on \"Datasets as folders\" for ${_letter}: in the Settings tab (MOUNTPOINTS_AS_DIRS)."
+            fi
+        fi
     fi
 
     # -- Read speed: how fast the client's parent can stage chunks -----------------

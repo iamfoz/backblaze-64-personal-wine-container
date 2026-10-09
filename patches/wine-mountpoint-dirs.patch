@@ -1,0 +1,116 @@
+ntdll: Optionally report Unix mount points as plain directories.
+
+Wine reports any directory whose st_dev differs from its parent's as a
+reparse point tagged IO_REPARSE_TAG_MOUNT_POINT. Windows backup programs skip
+reparse points so they do not follow junctions into loops, so a program
+pointed at a Wine drive never descends into a file system mounted inside it.
+On a ZFS host every dataset is its own mount, so each dataset under a mapped
+drive is skipped.
+
+WINE_MOUNTPOINTS_AS_DIRS turns this off. "1" applies to every drive;
+otherwise the value lists drive letters ("de", "D:,E:") and only mount points
+under those drives' targets are left as ordinary directories. Both the
+handle-based check (FILE_OPEN_REPARSE_POINT) and the path-based check used
+for directory listings honour it. Symlinked directories and reparse data
+stored in the extended attribute are reported as before, and without the
+variable nothing changes. The drive targets are resolved once per process,
+and a path is only resolved when it is already known to be a mount point.
+
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -1673,6 +1673,76 @@ static BOOL fd_is_mount_point( int fd, const struct stat *st )
+ static unsigned int server_get_unix_name( HANDLE handle, char **unix_name );
+ 
+ 
++/* WINE_MOUNTPOINTS_AS_DIRS reports Unix mount points as plain directories
++ * rather than IO_REPARSE_TAG_MOUNT_POINT reparse points, so that programs which
++ * skip reparse points still descend into file systems mounted inside a drive.
++ * "1" applies it to every drive; otherwise the value lists drive letters
++ * (for example "de") and it applies under those drives only. */
++static pthread_once_t mount_dirs_once = PTHREAD_ONCE_INIT;
++static BOOL mount_dirs_all;
++static char *mount_dirs_roots[26];
++static unsigned int mount_dirs_count;
++
++static void init_mount_dirs(void)
++{
++    const char *str = getenv( "WINE_MOUNTPOINTS_AS_DIRS" );
++    char *link, *root;
++
++    if (!str || !*str) return;
++    if (!strcmp( str, "1" ))
++    {
++        mount_dirs_all = TRUE;
++        return;
++    }
++    for (; *str; str++)
++    {
++        char letter = *str | 0x20;
++
++        if (letter < 'a' || letter > 'z') continue;
++        if (asprintf( &link, "%s/dosdevices/%c:", config_dir, letter ) == -1) continue;
++        root = realpath( link, NULL );
++        free( link );
++        if (!root) continue;
++        if (mount_dirs_count < ARRAY_SIZE(mount_dirs_roots)) mount_dirs_roots[mount_dirs_count++] = root;
++        else free( root );
++    }
++}
++
++/* whether a mount point at this Unix path is to be reported as a plain directory */
++static BOOL mount_point_as_dir( const char *path )
++{
++    unsigned int i;
++    char *real;
++    BOOL ret = FALSE;
++
++    pthread_once( &mount_dirs_once, init_mount_dirs );
++    if (mount_dirs_all) return TRUE;
++    if (!mount_dirs_count || !path || !(real = realpath( path, NULL ))) return FALSE;
++    for (i = 0; i < mount_dirs_count && !ret; i++)
++    {
++        size_t len = strlen( mount_dirs_roots[i] );
++
++        ret = !strncmp( real, mount_dirs_roots[i], len )
++              && (!real[len] || real[len] == '/' || (len == 1 && real[0] == '/'));
++    }
++    free( real );
++    return ret;
++}
++
++static BOOL handle_mount_point_as_dir( HANDLE handle )
++{
++    char *unix_name;
++    BOOL ret;
++
++    pthread_once( &mount_dirs_once, init_mount_dirs );
++    if (mount_dirs_all) return TRUE;
++    if (!mount_dirs_count || server_get_unix_name( handle, &unix_name )) return FALSE;
++    ret = mount_point_as_dir( unix_name );
++    free( unix_name );
++    return ret;
++}
++
++
+ /* get the stat info and file attributes for a file (by file descriptor) */
+ static int fd_get_file_info( HANDLE handle, int fd, unsigned int options,
+                              struct stat *st, ULONG *attr, ULONG *reparse_tag )
+@@ -1689,7 +1759,7 @@ static int fd_get_file_info( HANDLE handle, int fd, unsigned int options,
+     /* consider mount points to be reparse points (IO_REPARSE_TAG_MOUNT_POINT) */
+     if (options & FILE_OPEN_REPARSE_POINT)
+     {
+-        if (fd_is_mount_point( fd, st ))
++        if (fd_is_mount_point( fd, st ) && !handle_mount_point_as_dir( handle ))
+         {
+             *attr |= FILE_ATTRIBUTE_REPARSE_POINT;
+             if (reparse_tag) *reparse_tag = IO_REPARSE_TAG_MOUNT_POINT;
+@@ -1803,7 +1873,8 @@ static int get_file_info( const char *path, struct stat *st, ULONG *attr, ULONG
+         strcpy( parent_path, path );
+         strcat( parent_path, "/.." );
+         if (!stat( parent_path, &parent_st )
+-                && (st->st_dev != parent_st.st_dev || st->st_ino == parent_st.st_ino))
++                && (st->st_dev != parent_st.st_dev || st->st_ino == parent_st.st_ino)
++                && !mount_point_as_dir( path ))
+         {
+             *attr |= FILE_ATTRIBUTE_REPARSE_POINT;
+             if (reparse_tag) *reparse_tag = IO_REPARSE_TAG_MOUNT_POINT;

@@ -32,6 +32,7 @@ import bbdata
 import bbdismiss
 import bbdoctor
 import bbexclude
+import bbmounts
 import bbrecover
 import bbsettings
 import bbreport
@@ -1037,6 +1038,22 @@ SETTINGS_HTML = """<!doctype html>
   <div id="wd-err" class="err" hidden></div>
 </div>
 
+<h2>Datasets as folders</h2>
+<div class="panel" id="mounts">
+  <p class="dim">Wine shows a folder that is a separate filesystem, such as each ZFS dataset on an Unraid
+  pool or a ZFS-formatted array disk, as a mount point, and the client skips mount points. Turned on for
+  a drive, those folders show as ordinary folders and the client backs up what is inside them, so one
+  drive letter can cover a whole pool. Two things to know first. A dataset you already back up under a
+  letter of its own is uploaded again under the new path, so unmap that letter once the new one has
+  caught up, or its files are kept twice. And a drive mapped inside another included drive is backed
+  up twice. Takes effect at the next container restart. This overrides the container's
+  <code>MOUNTPOINTS_AS_DIRS</code> variable; "Follow the variable" hands the decision back to it.</p>
+  <div id="mp-drives"></div>
+  <div class="row"><span class="dim" id="mp-state"></span></div>
+  <div class="row" style="margin-top:12px"><button id="mp-save">Save datasets</button><button class="ghost" id="mp-follow">Follow the variable</button><span class="dim" id="mp-msg"></span></div>
+  <div id="mp-err" class="err" hidden></div>
+</div>
+
 <h2>Quiet hours</h2>
 <div class="panel" id="quiet">
   <p class="dim">Pause the backup on a schedule. At the start of a window the container asks the client
@@ -1596,6 +1613,42 @@ function postWatchdog(body){
 document.getElementById('wd-save').addEventListener('click', function(){ postWatchdog({enabled: document.getElementById('wd-enabled').checked}); });
 document.getElementById('wd-follow').addEventListener('click', function(){ postWatchdog({enabled: null}); });
 
+// ---- datasets as folders ----
+function mpStateText(d){
+  var src = d.source === 'setting' ? 'set here' : ('following MOUNTPOINTS_AS_DIRS=' + (d.variable || '(unset)'));
+  var on = d.all ? 'every drive' : (d.value ? d.value.toUpperCase().split('').join(': ') + ':' : 'no drives');
+  return 'On for ' + on + ', ' + src + '.' + (d.restart_needed ? ' Restart the container to apply.' : '');
+}
+function renderMounts(d){
+  var box = document.getElementById('mp-drives');
+  if(!d.drives.length){ box.innerHTML = '<p class="dim">No drives are mapped.</p>'; }
+  else box.innerHTML = d.drives.map(function(x){
+    var n = x.mounts.length;
+    var what = n ? (n + ' separate filesystem' + (n === 1 ? '' : 's') + ': ' + x.mounts.slice(0, 6).join(', ') + (n > 6 ? ', ...' : ''))
+                 : 'no separate filesystems at the top level';
+    return '<div class="row"><label class="switch"><input type="checkbox" data-letter="' + esc(x.letter) + '"' + (x.enabled ? ' checked' : '') + '> <span>' + esc(x.letter) + ': ' + esc(x.target) + '</span></label> <span class="dim">' + esc(what) + '</span></div>';
+  }).join('');
+  document.getElementById('mp-state').textContent = mpStateText(d);
+  document.getElementById('mp-follow').hidden = d.source !== 'setting';
+}
+function loadMounts(){
+  return fetch('manage/mountpoints', {cache:'no-store'}).then(function(r){ return r.json(); }).then(renderMounts);
+}
+function postMounts(body){
+  var err = document.getElementById('mp-err'), msg = document.getElementById('mp-msg');
+  err.hidden = true; msg.textContent = '';
+  post('manage/mountpoints', body).then(function(res){
+    if(!res.ok){ err.textContent = res.body.error || 'Could not save.'; err.hidden = false; return; }
+    renderMounts(res.body); msg.textContent = 'Saved.'; setTimeout(function(){ msg.textContent = ''; }, 1500);
+  });
+}
+document.getElementById('mp-save').addEventListener('click', function(){
+  var on = [];
+  document.querySelectorAll('#mp-drives input[data-letter]').forEach(function(i){ if(i.checked) on.push(i.getAttribute('data-letter').toLowerCase()); });
+  postMounts({drives: on.join('')});
+});
+document.getElementById('mp-follow').addEventListener('click', function(){ postMounts({drives: null}); });
+
 // ---- backup and restore ----
 document.getElementById('xfer-export').addEventListener('click', function(){
   var err = document.getElementById('xfer-err'), msg = document.getElementById('xfer-msg');
@@ -1650,6 +1703,7 @@ loadNotify();
 loadQuiet();
 loadNotices();
 loadWatchdog();
+loadMounts();
 loadDoctor();
 loadExclusions();
 setInterval(loadQuiet, 30000);
@@ -4567,6 +4621,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/manage/watchdog":
             self._json(200, dict(bbrecover.state(), schema=bbapi.SCHEMA))
             return True
+        if path == "/manage/mountpoints":
+            self._json(200, dict(bbmounts.state(), schema=bbapi.SCHEMA))
+            return True
         if path == "/manage/doctor":
             self._json(200, dict(bbdoctor.load(), schema=bbapi.SCHEMA))
             return True
@@ -4873,6 +4930,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "enabled must be true, false or null"})
                 return
             self._json(200, dict(bbrecover.state(), schema=bbapi.SCHEMA))
+            return
+        if path == "/manage/mountpoints":
+            # Letters only reach the store, and only the shell helper reads it
+            # back, so nothing from the request names a file or a command.
+            try:
+                if body.get("drives") is None:
+                    bbmounts.clear()
+                else:
+                    bbmounts.save(body["drives"])
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(200, dict(bbmounts.state(), schema=bbapi.SCHEMA))
             return
         if path == "/manage/notices/dismiss":
             # The key is checked in bbdismiss against a pattern that admits only

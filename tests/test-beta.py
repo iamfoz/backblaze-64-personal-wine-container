@@ -17,7 +17,7 @@ stood up on a development machine.
 
 Run:  python3 tests/test-beta.py
 """
-import calendar, contextlib, importlib.util, io, json, os, sys, tempfile, threading, time
+import calendar, contextlib, importlib.util, io, json, os, subprocess, sys, tempfile, threading, time
 import urllib.error
 from importlib.machinery import SourceFileLoader
 
@@ -1152,9 +1152,11 @@ def _point(dirpath):
     bbdismiss.STORE = dirpath + "/dismissed.json"; bbdismiss._cache = None
 _src = os.path.join(FIX, "xfer-src"); _dst = os.path.join(FIX, "xfer-dst")
 os.makedirs(_src); os.makedirs(_dst)
-import bbrecover, bbdoctor, bbexclude
+import bbrecover, bbdoctor, bbexclude, bbmounts
 def _point_recover(dirpath):
     bbrecover.STORE = dirpath + "/watchdog.json"; bbrecover.STATE = dirpath + "/wd-state"
+    bbmounts.STORE = dirpath + "/mountpoints.json"; bbmounts.APPLIED = dirpath + "/mp-applied"
+    bbmounts.DOSDEVICES = dirpath + "/dosdevices"
     bbdoctor.STORE = dirpath + "/doctor.json"
     bbexclude.FILE = dirpath + "/bzexcluderules_editable.xml"
 
@@ -1221,6 +1223,46 @@ ok(open(bbrecover.STORE).read().strip() == '{"enabled": true}', "the store is on
 bbrecover.clear()
 ok(bbrecover.load() is None, "clearing hands the decision back to the variable")
 bbrecover.save(False)
+
+# ---- datasets as folders: the Settings store and what the page is shown --------------------
+os.environ.pop("MOUNTPOINTS_AS_DIRS", None)
+_dd = bbmounts.DOSDEVICES
+os.makedirs(_dd)
+for _l, _sub in (("m", ["share1", "share2", "plain"]), ("n", ["media"])):
+    for _x in _sub:
+        os.makedirs(os.path.join(_src, "drive_" + _l, _x))
+    os.symlink(os.path.join(_src, "drive_" + _l), "%s/%s:" % (_dd, _l))
+os.symlink("/", _dd + "/z:")
+ok(bbmounts.load() is None and bbmounts.effective() == ("", "variable"), "with no store and no variable, no drive is included")
+os.environ["MOUNTPOINTS_AS_DIRS"] = "all"
+ok(bbmounts.effective() == ("1", "variable"), "MOUNTPOINTS_AS_DIRS=all is every drive")
+os.environ["MOUNTPOINTS_AS_DIRS"] = "N:, m"
+ok(bbmounts.effective() == ("mn", "variable"), "the variable's letters are normalised")
+_st = bbmounts.state()
+ok([d["letter"] for d in _st["drives"]] == ["M", "N"] and all(d["enabled"] for d in _st["drives"]),
+   "the page lists the mapped drives and leaves out Wine's z: -> /: %r" % _st["drives"])
+ok(_st["drives"][0]["mounts"] == [] and _st["restart_needed"] is False and _st["applied"] is None,
+   "plain folders are not counted as separate filesystems, and with nothing applied no restart is asked for")
+ok(bbmounts.save("E:,d") == {"drives": "de"} and bbmounts.effective() == ("de", "setting"), "a stored choice wins over the variable")
+ok(open(bbmounts.STORE).read().strip() == '{"drives": "de"}', "the store is one line of JSON a shell can read")
+_mp_sh = subprocess.run(["sh", "-c", '. "$1"; bb_mountpoints_value', "_",
+                         os.path.join(BETA, "lib", "bb-mountpoints.sh")],
+                        env=dict(os.environ, BB_MOUNTPOINTS_STORE=bbmounts.STORE, MOUNTPOINTS_AS_DIRS="all"),
+                        capture_output=True, text=True)
+ok(_mp_sh.stdout == "de", "the shell helper startapp.sh uses reads the same store the same way: %r" % _mp_sh.stdout)
+with open(bbmounts.APPLIED, "w") as fh:
+    fh.write("m\n")
+ok(bbmounts.state()["restart_needed"] is True, "a choice that differs from what Wine was started with asks for a restart")
+for _bad in ("d; rm -rf /", 5, "d/e"):
+    try:
+        bbmounts.save(_bad); ok(False, "refused: %r" % (_bad,))
+    except ValueError:
+        ok(True, "refused: %r" % (_bad,))
+ok(bbmounts.save("") == {"drives": ""} and bbmounts.effective() == ("", "setting"), "an empty choice is stored as no drives")
+bbmounts.clear()
+ok(bbmounts.load() is None and bbmounts.effective() == ("mn", "variable"), "clearing hands the decision back to the variable")
+os.environ.pop("MOUNTPOINTS_AS_DIRS", None)
+bbmounts.save("m")
 ok(bbdoctor.load() == {"read_depth": 3, "read_until_found": False}, "bb-doctor settings default to three levels, stop there")
 bbdoctor.save({"read_depth": 7, "read_until_found": True})
 ok(bbdoctor.load() == {"read_depth": 7, "read_until_found": True}, "and store what the page sets")
@@ -1281,6 +1323,8 @@ ok(any(a.startswith("api_keys") for a in _report["applied"]) and "client: 2 writ
 ok(_sealed["sections"]["recovery"] == {"watchdog": False} and bbrecover.load() == {"enabled": False},
    "the recovery switch travels and is restored")
 ok(bbdoctor.load() == {"read_depth": 7, "read_until_found": True}, "bb-doctor's settings travel and are restored")
+ok(_sealed["sections"]["mountpoints"] == {"drives": "m"} and bbmounts.load() == {"drives": "m"},
+   "the datasets-as-folders choice travels and is restored")
 ok(_sealed["sections"]["exclusions"] == {"rules": [{"skipFirstCharThenStartsWith": ":\\Media\\", "contains_1": "*", "contains_2": "*",
                                                       "doesNotContain": "*", "endsWith": "*", "hasFileExtension": "iso"}]}
    and [r["hasFileExtension"] for r in bbexclude.load()["rules"]] == ["iso"]

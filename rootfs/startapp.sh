@@ -56,6 +56,23 @@ for x in {d..z}; do
     fi
 done
 
+# Beta only: which drives show their mount points (ZFS datasets) as plain
+# folders, so the client backs up what is inside them. The beta's Wine reads
+# WINE_MOUNTPOINTS_AS_DIRS once per process and every Wine process inherits
+# it, so it is exported here, before the first Wine command below starts the
+# server and the services. The stable images have no helper and skip this.
+if [ -r /usr/local/lib/bb-mountpoints.sh ]; then
+    . /usr/local/lib/bb-mountpoints.sh
+    _mp_value="$(bb_mountpoints_value)"
+    if [ -n "$_mp_value" ]; then
+        export WINE_MOUNTPOINTS_AS_DIRS="$_mp_value"
+        log_message "DRIVE: mount points shown as folders on: $([ "$_mp_value" = 1 ] && echo 'every drive' || echo "$_mp_value" | tr 'a-z' 'A-Z')"
+    else
+        unset WINE_MOUNTPOINTS_AS_DIRS
+    fi
+    printf '%s\n' "$_mp_value" > /tmp/.bb-mountpoints-applied 2>/dev/null || true
+fi
+
 # Force the reported Windows version to Windows 10 on EVERY start. We set both
 # Wine's version key (the one winecfg writes) and the raw NT
 # CurrentVersion keys, so the check passes no matter how Backblaze probes the OS.

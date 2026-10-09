@@ -337,6 +337,64 @@ has "$DRM" "M: every folder under .* is a separate filesystem, so the client bac
 has "$DRM" "N: 1 folder(s) under .* are separate filesystems and the client skips them: backups" "mounts: one dataset among ordinary folders is a warning"
 has "$DRM" "Map each one as a drive of its own\|map each one as a drive of its own" "mounts: with the fix"
 grep -q "D: .*separate filesystem" <<<"$DRM" && { echo "FAIL mounts: a drive with no mounts was flagged"; FAILED=$((FAILED+1)); } || echo "PASS mounts: a drive with no mounts is not flagged"
+
+# ---- datasets as folders (MOUNTPOINTS_AS_DIRS, beta) ---------------------------
+# The helper startapp.sh and the doctor share: the Settings store wins, the
+# variable decides without one, and the value is what the patched Wine reads.
+MPLIB="$HERE/../rootfs-beta/usr/local/lib/bb-mountpoints.sh"
+MPSTORE="$FX/mountpoints.json"; MPAPPLIED="$FX/mountpoints-applied"
+mpval(){ env MOUNTPOINTS_AS_DIRS="$1" BB_MOUNTPOINTS_STORE="$MPSTORE" sh -c '. "$1"; bb_mountpoints_value' _ "$MPLIB"; }
+mpis(){ [ "$2" = "$3" ] && echo "PASS mountpoints: $1" || { echo "FAIL mountpoints: $1 (got '$2', want '$3')"; FAILED=$((FAILED+1)); }; }
+rm -f "$MPSTORE"
+mpis "unset is off" "$(mpval "")" ""
+mpis "false is off" "$(mpval false)" ""
+mpis "all is every drive" "$(mpval all)" "1"
+mpis "true is every drive" "$(mpval TRUE)" "1"
+mpis "letters are normalised" "$(mpval "E:, d:,e")" "de"
+mpis "A: to C: are never candidates" "$(mpval "a,c,z")" "z"
+echo '{"drives": "n"}' > "$MPSTORE"
+mpis "the stored choice wins over the variable" "$(mpval all)" "n"
+echo '{"drives": ""}' > "$MPSTORE"
+mpis "a stored empty choice is no drives, whatever the variable says" "$(mpval all)" ""
+rm -f "$MPSTORE"
+covers(){ sh -c '. "$1"; bb_mountpoints_covers "$2" "$3"' _ "$MPLIB" "$2" "$3" && r=yes || r=no; mpis "$1" "$r" "$4"; }
+covers "1 covers any drive" 1 M yes
+covers "letters cover their own drive, either case" de E yes
+covers "and not another" de M no
+covers "empty covers nothing" "" D no
+
+# The drives check with the helper present. $1 is the variable, $2 the value
+# startapp.sh applied (unset for no file).
+drm_mp(){
+    rm -f "$MPAPPLIED"; [ "${2+set}" = set ] && printf '%s\n' "$2" > "$MPAPPLIED"
+    (cd "$FX" && env MOUNTPOINTS_AS_DIRS="$1" BB_MOUNTPOINTS_LIB="$MPLIB" BB_MOUNTPOINTS_STORE="$MPSTORE" BB_MOUNTPOINTS_APPLIED="$MPAPPLIED" \
+        sh -c 'PREFIX="$1"; BZ="$2"; OK(){ echo "[ok] $*"; }; WARN(){ echo "[warn] $*"; }; BAD(){ echo "[FAIL] $*"; }; NOTE(){ echo "  $*"; }; . "$3"' _ "$PFX" "$BZ" "$FX/drives-fakedev.sh" 2>&1)
+}
+DRM="$(drm_mp "")"
+has "$DRM" "Or turn on \"Datasets as folders\" for M:" "datasets: with the helper present and the setting off, the doctor offers it"
+DRM="$(drm_mp m)"
+has "$DRM" "\[ok\] M: 2 folder(s) under .* are separate filesystems, included because mount points show as folders" "datasets: on for M:, the pool's datasets are reported as included"
+grep -q "\[FAIL\] M:" <<<"$DRM" && { echo "FAIL datasets: M: still fails with the setting on"; FAILED=$((FAILED+1)); } || echo "PASS datasets: and M: no longer fails"
+has "$DRM" "\[warn\] N: 1 folder(s) under .* are separate filesystems and the client skips them" "datasets: a drive not named is still warned about"
+DRM="$(drm_mp all)"
+has "$DRM" "\[ok\] N: 1 folder(s) .* included" "datasets: all covers every drive"
+ln -sfn "$FX/drive_m/appdata" "${PFX}dosdevices/o:"
+DRM="$(drm_mp all)"
+has "$DRM" "\[warn\] M: O: (.*/drive_m/appdata) is inside this drive, so its files are backed up twice" "datasets: a drive mapped inside an included one is a double backup"
+rm -f "${PFX}dosdevices/o:"
+echo '{"drives": "n"}' > "$MPSTORE"
+DRM="$(drm_mp all)"
+has "$DRM" "\[FAIL\] M: every folder" "datasets: the Settings choice overrides the variable (M: off)"
+has "$DRM" "\[ok\] N: .* included" "datasets: and N: on"
+rm -f "$MPSTORE"
+DRM="$(drm_mp m "")"
+has "$DRM" "\[FAIL\] M: every folder" "datasets: turned on but not yet applied, the running client still skips them"
+has "$DRM" "takes effect at the next container restart" "datasets: and the doctor says a restart applies it"
+DRM="$(drm_mp "" m)"
+has "$DRM" "\[ok\] M: .* included" "datasets: turned off but still applied, they are still included"
+has "$DRM" "from the next container restart the client skips these again" "datasets: and the doctor says so"
+rm -f "$MPAPPLIED"
+
 rm -rf "$FX/drive_m" "$FX/drive_n" "${PFX}dosdevices/m:" "${PFX}dosdevices/n:"
 
 echo "$FAILED failures"
