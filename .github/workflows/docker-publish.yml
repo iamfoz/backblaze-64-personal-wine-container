@@ -97,17 +97,30 @@ jobs:
       # Docker Hub limits anonymous pulls per address, and GitHub's runners share
       # addresses, so builds failed on 429s (9 Oct 2026). Signed in, the pulls
       # (the BuildKit image, the Ubuntu and jlesage bases) count against this
-      # account instead. Before buildx, which pulls BuildKit itself. Skipped when
-      # the secrets are not set, such as on a pull request from a fork.
+      # account instead. Skipped when the secrets are not set, such as on a pull
+      # request from a fork.
       - name: Log into Docker Hub
         if: env.DOCKERHUB_USERNAME != ''
+        # A sign-in that fails (Docker Hub unreachable from the runner) falls back
+        # to anonymous pulls rather than stopping the build.
+        continue-on-error: true
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
         with:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Google's Docker Hub mirror first, Docker Hub only for what it lacks. The
+      # runners' own route to Docker Hub has failed with 429s, 500s and timeouts
+      # (9 Oct 2026), while the mirror carries BuildKit, both Ubuntu builder
+      # images and the 24.04 jlesage base. The 26.04 jlesage base is not on it
+      # yet, so that one still comes from Docker Hub.
       - name: Setup Docker buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
@@ -229,17 +242,30 @@ jobs:
       # Docker Hub limits anonymous pulls per address, and GitHub's runners share
       # addresses, so builds failed on 429s (9 Oct 2026). Signed in, the pulls
       # (the BuildKit image, the Ubuntu and jlesage bases) count against this
-      # account instead. Before buildx, which pulls BuildKit itself. Skipped when
-      # the secrets are not set, such as on a pull request from a fork.
+      # account instead. Skipped when the secrets are not set, such as on a pull
+      # request from a fork.
       - name: Log into Docker Hub
         if: env.DOCKERHUB_USERNAME != ''
+        # A sign-in that fails (Docker Hub unreachable from the runner) falls back
+        # to anonymous pulls rather than stopping the build.
+        continue-on-error: true
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
         with:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Google's Docker Hub mirror first, Docker Hub only for what it lacks. The
+      # runners' own route to Docker Hub has failed with 429s, 500s and timeouts
+      # (9 Oct 2026), while the mirror carries BuildKit, both Ubuntu builder
+      # images and the 24.04 jlesage base. The 26.04 jlesage base is not on it
+      # yet, so that one still comes from Docker Hub.
       - name: Setup Docker buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       - name: Log into registry ${{ env.REGISTRY }}
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
@@ -389,17 +415,30 @@ jobs:
       # Docker Hub limits anonymous pulls per address, and GitHub's runners share
       # addresses, so builds failed on 429s (9 Oct 2026). Signed in, the pulls
       # (the BuildKit image, the Ubuntu and jlesage bases) count against this
-      # account instead. Before buildx, which pulls BuildKit itself. Skipped when
-      # the secrets are not set, such as on a pull request from a fork.
+      # account instead. Skipped when the secrets are not set, such as on a pull
+      # request from a fork.
       - name: Log into Docker Hub
         if: env.DOCKERHUB_USERNAME != ''
+        # A sign-in that fails (Docker Hub unreachable from the runner) falls back
+        # to anonymous pulls rather than stopping the build.
+        continue-on-error: true
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
         with:
           username: ${{ env.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # Google's Docker Hub mirror first, Docker Hub only for what it lacks. The
+      # runners' own route to Docker Hub has failed with 429s, 500s and timeouts
+      # (9 Oct 2026), while the mirror carries BuildKit, both Ubuntu builder
+      # images and the 24.04 jlesage base. The 26.04 jlesage base is not on it
+      # yet, so that one still comes from Docker Hub.
       - name: Setup Docker buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       - name: Log into registry ${{ env.REGISTRY }}
         if: startsWith(github.ref, 'refs/tags/v')

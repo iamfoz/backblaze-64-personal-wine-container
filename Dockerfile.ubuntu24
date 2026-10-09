@@ -15,9 +15,9 @@
 ARG WINE_FLAVOUR=winehq
 ARG WINE_REF
 
-# Pinned by digest, as the runtime base is. A tag makes every build ask Docker
-# Hub what it points at, and that anonymous lookup is rate limited per runner
-# IP (a 429 failed two beta builds on 9 Oct 2026). Bump the digest with the tag.
+# Pinned by digest, as the runtime base is, so a rebuild uses the same image.
+# Bump the digest with the tag. CI fetches it through mirror.gcr.io (see the
+# buildx setup in the workflow), not straight from Docker Hub.
 FROM ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55 AS wine-builder
 ARG WINE_REF
 ARG MAKE_JOBS
