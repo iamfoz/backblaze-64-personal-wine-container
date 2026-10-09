@@ -76,6 +76,8 @@ jobs:
   build:
     needs: tests
     runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
     strategy:
       matrix:
         # ubuntu24 is the default (oldest supported LTS). The shared :latest/:main/
@@ -92,6 +94,18 @@ jobs:
       # runner's architecture, and emulation is only needed to build for
       # another one. There is no linux/arm64 image because the client is a 64-bit
       # Windows binary under Wine. The README explains why that is not a matrix entry.
+      # Docker Hub limits anonymous pulls per address, and GitHub's runners share
+      # addresses, so builds failed on 429s (9 Oct 2026). Signed in, the pulls
+      # (the BuildKit image, the Ubuntu and jlesage bases) count against this
+      # account instead. Before buildx, which pulls BuildKit itself. Skipped when
+      # the secrets are not set, such as on a pull request from a fork.
+      - name: Log into Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Setup Docker buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
 
@@ -206,9 +220,23 @@ jobs:
     needs: tests
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      # Docker Hub limits anonymous pulls per address, and GitHub's runners share
+      # addresses, so builds failed on 429s (9 Oct 2026). Signed in, the pulls
+      # (the BuildKit image, the Ubuntu and jlesage bases) count against this
+      # account instead. Before buildx, which pulls BuildKit itself. Skipped when
+      # the secrets are not set, such as on a pull request from a fork.
+      - name: Log into Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Setup Docker buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
@@ -328,6 +356,8 @@ jobs:
     needs: tests
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -355,6 +385,18 @@ jobs:
           fi
           echo "Building :latest-patched from Wine $ref"
           echo "wine_ref=$ref" >> "$GITHUB_OUTPUT"
+
+      # Docker Hub limits anonymous pulls per address, and GitHub's runners share
+      # addresses, so builds failed on 429s (9 Oct 2026). Signed in, the pulls
+      # (the BuildKit image, the Ubuntu and jlesage bases) count against this
+      # account instead. Before buildx, which pulls BuildKit itself. Skipped when
+      # the secrets are not set, such as on a pull request from a fork.
+      - name: Log into Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Setup Docker buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
