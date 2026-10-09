@@ -39,89 +39,27 @@ ARG WINE_REF=wine-11.19
 
 FROM ubuntu:26.04 AS wine-builder
 ARG WINE_REF
+ARG MAKE_JOBS
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Build toolchain plus the -dev libraries Wine links against. Scoped to
-# fonts, TLS and the X stack Backblaze's GUI needs - no OpenGL/sound/scanner
-# dev packages, so configure auto-disables those subsystems (matching the
-# validated build and keeping the runtime library set small).
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates git gcc flex bison make pkg-config python3 \
-        gcc-mingw-w64-x86-64 \
-        libfreetype-dev libfontconfig-dev libgnutls28-dev libpng-dev \
-        libx11-dev libxext-dev libxrender-dev libxrandr-dev libxi-dev \
-        libxfixes-dev libxcursor-dev libxinerama-dev libxcomposite-dev \
-        libxxf86vm-dev \
- && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /wine
-COPY patches/wine-writability-fix.patch /wine/patches/
-COPY patches/wine-fdwrite-rearm.patch /wine/patches/
-COPY patches/wine-token-localsystem.patch /wine/patches/
-COPY patches/wine-debug-privilege-bypass.patch /wine/patches/
-COPY patches/wine-ofd-locks.patch /wine/patches/
-COPY patches/wine-case-cache.patch /wine/patches/
-COPY patches/wine-mountpoint-dirs.patch /wine/patches/
-# Partial (blobless) clone keeps the checkout small while still allowing WINE_REF
-# to be any tag, branch, or exact commit. Blobs are fetched on checkout.
+# patches/build-wine.sh is the one recipe for the fork's Wine, shared with the
+# :latest-patched stage in Dockerfile.ubuntu24 so the two cannot drift. The
+# toolchain layer comes first and keys only on the script, so a patch change
+# does not reinstall it.
 #
-# Order matters: wine-fdwrite-rearm.patch extends the block that
-# wine-writability-fix.patch introduces, so it must be applied second.
-# wine-token-localsystem.patch and wine-debug-privilege-bypass.patch are
-# independent of both and of each other: together they make the token every
-# process gets behave like the LocalSystem token a service holds on Windows.
-# Client 10.0.3.1075's bzserv opens the backup pass it launched by pid. The
-# pass denies everyone access to its own process object, and on Windows the
-# service gets through only because LocalSystem holds SeDebugPrivilege, which
-# bypasses the DACL. Wine had neither the privilege enabled nor the bypass.
-# wine-ofd-locks.patch is independent of the others: wineserver kept every closed
-# fd on a locked file open, so the client's SQLite database leaked descriptors
-# until the limit (issue #13). OFD locks let a closed fd close.
-# wine-case-cache.patch is independent too: the case-sensitivity check after
-# every failed lookup did an fstatfs() each time, 21 ms on Unraid's shfs, half
-# a scan's wall time. It now decides once per device.
-# wine-mountpoint-dirs.patch is independent as well and does nothing unless
-# WINE_MOUNTPOINTS_AS_DIRS is set: it lets Unix mount points under the named
-# drives (ZFS datasets on Unraid) show as plain folders instead of the
-# mount-point reparse points Backblaze skips. Each gets its
-# own --check first, so a context mismatch fails the build with the offending patch
-# named rather than half-applying. The patches are authored against Wine master while
-# WINE_REF pins a release, so a --check failure after a WINE_REF bump usually means
-# the context moved and the patch needs regenerating, not that the fix is wrong.
-RUN git clone --filter=blob:none https://gitlab.winehq.org/wine/wine.git src \
- && git -C src checkout "${WINE_REF}" \
- && git -C src apply --check /wine/patches/wine-writability-fix.patch \
- && git -C src apply /wine/patches/wine-writability-fix.patch \
- && git -C src apply --check /wine/patches/wine-fdwrite-rearm.patch \
- && git -C src apply /wine/patches/wine-fdwrite-rearm.patch \
- && git -C src apply --check /wine/patches/wine-token-localsystem.patch \
- && git -C src apply /wine/patches/wine-token-localsystem.patch \
- && git -C src apply --check /wine/patches/wine-debug-privilege-bypass.patch \
- && git -C src apply /wine/patches/wine-debug-privilege-bypass.patch \
- && git -C src apply --check /wine/patches/wine-ofd-locks.patch \
- && git -C src apply /wine/patches/wine-ofd-locks.patch \
- && git -C src apply --check /wine/patches/wine-case-cache.patch \
- && git -C src apply /wine/patches/wine-case-cache.patch \
- && git -C src apply --check /wine/patches/wine-mountpoint-dirs.patch \
- && git -C src apply /wine/patches/wine-mountpoint-dirs.patch
-
-# Cap build parallelism by available RAM. Wine's parallel link steps are
-# memory-heavy, so -j<all-cores> on a high-core / modest-RAM host exhausts memory
-# and thrashes the machine into swap. Default to ~1 job per 2 GB (never more than
-# the core count). Override on a large box with --build-arg MAKE_JOBS=N.
-ARG MAKE_JOBS
-RUN set -eu; \
-    mkdir build; cd build; \
-    ../src/configure --enable-win64 --disable-tests --prefix=/opt/wine; \
-    cpus="$(nproc)"; \
-    mem_gb="$(awk '/MemTotal/{printf "%d", $2/1048576}' /proc/meminfo)"; \
-    jobs="${MAKE_JOBS:-$(( mem_gb / 2 ))}"; \
-    if [ "$jobs" -lt 1 ]; then jobs=1; fi; \
-    if [ "$jobs" -gt "$cpus" ]; then jobs="$cpus"; fi; \
-    echo "Building Wine with -j${jobs} (cpus=${cpus}, mem=${mem_gb}GB; override with --build-arg MAKE_JOBS=N)"; \
-    make -j"${jobs}"; \
-    make install; \
-    rm -rf /opt/wine/share/man /opt/wine/include
+# The series (patches/series) fixes the order; each patch has its own
+# --check, so a context mismatch fails the build with the patch named. A
+# patch the source already has is skipped with its switch, so a fix accepted
+# upstream drops out when WINE_REF moves past it. The patches are authored
+# against Wine master while WINE_REF pins a release, so a --check failure
+# after a WINE_REF bump usually means the context moved and the patch needs
+# regenerating, not that the fix is wrong. Each fork patch has a runtime
+# switch (patches/*.switch.patch); unset, Wine behaves as upstream. The
+# runtime stage below sets the beta's defaults.
+COPY patches/build-wine.sh /wine/patches/build-wine.sh
+RUN sh /wine/patches/build-wine.sh deps
+COPY patches/ /wine/patches/
+RUN sh /wine/patches/build-wine.sh build
 
 # ============================================================================
 # Stage 2 - the runtime image: jlesage GUI base running Backblaze under our Wine.

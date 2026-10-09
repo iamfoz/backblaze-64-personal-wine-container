@@ -1,4 +1,24 @@
-FROM jlesage/baseimage-gui:ubuntu-24.04-v4.14.0@sha256:e7c54da3446b4c65b6755bf00a874463c640a1f579f25bed99532051e81649ef
+# WINE_FLAVOUR picks the Wine. "winehq" (the default, published as :latest)
+# installs winehq-stable from WineHQ's repository, unchanged. "patched"
+# (published as :latest-patched) builds the fork's Wine from source with
+# patches/build-wine.sh, the same recipe the beta uses, at a WINE_REF the beta
+# has run long enough to trust. Every fork patch has a runtime switch; this
+# flavour turns the fixes on and leaves the performance and experimental ones
+# off. Only the stages the chosen flavour needs are built (BuildKit), so the
+# default build never compiles Wine.
+ARG WINE_FLAVOUR=winehq
+ARG WINE_REF=wine-11.19
+
+FROM ubuntu:24.04 AS wine-builder
+ARG WINE_REF
+ARG MAKE_JOBS
+ENV DEBIAN_FRONTEND=noninteractive
+COPY patches/build-wine.sh /wine/patches/build-wine.sh
+RUN sh /wine/patches/build-wine.sh deps
+COPY patches/ /wine/patches/
+RUN sh /wine/patches/build-wine.sh build
+
+FROM jlesage/baseimage-gui:ubuntu-24.04-v4.14.0@sha256:e7c54da3446b4c65b6755bf00a874463c640a1f579f25bed99532051e81649ef AS base
 
 ENV WINEPREFIX=/config/wine/
 # Backblaze 10.x is a native 64-bit app, so the prefix must be win64.
@@ -27,6 +47,7 @@ ENV DISPLAY=:0
 LABEL net.unraid.docker.webui="http://[IP]:[PORT:5800]/" \
       net.unraid.docker.icon="https://cdn.jsdelivr.net/gh/selfhst/icons/png/backblaze.png"
 
+FROM base AS wine-winehq
 # Install 64-bit Wine from WineHQ using the modern deb822 "sources" method.
 # Lessons baked in here:
 #   * The WineHQ apt repo only keeps the LATEST build of each branch, so
@@ -84,6 +105,48 @@ RUN mkdir -p /config/log /tmp/run && \
     rm -rf /var/lib/apt/lists/* \
         /tmp/.passwd /tmp/.group /tmp/.shadow /tmp/.gshadow /tmp/run /config/log
 
+FROM base AS wine-patched
+# The fork's Wine, built above, in /opt/wine. The jlesage base starts the app
+# service with its own PATH, which does not pick up ENV PATH, so the binaries
+# startapp.sh calls by name are linked into /usr/bin as well.
+COPY --from=wine-builder /opt/wine /opt/wine
+ENV PATH="/opt/wine/bin:${PATH}"
+RUN set -eu; for b in wine wine64 wineserver wineboot winepath winecfg wineconsole; do \
+        if [ -e "/opt/wine/bin/$b" ]; then ln -sf "/opt/wine/bin/$b" "/usr/bin/$b"; fi; \
+    done
+# Only the tools startapp.sh uses and the libraries this Wine links against:
+# no WineHQ repository, no i386 libraries, no systemd pinning. The init_env
+# scaffolding mirrors the base image's add-pkg helper, as in the stage above.
+RUN mkdir -p /config/log /tmp/run && \
+    /etc/cont-init.d/10-init-users.sh && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates curl xvfb cabextract p7zip-full python3 \
+        libfreetype6 libfontconfig1 libgnutls30t64 libpng16-16t64 \
+        libx11-6 libxext6 libxrender1 libxrandr2 libxi6 libxfixes3 \
+        libxcursor1 libxinerama1 libxcomposite1 libxxf86vm1 && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends locales && \
+    sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
+    dpkg-reconfigure --frontend=noninteractive locales && \
+    update-locale LANG=en_US.UTF-8 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* \
+        /tmp/.passwd /tmp/.group /tmp/.shadow /tmp/.gshadow /tmp/run /config/log
+# The switches (rootfs/usr/local/share/bb64/wine-switches.tsv): the fixes on,
+# the performance and experimental patches off until the user turns them on.
+# With the service token on, 10.0.3.1075 and later complete their passes, so
+# the client follows Backblaze's newest as the beta does. Turning the token
+# off pins 10.0.1.1069 again (startapp.sh).
+ENV WINE_SOCK_SEND_READY="1" \
+    WINE_SOCK_FDWRITE_REARM="0" \
+    WINE_SERVICE_TOKEN="1" \
+    WINE_OFD_LOCKS="1" \
+    WINE_CASE_CACHE="0" \
+    BACKBLAZE_VERSION=""
+
+FROM wine-${WINE_FLAVOUR}
+ARG WINE_FLAVOUR
+
 # Image/release version, shown by bb-version and baked into the build stamp below.
 # CI passes the release tag via --build-arg. Local builds default to "dev".
 # Declared HERE, after the heavy apt layer, so a version change does not bust its
@@ -101,7 +164,8 @@ ARG BUILD_REV=unknown
 # published beta cannot be told apart from the one before it in a bug report.
 ARG BUILD_NUMBER=0
 RUN printf 'version=%s\nrevision=%s\nbuild=%s\nvariant=%s\nbuilt=%s\n' \
-        "${DOCKER_IMAGE_VERSION:-dev}" "${BUILD_REV}" "${BUILD_NUMBER}" "ubuntu24" \
+        "${DOCKER_IMAGE_VERSION:-dev}" "${BUILD_REV}" "${BUILD_NUMBER}" \
+        "$([ "$WINE_FLAVOUR" = patched ] && echo ubuntu24-patched || echo ubuntu24)" \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /etc/bb-build
 
 EXPOSE 5900

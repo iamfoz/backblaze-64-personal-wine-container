@@ -258,6 +258,18 @@ jobs:
           # source. This proves the result reached the shipped wineserver.
           docker run --rm --entrypoint sh bb-beta-test:local -c \
             'grep -ac sock_stream_send_ready /opt/wine/bin/wineserver | grep -qv "^0$"'
+          # The switches: the build wrote its manifest, the switch reached the
+          # binary, and the image turns the fixes and performance patches on.
+          # Unset, the patched Wine behaves as upstream, so a beta that lost
+          # these defaults would quietly lose its fixes.
+          docker run --rm --entrypoint sh bb-beta-test:local -c '
+            set -eu
+            grep -q "^applied wine-writability-fix switch" /opt/wine/share/bb64-patches
+            grep -aq WINE_SOCK_SEND_READY /opt/wine/bin/wineserver
+            for v in WINE_SOCK_SEND_READY WINE_SOCK_FDWRITE_REARM WINE_SERVICE_TOKEN WINE_OFD_LOCKS WINE_CASE_CACHE; do
+              eval "test \"\${$v:-}\" = 1" || { echo "beta default $v is not 1" >&2; exit 1; }
+            done
+          '
           # The FD_WRITE re-arm adds no new symbol, so it has no binary fingerprint.
           # Its guard is the `git apply --check` at build time, which fails the build
           # if the context no longer matches.
@@ -301,3 +313,105 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:beta
           cache-from: type=local,src=/tmp/.buildx-cache-beta
           cache-to: type=local,dest=/tmp/.buildx-cache-beta,mode=max
+
+  # :latest-patched. The stable container (Dockerfile.ubuntu24) on the fork's
+  # Wine instead of WineHQ's, built with WINE_FLAVOUR=patched from the same
+  # patches/build-wine.sh the beta uses, at the WINE_REF that Dockerfile pins.
+  # The fixes are on and the performance and experimental patches off. Wine is
+  # compiled here, so it runs on release tags (latest-patched and
+  # <version>-patched) and on demand or the weekly schedule (main-patched),
+  # not on every push. The guard below fails the job rather than let a tag
+  # without the -patched suffix overwrite a WineHQ tag.
+  patched:
+    needs: tests
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Setup Docker buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4.3.0
+
+      - name: Log into registry ${{ env.REGISTRY }}
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Work out the tags
+        id: tags
+        run: |
+          set -eu
+          img="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          if [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then
+            ver="${GITHUB_REF#refs/tags/}"
+            tags="$img:latest-patched,$img:${ver}-patched"
+          else
+            ver="main"
+            tags="$img:main-patched"
+          fi
+          for t in $(echo "$tags" | tr ',' ' '); do
+            case "$t" in *-patched) ;; *) echo "refusing to publish $t: not a -patched tag" >&2; exit 1 ;; esac
+          done
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Docker build cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5.1.0
+        with:
+          path: /tmp/.buildx-cache-patched
+          key: ${{ runner.os }}-buildx-patched-${{ hashFiles('Dockerfile.ubuntu24', 'patches/*') }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-patched-
+
+      - name: Build the patched image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
+        with:
+          context: .
+          file: ./Dockerfile.ubuntu24
+          build-args: |
+            WINE_FLAVOUR=patched
+            DOCKER_IMAGE_VERSION=${{ steps.tags.outputs.version }}
+            BUILD_REV=${{ github.sha }}
+            BUILD_NUMBER=${{ github.run_number }}
+          load: true
+          tags: bb-patched-test:local
+          platforms: linux/amd64
+          cache-from: type=local,src=/tmp/.buildx-cache-patched
+          cache-to: type=local,dest=/tmp/.buildx-cache-patched,mode=max
+
+      - name: Smoke test the patched image
+        run: ./.github/smoke-test.sh bb-patched-test:local
+
+      - name: Check the patched image carries the fork's Wine with its defaults
+        run: |
+          set -eu
+          docker run --rm --entrypoint /opt/wine/bin/wine bb-patched-test:local --version
+          docker run --rm --entrypoint sh bb-patched-test:local -c '
+            set -eu
+            grep -q "^variant=ubuntu24-patched" /etc/bb-build
+            grep -q "^applied wine-writability-fix switch" /opt/wine/share/bb64-patches
+            grep -aq WINE_SOCK_SEND_READY /opt/wine/bin/wineserver
+            test "$(readlink -f "$(command -v wineserver)")" = /opt/wine/bin/wineserver
+            test "$WINE_SOCK_SEND_READY" = 1 && test "$WINE_SERVICE_TOKEN" = 1 && test "$WINE_OFD_LOCKS" = 1
+            test "$WINE_SOCK_FDWRITE_REARM" = 0 && test "$WINE_CASE_CACHE" = 0
+            test -z "$BACKBLAZE_VERSION"
+          '
+
+      - name: Push the patched image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
+        with:
+          context: .
+          file: ./Dockerfile.ubuntu24
+          build-args: |
+            WINE_FLAVOUR=patched
+            DOCKER_IMAGE_VERSION=${{ steps.tags.outputs.version }}
+            BUILD_REV=${{ github.sha }}
+            BUILD_NUMBER=${{ github.run_number }}
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=local,src=/tmp/.buildx-cache-patched
+          cache-to: type=local,dest=/tmp/.buildx-cache-patched,mode=max
