@@ -116,5 +116,20 @@ grep -q "BACKBLAZE_VERSION=10.0.3.1075 needs it" "$FX/log" && echo "PASS token o
 rm -f "$STORE" "$MAN"
 is "startapp: WineHQ's Wine exports nothing and leaves the pin" "$(runblock BACKBLAZE_VERSION=10.0.1.1069)" "BACKBLAZE_VERSION=10.0.1.1069 "
 
+# The datasets block in startapp.sh: on WineHQ's Wine the setting is dropped
+# and logged, on a Wine with the patch it is exported.
+MBLOCK="$FX/mblock.sh"
+awk '/^# Which drives show their mount points \(ZFS datasets\)/{on=1} on{print} on && /^fi$/{exit}' "$ROOT/rootfs/startapp.sh" \
+    | sed -e "s#/usr/local/lib/bb-mountpoints.sh#$ROOT/rootfs/usr/local/lib/bb-mountpoints.sh#g" \
+          -e "s#/usr/local/lib/bb-wine-switches.sh#$LIB#g" -e "s#/tmp/.bb-mountpoints-applied#$FX/mp-applied#" > "$MBLOCK"
+grep -q bb_mountpoints_value "$MBLOCK" || { echo "FAIL could not find the datasets block"; FAILED=$((FAILED+1)); }
+mrun(){ ws LOG="$FX/log" BB_MOUNTPOINTS_STORE="$FX/none.json" "$@" bash -c 'log_message(){ echo "$*" >> "$LOG"; }; . "$0"; echo "${WINE_MOUNTPOINTS_AS_DIRS:-unset}"' "$MBLOCK"; }
+rm -f "$MAN" "$FX/log"
+is "datasets on WineHQ's Wine: not exported" "$(mrun MOUNTPOINTS_AS_DIRS=all)" "unset"
+grep -q "this Wine has no such patch" "$FX/log" && echo "PASS and logged" || { echo "FAIL not logged"; FAILED=$((FAILED+1)); }
+printf '%s\n' "$ALL_APPLIED" > "$MAN"
+is "datasets on the patched Wine: exported" "$(mrun MOUNTPOINTS_AS_DIRS=all)" "1"
+is "datasets per drive on the patched Wine" "$(mrun MOUNTPOINTS_AS_DIRS=e,d)" "de"
+
 echo "$FAILED failures"
 exit $(( FAILED > 0 ? 1 : 0 ))

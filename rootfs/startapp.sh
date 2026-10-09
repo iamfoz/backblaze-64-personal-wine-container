@@ -56,14 +56,20 @@ for x in {d..z}; do
     fi
 done
 
-# Beta only: which drives show their mount points (ZFS datasets) as plain
-# folders, so the client backs up what is inside them. The beta's Wine reads
-# WINE_MOUNTPOINTS_AS_DIRS once per process and every Wine process inherits
-# it, so it is exported here, before the first Wine command below starts the
-# server and the services. The stable images have no helper and skip this.
+# Which drives show their mount points (ZFS datasets) as plain folders, so the
+# client backs up what is inside them. The fork's Wine (the beta and
+# :latest-patched) reads WINE_MOUNTPOINTS_AS_DIRS once per process and every
+# Wine process inherits it, so it is exported here, before the first Wine
+# command below starts the server and the services. WineHQ's Wine has no such
+# patch, so on :latest the setting is logged and left out.
 if [ -r /usr/local/lib/bb-mountpoints.sh ]; then
     . /usr/local/lib/bb-mountpoints.sh
     _mp_value="$(bb_mountpoints_value)"
+    if [ -n "$_mp_value" ] && [ -r /usr/local/lib/bb-wine-switches.sh ] \
+       && [ "$(. /usr/local/lib/bb-wine-switches.sh; bb_ws_state WINE_MOUNTPOINTS_AS_DIRS)" = absent ]; then
+        log_message "DRIVE: datasets as folders is set, but this Wine has no such patch (it needs latest-patched or the beta)"
+        _mp_value=""
+    fi
     if [ -n "$_mp_value" ]; then
         export WINE_MOUNTPOINTS_AS_DIRS="$_mp_value"
         log_message "DRIVE: mount points shown as folders on: $([ "$_mp_value" = 1 ] && echo 'every drive' || echo "$_mp_value" | tr 'a-z' 'A-Z')"

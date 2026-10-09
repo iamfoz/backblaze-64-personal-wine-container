@@ -85,6 +85,17 @@ Here are the main components of this image:
   * `bb-version`, which reports installed and available client versions: see [Checking Versions](#checking-versions).
   * `bb-doctor`, which checks the installation for known problems and can repair many of them: see [Fixing Problems](#fixing-problems).
   * `bb-report`, which builds a sanitised diagnostic bundle for a bug report: see [Reporting a Problem](#reporting-a-problem).
+  * A web interface with Monitor, Status, Tools, API and Settings tabs beside the desktop, and a key-authenticated HTTP API: see [HTTP API](#http-api).
+
+Settings holds Notifications (ntfy, Pushbullet, Discord, Slack, Gotify, a JSON webhook or
+a custom JSON body, on a safety freeze, skipped files, a stall, a pause the client chose,
+and more), Quiet hours (pause windows on a weekly schedule), Exclusions, Automatic recovery,
+Wine patches, Datasets as folders and Backup and restore. These are described in the
+changelog and in [`docs/api-v1.md`](docs/api-v1.md). A notification endpoint cannot point
+at the container's loopback address or a link-local one. Sending a test only ever reports
+"delivered" or "not delivered", from a small fixed vocabulary, and the endpoint's reply is
+written to the container log instead. While a quiet hours action is still in flight, its
+last-result state briefly reads as unknown.
 
 [S6-overlay]: https://github.com/just-containers/s6-overlay
 [x11vnc]: http://www.karlrunge.com/x11vnc/
@@ -148,8 +159,8 @@ Environment variables can be set by adding one or more arguments `-e "<VAR>=<VAL
 | Variable       | Description                                  | Default |
 |----------------|----------------------------------------------|---------|
 |`DISABLE_VIRTUAL_DESKTOP` | Disables Wine's Virtual Desktop Mode | false |
-|`ENABLE_WATCHDOG`| When `true`, the container recovers automatically from the known stall conditions: it deletes a stale four-hour lock left behind by an out-of-memory kill, and stops a pass stuck on a lost upload child so the service starts a fresh one. Every action is logged. Off by default because it deletes a file and kills processes. The beta's Settings tab has a switch that overrides this without a restart. See [Health and Auto-Recovery](#health-and-auto-recovery). | false |
-|`MOUNTPOINTS_AS_DIRS`| Beta only. Which drives show the separate filesystems inside them, such as ZFS datasets, as ordinary folders so the client backs them up: `all`, or drive letters such as `d,e`. Without it the client skips every dataset inside a drive, so `/mnt/cache` as one drive backs up nothing. A dataset already backed up under a letter of its own is uploaded again under the new path, and a drive mapped inside another included drive is backed up twice, so unmap the old letters once the new drive has caught up. The beta's Settings tab has a per-drive switch that overrides this. Takes effect at the next container restart. See [Volumes](#volumes). | (unset) |
+|`ENABLE_WATCHDOG`| When `true`, the container recovers automatically from the known stall conditions: it deletes a stale four-hour lock left behind by an out-of-memory kill, and stops a pass stuck on a lost upload child so the service starts a fresh one. Every action is logged. Off by default because it deletes a file and kills processes. The Settings tab has a switch that overrides this without a restart. See [Health and Auto-Recovery](#health-and-auto-recovery). | false |
+|`MOUNTPOINTS_AS_DIRS`| On `latest-patched` and `beta` only, since WineHQ's Wine has no such patch. Which drives show the separate filesystems inside them, such as ZFS datasets, as ordinary folders so the client backs them up: `all`, or drive letters such as `d,e`. Without it the client skips every dataset inside a drive, so `/mnt/cache` as one drive backs up nothing. A dataset already backed up under a letter of its own is uploaded again under the new path, and a drive mapped inside another included drive is backed up twice, so unmap the old letters once the new drive has caught up. The Settings tab has a per-drive switch that overrides this. Takes effect at the next container restart. See [Volumes](#volumes). | (unset) |
 |`WINE_SOCK_SEND_READY`, `WINE_SOCK_FDWRITE_REARM`, `WINE_SERVICE_TOKEN`, `WINE_OFD_LOCKS`, `WINE_CASE_CACHE`| The switches for this project's Wine patches, on `latest-patched` and `beta` only: `1` on, `0` off. The Settings tab overrides them. See [Patched Wine](#patched-wine). | depends on the tag |
 |`DISABLE_AUTOUPDATE` | When set to true, skip the startup update check and just launch the installed client. When false (the default), the container checks Backblaze for a newer client on each start and updates if one is available. | false |
 |`FORCE_LATEST_UPDATE`| When `true` (the default), the updater downloads the newest Backblaze client from Backblaze's servers on each start. When `false`, the installed version is kept and the update check is skipped. | true |
@@ -200,7 +211,7 @@ A minimum of 2 volumes need to be mounted to the container
 
   * /config - This is where Wine and Backblaze will be installed
   * Config folder on Unraid - prefer `/mnt/cache/appdata/<name>` to `/mnt/user/appdata/<name>`. Every file Wine holds open is also open in Unraid's shfs, which shares one open-file limit with everything else on `/mnt/user`, so a handle leak in the client can make other containers fail.
-  * Backup drives - map folders that hold files, not a ZFS pool's root. The client does not cross a mount point inside a drive, and each share on an Unraid ZFS pool is a separate dataset, so `/mnt/cache` as a drive backs up nothing while `/mnt/cache/<share>` works. The same applies to an array disk formatted as ZFS: each share on `/mnt/diskN` is a dataset too. bb-doctor flags this. On the beta, `MOUNTPOINTS_AS_DIRS` or the Settings tab's "Datasets as folders" switch lets one drive cover a whole pool instead (see [Environment Variables](#environment-variables)).
+  * Backup drives - map folders that hold files, not a ZFS pool's root. The client does not cross a mount point inside a drive, and each share on an Unraid ZFS pool is a separate dataset, so `/mnt/cache` as a drive backs up nothing while `/mnt/cache/<share>` works. The same applies to an array disk formatted as ZFS: each share on `/mnt/diskN` is a dataset too. bb-doctor flags this. On `latest-patched` and the beta, `MOUNTPOINTS_AS_DIRS` or the Settings tab's "Datasets as folders" switch lets one drive cover a whole pool instead (see [Environment Variables](#environment-variables)).
   * Backup drives - these are the locations you wish to backup, any volume that is mounted as /drive_**driveletter** (from d up to z) will be mounted automatically for use in Backblaze with their equivalent letter, for example /drive_d will be mounted as D:. Mount these **read-write** - Backblaze creates a `.bzvol` folder in each drive's root, so a read-only mount will fail (the volume can't be tracked or its backup state inherited).
 
 You can mount drives with different paths, but these will need to be mounted manually within wine using the following method
@@ -471,7 +482,7 @@ backed up, which otherwise shows only as "producing file lists" for hours. The M
 same as a warning. Anything it will not fix (too little RAM, no swap,
 a full disk, a wedged transfer) is reported with what to do about it.
 
-On the beta image the Tools tab of the web interface runs `bb-doctor`, `bb-health` and
+The Tools tab of the web interface runs `bb-doctor`, `bb-health` and
 `bb-version` from the browser and shows the output on the page, with `--fix` as a
 checkbox that asks for confirmation. It runs the same programs as the console.
 The Status tab lists everything the client says needs attention,
@@ -490,7 +501,7 @@ and has a Reset that puts the dismissed ones back without touching the Show choi
 warning in the first place. `C:` is the Wine prefix and whichever letter Wine maps to the
 container root is the container itself, so neither holds anything that wants backing up.
 
-The beta `bb-doctor` also checks each mapped drive: that the container user can read its
+`bb-doctor` also checks each mapped drive: that the container user can read its
 root and its first-level folders, that the client still recognises the drive's identity, and
 that the client is set to back the drive up. That last one is the fault behind
 "No files are selected". The client keeps a filter list with one entry per drive, and a drive
@@ -503,9 +514,9 @@ without being excluded.
 
 A note on the console. `docker exec` enters the container as root, and root passes every
 permission test, so a `bb-doctor` run from the console could not tell you that the
-container user cannot read your files. The beta `bb-doctor` restarts itself as the
-container user when it is started as root, so its answer is correct. On the
-stable image, or to be sure, run it as that user:
+container user cannot read your files. `bb-doctor` restarts itself as the
+container user when it is started as root, so its answer is correct. To be sure,
+you can also run it as that user:
 
 ```
 docker exec -u <USER_ID>:<GROUP_ID> <container> bb-doctor
@@ -523,7 +534,7 @@ Builds a sanitised diagnostic bundle as a `.zip` in your config/appdata folder, 
 to attach to a forum post or GitHub issue. Run `bb-report --list` first if you want to
 see exactly what it would collect.
 
-On the beta image the Tools tab builds the bundle from the browser. Bundles made there are
+The Tools tab builds the bundle from the browser. Bundles made there are
 kept in `/config/bb-diag` as `backblaze64-diag-YYYYMMDDHHMM.zip`, and the tab lists them
 with a download and a delete button for each.
 
@@ -583,7 +594,7 @@ speed without building anything yourself. Point your container's Repository fiel
 the tag above to switch, and back to `latest` to switch away. Your `/config` volume
 carries over either way.
 
-It differs from the stable images in four ways:
+It differs from the stable images in three ways:
 
 - The Wine in it is **built from source with patches that WineHQ has not yet
   reviewed**. The upload fix is filed as [WineHQ bug 59893](https://bugs.winehq.org/show_bug.cgi?id=59893)
@@ -592,20 +603,11 @@ It differs from the stable images in four ways:
   (see [Patched Wine](#patched-wine)).
 - It tracks **Ubuntu 26.04**, the newer LTS.
 - It is rebuilt on a schedule rather than pinned to a release, so it moves.
-- The web interface has Monitor, Status, Tools, API and Settings tabs beside the desktop,
-  and the key-authenticated HTTP API. Settings holds Notifications (ntfy, Pushbullet,
-  Discord, Slack, Gotify, a JSON webhook or a custom JSON body, on a safety freeze, skipped
-  files, a stall, a pause the client chose, and more) and Quiet hours (pause windows on a
-  weekly schedule). These are described in the changelog and in
-  [`docs/api-v1.md`](docs/api-v1.md). A notification endpoint cannot point at the
-  container's loopback address or a link-local one. Sending a test only ever reports
-  "delivered" or "not delivered", from a small fixed vocabulary, and the endpoint's
-  reply is written to the container log instead. While a quiet hours action is still in
-  flight, its last-result state briefly reads as unknown.
 
-Use the stable tags unless upload speed is the reason you are here. When the fix
-reaches a Wine release the stable images pick it up automatically and the beta stops
-being necessary.
+Use the stable tags unless you want the newest Wine and Ubuntu early. For the upload
+fix and the other Wine fixes on the stable image, use `latest-patched` (see
+[Patched Wine](#patched-wine)). When a fix reaches a Wine release, the WineHQ tags pick
+it up automatically.
 
 `bb-version` reports `beta-ubuntu26` as its variant, so a bug report always says
 which image it came from.

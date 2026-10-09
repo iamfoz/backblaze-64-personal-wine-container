@@ -1,5 +1,5 @@
-# Backup passes for bb-doctor: whether they complete. Beta only, to be folded
-# into bb-doctor at the next stable release.
+# Backup passes for bb-doctor: whether they complete. Sourced before the
+# connectivity check.
 #
 # A pass that loses the client's four-hour lock aborts at the transmit step,
 # and bzserv starts another a few minutes later that loses it the same way.

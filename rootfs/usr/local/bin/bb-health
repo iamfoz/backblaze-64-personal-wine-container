@@ -221,5 +221,15 @@ if [ -f "$LOCK" ]; then
     fi
 fi
 
+# --- FROZEN: Backblaze has safety-frozen this backup --------------------------
+# The client records the freeze in status.json and nothing in this container
+# can clear it. It needs a person to act, so it shows as unhealthy in the
+# Docker tab. bb-watchdog matches only HANG and WEDGE, so this cannot start a
+# recovery.
+if grep -q '"frozen"[[:space:]]*:[[:space:]]*true' "${BZ}/bzreports/status.json" 2>/dev/null; then
+    echo "FROZEN Backblaze has safety-frozen this backup. See the Status tab, and the Backblaze page on resolving a safety freeze"
+    exit 1
+fi
+
 echo "OK"
 exit 0

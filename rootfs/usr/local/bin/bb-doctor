@@ -142,6 +142,12 @@ oldest_proc_min() {
     echo "$oldest"
 }
 
+# Run as the container user, not root: root passes every permission test, so
+# the ownership checks could not fail from the console. Before the first line
+# of output, so the re-run prints the report once. See
+# /usr/local/lib/bb-doctor-asuser.sh.
+[ -r /usr/local/lib/bb-doctor-asuser.sh ] && . /usr/local/lib/bb-doctor-asuser.sh
+
 echo "Backblaze container check"
 echo
 
@@ -325,6 +331,15 @@ done
 echo
 
 # ---- Permissions and space --------------------------------------------------------
+# Source drives: whether the container user can read each drive, whether the
+# client still recognises it, folders that are separate filesystems, and how
+# fast a chunk reads. See /usr/local/lib/bb-doctor-drives.sh.
+[ -r /usr/local/lib/bb-doctor-drives.sh ] && . /usr/local/lib/bb-doctor-drives.sh
+
+# Client settings, read from bzcli rather than inferred from files on disk.
+# See /usr/local/lib/bb-doctor-config.sh.
+[ -r /usr/local/lib/bb-doctor-config.sh ] && . /usr/local/lib/bb-doctor-config.sh
+
 echo "Storage"
 if [ -w /config ]; then OK "/config is writable"; else BAD "/config is not writable - set USER_ID/GROUP_ID to match the host owner"; fi
 if [ -d "$BZ" ] && [ ! -w "$BZ" ]; then BAD "the Backblaze data directory is not writable - backups cannot record progress"; fi
@@ -562,6 +577,9 @@ fi
 echo
 
 # ---- Connectivity ---------------------------------------------------------------------
+# Backup passes: whether they complete. See /usr/local/lib/bb-doctor-passes.sh.
+[ -r /usr/local/lib/bb-doctor-passes.sh ] && . /usr/local/lib/bb-doctor-passes.sh
+
 echo "Connectivity"
 # The same six mirrors bb-version polls. One mirror being down or geo-routed away
 # is not a connectivity problem, so only the loss of all six is reported.
@@ -577,6 +595,10 @@ else
     BAD "cannot reach any Backblaze API mirror - check the container's network and any egress filtering"
 fi
 echo
+
+# Skipped files, before the summary so its warnings count in the totals. See
+# /usr/local/lib/bb-doctor-skipped.sh.
+[ -r /usr/local/lib/bb-doctor-skipped.sh ] && . /usr/local/lib/bb-doctor-skipped.sh
 
 echo "-----------------------------------------------------------------"
 echo "${ok} ok$([ "$info" -gt 0 ] && echo ", ${info} info"), ${warn} warning(s), ${bad} problem(s)$([ "$fixed" -gt 0 ] && echo ", ${fixed} fixed")"

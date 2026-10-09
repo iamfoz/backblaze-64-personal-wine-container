@@ -216,6 +216,49 @@ def newest_logs(directory, count=2):
     except OSError:
         return []
 
+# Client settings, via bzcli. bzcli reports the client's view of what it is
+# doing, which belongs alongside the files bb-report already reads back out of
+# bzdata. Only /settings is queried, never the whole report and never
+# /backup/account: both carry the account email.
+def _bzcli_settings():
+    prefix = os.environ.get("WINEPREFIX", "/config/wine/")
+    bbdir = os.path.join(prefix, "drive_c", "Program Files", "Backblaze")
+    if not os.path.exists(os.path.join(bbdir, "bzcli.exe")):
+        return "bzcli is not in this image\n"
+    env = dict(os.environ)
+    env["PATH"] = "/opt/wine/bin:" + env.get("PATH", "")
+    env["WINEPREFIX"] = prefix
+    env["WINEDEBUG"] = "-all"
+    env["HOME"] = "/config"
+    try:
+        p = subprocess.run(["wine", "bzcli.exe", "report", "-v", "/settings"],
+                            cwd=bbdir, env=env, capture_output=True, text=True, timeout=60)
+        text = (p.stdout or "") + (p.stderr or "")
+        # online_hostname is the name this machine shows under at
+        # backblaze.com, and sanitise() does not hash it: it is a bare
+        # value rather than a path, so it would reach a bundle whole. A
+        # bundle is meant to be safe to post in public, and a machine
+        # name is often a person's or a company's. Redacted by value, not
+        # by whole line: bzcli can emit this report as compact single-line
+        # JSON, and a whole-line match there would erase every sibling
+        # setting on that line along with it.
+        text = re.sub(r'("online_hostname"\s*:\s*)"[^"]*"',
+                      r'\1"<hidden>"', text)
+        # RE_KEYVAL further down only matches an *unquoted* key ("key:
+        # value" or "key=value"). A JSON key is quoted ("hguid": "..."),
+        # so the character right after the key is the key's closing
+        # quote, not "=" or ":", and RE_KEYVAL's match never starts.
+        # bzcli's settings report is JSON, so every name in SECRET_KEYS
+        # needs this same by-value redaction here, before this text
+        # reaches sanitise() and RE_KEYVAL gets a pass at a shape it
+        # cannot see.
+        text = re.sub(
+            r'(?i)"(' + "|".join(re.escape(k) for k in SECRET_KEYS) + r')"(\s*:\s*)"[^"]*"',
+            r'"\1"\2"<redacted>"', text)
+        return text
+    except Exception as e:
+        return "command failed: %s\n" % e
+
 # Every item is (name in bundle, description, producer). Nothing else is collected.
 def build_items():
     items = [
@@ -251,6 +294,9 @@ def build_items():
     # and bb-doctor --fix's actions, one line each with a timestamp.
     items.append(("container/recovery.log", "automatic recovery actions",
                   lambda: tail_file("/config/bb-api/recovery.log")))
+    items.append(("backblaze/settings.txt",
+                  "client settings (drive selection, exclusions, licence, encryption)",
+                  _bzcli_settings))
     return items
 
 # Only variables this project defines are shown by value. Anything else could be a

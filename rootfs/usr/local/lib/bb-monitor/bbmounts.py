@@ -3,8 +3,9 @@
 #
 # Wine reports a folder that is a separate filesystem (a ZFS dataset, another
 # disk mounted inside a share) as a mount-point reparse point, and the client
-# skips reparse points, so it never backs up what is inside. The beta's Wine
-# carries a patch that reports them as plain folders instead, for the drives
+# skips reparse points, so it never backs up what is inside. The fork's Wine
+# (the beta and :latest-patched) carries a patch that reports them as plain
+# folders instead, for the drives
 # named in WINE_MOUNTPOINTS_AS_DIRS. startapp.sh sets that variable from this
 # store when it exists and from the container's MOUNTPOINTS_AS_DIRS variable
 # when it does not, so a container that never touched the page behaves exactly
@@ -17,7 +18,7 @@
 
 import json, os, re, tempfile
 
-import bbapi
+import bbapi, bbwine
 
 STORE = bbapi.DIR + "/mountpoints.json"
 APPLIED = "/tmp/.bb-mountpoints-applied"   # written by startapp.sh: the value Wine was started with
@@ -135,6 +136,14 @@ def effective():
     return from_variable(os.environ.get("MOUNTPOINTS_AS_DIRS")), "variable"
 
 
+def available():
+    """Whether this image's Wine has the patch. WineHQ's (:latest) does not."""
+    for r in bbwine.registry():
+        if r["var"] == bbwine.DRIVES:
+            return bbwine.switch_state(r, bbwine.manifest()) != "absent"
+    return False
+
+
 def state():
     """What the page shows: every mapped drive with whether it is included and
     the separate filesystems directly under it, and whether a restart is due."""
@@ -149,7 +158,7 @@ def state():
         drives.append({"letter": c.upper(), "target": target,
                        "enabled": value == "1" or c in value,
                        "mounts": _mounts_under(target)})
-    return {"value": value, "source": source, "all": value == "1",
+    return {"available": available(), "value": value, "source": source, "all": value == "1",
             "variable": os.environ.get("MOUNTPOINTS_AS_DIRS", ""),
             "applied": applied, "restart_needed": applied is not None and applied != value,
             "drives": drives}

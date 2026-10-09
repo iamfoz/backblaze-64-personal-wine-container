@@ -51,13 +51,12 @@ except py_compile.PyCompileError as exc:
     fi
 }
 
-for f in "$ROOT"/rootfs-beta/usr/local/lib/bb-monitor/*.py; do
+for f in "$ROOT"/rootfs/usr/local/lib/bb-monitor/*.py; do
     [ -f "$f" ] && check_py "$f"
 done
 
-# The command-line tools have no .py suffix, so they are found by shebang. Both
-# trees, because rootfs-beta overlays rootfs and a broken file in either ships.
-for f in "$ROOT"/rootfs/usr/local/bin/* "$ROOT"/rootfs-beta/usr/local/bin/*; do
+# The command-line tools have no .py suffix, so they are found by shebang.
+for f in "$ROOT"/rootfs/usr/local/bin/*; do
     [ -f "$f" ] || continue
     case "$(sed -n 1p "$f")" in
         '#!'*python*) check_py "$f" ;;
@@ -79,8 +78,8 @@ check_sh() {
 
 # __pycache__ is pruned rather than filtered: a stale .pyc left by an earlier run
 # of another suite is a binary file with no readable first "line".
-# Unquoted to split the list. No path in either tree has a space.
-for f in $(find "$ROOT/rootfs" "$ROOT/rootfs-beta" \
+# Unquoted to split the list. No path in the tree has a space.
+for f in $(find "$ROOT/rootfs" \
                 -name __pycache__ -prune -o -type f -print | sort); do
     case "$(sed -n 1p "$f")" in
         '#!/bin/sh'|'#!/usr/bin/env sh')
@@ -124,7 +123,7 @@ mkdir -p "$JSDIR"
 # reads as an escaped quote in the source is a bare quote in the served page,
 # and one of those took the whole Status tab down on 2026-09-21 while this
 # test, reading the source, passed.
-BLOCKS="$(python3 - "$ROOT/rootfs-beta/usr/local/bin/bb-monitor-web" "$JSDIR" <<'PY'
+BLOCKS="$(python3 - "$ROOT/rootfs/usr/local/bin/bb-monitor-web" "$JSDIR" <<'PY'
 import ast, re, sys
 src = open(sys.argv[1], encoding="utf-8").read()
 tree = ast.parse(src)

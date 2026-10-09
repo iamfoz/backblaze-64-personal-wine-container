@@ -280,6 +280,14 @@ the additions below. The `:beta` tag is mutable, so each published build has a s
 
 ### Changed
 
+- The beta overlay is merged into the shared image, so the next stable release carries
+  it: the web interface (Monitor, Status, Tools, API and Settings tabs) and the HTTP API,
+  bb-doctor's drive, settings, pass, skipped-file and run-as-the-container-user checks,
+  bb-health's FROZEN state and bb-report's settings capture. These were patched in at
+  build time and are now part of the scripts. One build step, `build/finish-image.sh`,
+  finishes every image, and the smoke test checks the Settings tab is served. On
+  `latest`, which runs WineHQ's Wine, the Wine patches and Datasets as folders panels say
+  so and name `latest-patched`.
 - Wine moved from 11.14 to 11.17. All four patches in `patches/` apply to it unchanged. 11.18 was
   published for a few hours on 19 September and withdrawn. Its new process start-up can place
   Wine's data at the address bztransmit.exe must load at, and the executable has no relocations,

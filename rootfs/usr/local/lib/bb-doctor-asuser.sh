@@ -1,5 +1,5 @@
-# Run bb-doctor as the container user, not as root. Sourced by a beta-only patch
-# near the top of bb-doctor. Fold it into that script at the next stable release.
+# Run bb-doctor as the container user, not as root. Sourced near the top of
+# bb-doctor.
 #
 # `docker exec` enters the container as root, and root passes every permission
 # test. The checks that matter most in this container are permission tests:

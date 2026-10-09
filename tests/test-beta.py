@@ -2,7 +2,7 @@
 """Tests for the beta overlay: key store, file-name gate, settings whitelist,
 log parsing, quiet hours, notifications and dismissed warnings.
 
-Nothing in rootfs-beta was covered before this. The cases below are the ones
+Nothing in the former beta overlay (now in rootfs) was covered before this. The cases below are the ones
 where a silent regression costs something real. A scope check that stops
 enforcing hands a read-only key the pause verb. A gap in strip_file_names()
 puts the names of someone's files on a key that was never granted them. The
@@ -22,12 +22,12 @@ import urllib.error
 from importlib.machinery import SourceFileLoader
 
 # The modules under test are imported from the tree that ships in the image, so
-# without this the run leaves __pycache__ directories inside rootfs-beta, which
+# without this the run leaves __pycache__ directories inside rootfs, which
 # then land in the build context.
 sys.dont_write_bytecode = True
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BETA = os.path.join(HERE, "..", "rootfs-beta", "usr", "local")
+BETA = os.path.join(HERE, "..", "rootfs", "usr", "local")
 LIB = os.path.join(BETA, "lib", "bb-monitor")
 sys.path.insert(0, LIB)
 
@@ -1237,6 +1237,7 @@ for _l, _sub in (("m", ["share1", "share2", "plain"]), ("n", ["media"])):
     os.symlink(os.path.join(_src, "drive_" + _l), "%s/%s:" % (_dd, _l))
 os.symlink("/", _dd + "/z:")
 ok(bbmounts.load() is None and bbmounts.effective() == ("", "variable"), "with no store and no variable, no drive is included")
+ok(not bbmounts.available() and not bbmounts.state()["available"], "WineHQ's Wine (no manifest) has no datasets-as-folders patch")
 os.environ["MOUNTPOINTS_AS_DIRS"] = "all"
 ok(bbmounts.effective() == ("1", "variable"), "MOUNTPOINTS_AS_DIRS=all is every drive")
 os.environ["MOUNTPOINTS_AS_DIRS"] = "N:, m"
@@ -1281,6 +1282,7 @@ with open(bbwine.MANIFEST, "w") as fh:
              ("wine-writability-fix", "wine-fdwrite-rearm", "wine-token-localsystem",
               "wine-debug-privilege-bypass", "wine-ofd-locks", "wine-case-cache")) +
              "applied wine-mountpoint-dirs builtin\n")
+ok(bbmounts.available(), "a Wine whose manifest has the patch offers datasets as folders")
 for _v in _WS:
     os.environ[_v] = "1"
 _ws = bbwine.state()

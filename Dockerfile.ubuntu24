@@ -171,10 +171,11 @@ RUN printf 'version=%s\nrevision=%s\nbuild=%s\nvariant=%s\nbuilt=%s\n' \
 EXPOSE 5900
 
 COPY rootfs/ /
-RUN chmod +x /startapp.sh /usr/local/bin/bb-monitor /usr/local/bin/bb-health \
-        /usr/local/bin/bb-watchdog /usr/local/bin/bb-version \
-        /usr/local/bin/bb-doctor /usr/local/bin/bb-report \
-        /etc/services.d/bb-watchdog/run
+
+# The tools, the web interface (Monitor, Status, Tools, API and Settings tabs)
+# and its nginx wiring, and the checks that what ships parses: the same step
+# for every image (build/finish-image.sh).
+RUN --mount=type=bind,source=build,target=/build sh /build/finish-image.sh
 
 # Report the backup itself as the container's health, rather than just whether a
 # process is alive. bb-health only reports unhealthy on a corroborated stall (see

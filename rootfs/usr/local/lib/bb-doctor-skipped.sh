@@ -1,5 +1,4 @@
-# Skipped-file diagnosis for bb-doctor. Sourced by a beta-only patch, so the
-# stable bb-doctor is untouched. Fold this into it at the next stable release.
+# Skipped-file diagnosis for bb-doctor. Sourced before the summary.
 #
 # The client keeps a list of files it has given up on, with a reason each. They
 # are neither queued nor retried, so a file on that list is not backed up and the

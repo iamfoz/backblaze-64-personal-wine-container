@@ -1725,6 +1725,14 @@ function mpStateText(d){
 }
 function renderMounts(d){
   var box = document.getElementById('mp-drives');
+  document.getElementById('mp-save').hidden = !d.available;
+  if(!d.available){
+    box.innerHTML = "<p class='dim'>This image runs WineHQ's Wine, which always reports these folders as mount points. " +
+      "The <code>latest-patched</code> tag runs the same container on a Wine that can show them as folders.</p>";
+    document.getElementById('mp-state').textContent = '';
+    document.getElementById('mp-follow').hidden = true;
+    return;
+  }
   if(!d.drives.length){ box.innerHTML = '<p class="dim">No drives are mapped.</p>'; }
   else box.innerHTML = d.drives.map(function(x){
     var n = x.mounts.length;
@@ -2075,9 +2083,10 @@ function renderNotices(j){
     else if(h.kind === 'lostlock') extra = ' Every pass aborts at the transmit step once its file list is built, ' +
       'and the next one a few minutes later does the same, while large files keep uploading through the other ' +
       'path so the rest of the page looks normal. Seen with Backblaze client 10.0.3.1075 under an unpatched Wine, ' +
-      'where the service takes the pass for dead and deletes the lock under it. On the stable image, set ' +
-      '<code>BACKBLAZE_VERSION=10.0.1.1069</code> on the container and restart. The pinned version is installed ' +
-      'over the newer one. The Wine in the beta carries the fix, so on the beta this has another cause. Run ' +
+      'where the service takes the pass for dead and deletes the lock under it. On <code>latest</code>, which runs ' +
+      "WineHQ's Wine, set <code>BACKBLAZE_VERSION=10.0.1.1069</code> on the container and restart. The pinned " +
+      'version is installed over the newer one. On <code>latest-patched</code> and the beta, the service token ' +
+      'switch fixes it: check it is on under Wine patches in Settings. If it is on, this has another cause. Run ' +
       'bb-report from the ' + tools + ' and open an issue with the bundle. This clears on its own once a pass ' +
       'gets past the point where the lock was lost.';
     // A critical warning carries no Dismiss, because the server refuses one.

@@ -68,9 +68,9 @@ jobs:
         run: bash tests/test-watchdog.sh
       - name: Test the Wine patch switches and their interlocks
         run: bash tests/test-switches.sh
-      # The beta overlay: key scopes, the file-name gate on /api/v1, the settings
-      # whitelist, the log parsers, quiet hours and notifications.
-      - name: Test the beta monitor, API and notifications
+      # The web interface: key scopes, the file-name gate on /api/v1, the settings
+      # whitelist, the log parsers, quiet hours, notifications and the Wine switches.
+      - name: Test the web interface, API and notifications
         run: python3 tests/test-beta.py
 
   build:
@@ -278,12 +278,9 @@ jobs:
           # is still present in the image that ships, and that the patched script
           # parses.
           #
-          # Dockerfile.beta weaves four drop-ins and one line replacement into
-          # bb-doctor and fails its build if any of the five markers is missing.
-          # The five below are the same five, by name, so this stays an independent
-          # re-check of the image that ships. Checking only two of the five would
-          # miss a regression in the other three if that build-time guard were ever
-          # loosened.
+          # bb-doctor sources five drop-ins, and build/finish-image.sh fails the
+          # build if any is missing. The five below are the same five, by name, so
+          # this stays an independent re-check of the image that ships.
           docker run --rm --entrypoint sh bb-beta-test:local -c '
             set -eu
             command -v setpriv >/dev/null

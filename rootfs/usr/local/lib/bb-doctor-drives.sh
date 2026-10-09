@@ -1,5 +1,5 @@
-# Two checks on the mapped drives, for bb-doctor. Sourced by a beta-only patch
-# after the drive-mapping section. Fold into that script at the next stable release.
+# Checks on the mapped drives, for bb-doctor. Sourced after the drive-mapping
+# section.
 #
 # Both come from one support thread. A user moved to this container, inherited the
 # backup, and got "No files are selected" followed by permission skips and then a
@@ -50,6 +50,13 @@ if [ -r "$_mp_lib" ]; then
     if [ -f "$_mp_applied" ]; then _mp_now="$(head -1 "$_mp_applied")"; else _mp_now="$_mp_next"; fi
 fi
 _mp_covers() { [ -r "$_mp_lib" ] && bb_mountpoints_covers "$1" "$2"; }
+# Whether this image's Wine has the patch at all. WineHQ's (:latest) does not,
+# so there the setting is not offered.
+_mp_offer=0
+if [ -r "$_mp_lib" ] && [ -r "${BB_WS_LIB:-/usr/local/lib/bb-wine-switches.sh}" ] \
+   && [ "$(. "${BB_WS_LIB:-/usr/local/lib/bb-wine-switches.sh}"; bb_ws_state WINE_MOUNTPOINTS_AS_DIRS)" != absent ]; then
+    _mp_offer=1
+fi
 for _link in "${PREFIX}dosdevices"/[d-z]:; do
     [ -L "$_link" ] || continue
     _root="$(readlink -f "$_link" 2>/dev/null)"
@@ -121,7 +128,7 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
         fi
     done
     if [ "$_mn" -gt 0 ] && _mp_covers "$_mp_now" "$_letter"; then
-        # The beta's Wine shows them as plain folders on this drive, so the
+        # The fork's Wine shows them as plain folders on this drive, so the
         # client walks into them. What to watch for then is a second drive
         # mapped inside this one, which backs the same files up twice.
         OK "${_letter}: ${_mn} folder(s) under ${_root} are separate filesystems, included because mount points show as folders on this drive:${_mnts}"
@@ -145,8 +152,10 @@ for _link in "${PREFIX}dosdevices"/[d-z]:; do
         else
             NOTE "the client does not cross mount points. Map each one as a drive of its own instead of"
             NOTE "the parent (a ZFS pool's datasets, for example /mnt/cache/<share> rather than /mnt/cache)."
-            if [ -r "$_mp_lib" ]; then
+            if [ "$_mp_offer" = 1 ]; then
                 NOTE "Or turn on \"Datasets as folders\" for ${_letter}: in the Settings tab (MOUNTPOINTS_AS_DIRS)."
+            elif [ -r "$_mp_lib" ]; then
+                NOTE "Or use the latest-patched tag, whose Wine can show them as folders (Datasets as folders)."
             fi
         fi
     fi

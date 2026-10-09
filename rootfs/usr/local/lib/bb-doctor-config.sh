@@ -1,6 +1,5 @@
 # Client-settings checks for bb-doctor, read straight from the client via bzcli.
-# Sourced by a beta-only patch after the drive-mapping section. Fold into that
-# script at the next stable release.
+# Sourced by bb-doctor after the drive checks.
 #
 # Everything above this file in bb-doctor infers the client's state from files on
 # disk: registries, logs, a lock file's mtime. That is guesswork whenever the

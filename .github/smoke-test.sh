@@ -69,6 +69,22 @@ done
 docker exec "$NAME" test -x /etc/services.d/bb-watchdog/run \
     || fail "watchdog service run script missing or not executable"
 
+echo "== checking the web interface =="
+# Every image serves the Monitor, Status, Tools, API and Settings tabs through the
+# base image's nginx. The dashboard service can take a moment after the prefix,
+# so this waits for it, then fetches the Settings page and the Wine patches
+# endpoint through nginx the way a browser would.
+docker exec "$NAME" test -x /etc/services.d/bb-monitor-web/run \
+    || fail "web interface service run script missing or not executable"
+deadline=$(( SECONDS + 120 ))
+until docker exec "$NAME" sh -c 'curl -fsS http://127.0.0.1:5800/monitor/settings 2>/dev/null' | grep -q "Wine patches"; do
+    [ "$SECONDS" -lt "$deadline" ] || fail "the Settings tab did not come up through nginx at /monitor/settings"
+    sleep 5
+done
+docker exec "$NAME" sh -c 'curl -fsS http://127.0.0.1:5800/monitor/manage/wine' | grep -q '"wine"' \
+    || fail "the Wine patches endpoint did not answer"
+echo "   Settings tab served"
+
 echo "== checking the diagnostic tools run =="
 docker exec "$NAME" bb-report --list | grep -q "would collect" \
     || fail "bb-report --list did not describe what it collects"

@@ -1,7 +1,8 @@
 # Which drives show their mount points as plain folders. Sourced by startapp.sh,
-# which exports the result as WINE_MOUNTPOINTS_AS_DIRS for the beta's patched
+# which exports the result as WINE_MOUNTPOINTS_AS_DIRS for the fork's patched
 # Wine, and by bb-doctor, which reports the datasets under those drives as
-# included. Beta only: the stable images have no such patch and no such file.
+# included. WineHQ's Wine (:latest) has no such patch, and startapp.sh leaves
+# the value out there.
 #
 # The Settings tab's store wins when it exists, the container's
 # MOUNTPOINTS_AS_DIRS variable decides when it does not. bbmounts.py is the

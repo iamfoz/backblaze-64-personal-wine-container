@@ -191,7 +191,7 @@ grep -q '8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a' "$PFX/drive_c/windows/syswow64/ru
 has "$(run)" "\[ ok \] rundll32 supportedOS manifest present" "manifest: and it is present afterwards"
 
 # ---- the passes drop-in: an inherit whose progress file never reached done -------
-PDROP="$HERE/../rootfs-beta/usr/local/lib/bb-doctor-passes.sh"
+PDROP="$HERE/../rootfs/usr/local/lib/bb-doctor-passes.sh"
 mkdir -p "$BZ/bzinherit"
 printf '<status inherit_stage="tbs_after_files_swap" prog_out_of_thousand="600" />\n' > "$BZ/bzinherit/bz_ibs_progress.xml"
 printf '2026-09-27 21:23:18 1012 - STARTBACKUP\n2026-09-27 21:32:55 1012 - bz_done file recorded for upload: x\n' > "$LOGCUR"
@@ -208,7 +208,7 @@ rm -rf "$BZ/bzinherit"
 # a mount point as hex (443a5c is D:\). Captured from a live container on
 # 2026-09-21. The earlier check looked for a GUID shape that never occurs and
 # raised a false warning on one user's drive while missing a real one.
-DROP="$HERE/../rootfs-beta/usr/local/lib/bb-doctor-drives.sh"
+DROP="$HERE/../rootfs/usr/local/lib/bb-doctor-drives.sh"
 VOLS="$BZ/bzvolumes.xml"
 KNOWN_D=v00121e7007550b3825692e70910; KNOWN_E=v000d1c7004550b3825692e70910
 printf '<bzvolumes>\n<bzvolume bzVolumeGuid="%s" mountPointPathHex="443a5c" typeOfVolumeTwoCharCode="gm" />\n<bzvolume bzVolumeGuid="%s" mountPointPathHex="453a5c" typeOfVolumeTwoCharCode="gm" />\n</bzvolumes>\n' "$KNOWN_D" "$KNOWN_E" > "$VOLS"
@@ -317,7 +317,7 @@ has "$(run)" "the scanner opened every directory it tried" "scan: a clean log is
 # ---- the config drop-in: the config directory reached through a mapped pool ----
 # Same directory, two mounts: a bind of a path inside the pool as /config and the
 # pool itself as Y:. Resolved paths differ, but device and inode do not.
-CDROP="$HERE/../rootfs-beta/usr/local/lib/bb-doctor-config.sh"
+CDROP="$HERE/../rootfs/usr/local/lib/bb-doctor-config.sh"
 mkdir -p "$FX/pool/appdata/Backblaze64/wine" "$FX/pool/other"
 CF="$(env PATH="$FX/bin:$PATH" sh -c 'eval "$(sed -n "/_cfg_find_config_in()/,/^    _cfg_config_dir=/p" "$1" | sed "\$d")"; _cfg_find_config_in "$2" "$(stat -c %d:%i "$3")"' _ "$CDROP" "$FX/pool" "$FX/pool/appdata/Backblaze64")"
 [ "$CF" = "$FX/pool/appdata/Backblaze64" ] && echo "PASS config: the config directory is found under the pool by inode" || { echo "FAIL config: got '$CF'"; FAILED=$((FAILED+1)); }
@@ -341,7 +341,7 @@ grep -q "D: .*separate filesystem" <<<"$DRM" && { echo "FAIL mounts: a drive wit
 # ---- datasets as folders (MOUNTPOINTS_AS_DIRS, beta) ---------------------------
 # The helper startapp.sh and the doctor share: the Settings store wins, the
 # variable decides without one, and the value is what the patched Wine reads.
-MPLIB="$HERE/../rootfs-beta/usr/local/lib/bb-mountpoints.sh"
+MPLIB="$HERE/../rootfs/usr/local/lib/bb-mountpoints.sh"
 MPSTORE="$FX/mountpoints.json"; MPAPPLIED="$FX/mountpoints-applied"
 mpval(){ env MOUNTPOINTS_AS_DIRS="$1" BB_MOUNTPOINTS_STORE="$MPSTORE" sh -c '. "$1"; bb_mountpoints_value' _ "$MPLIB"; }
 mpis(){ [ "$2" = "$3" ] && echo "PASS mountpoints: $1" || { echo "FAIL mountpoints: $1 (got '$2', want '$3')"; FAILED=$((FAILED+1)); }; }
@@ -368,10 +368,17 @@ covers "empty covers nothing" "" D no
 drm_mp(){
     rm -f "$MPAPPLIED"; [ "${2+set}" = set ] && printf '%s\n' "$2" > "$MPAPPLIED"
     (cd "$FX" && env MOUNTPOINTS_AS_DIRS="$1" BB_MOUNTPOINTS_LIB="$MPLIB" BB_MOUNTPOINTS_STORE="$MPSTORE" BB_MOUNTPOINTS_APPLIED="$MPAPPLIED" \
+        BB_WS_LIB="$HERE/../rootfs/usr/local/lib/bb-wine-switches.sh" BB_WS_REGISTRY="$HERE/../rootfs/usr/local/share/bb64/wine-switches.tsv" BB_WS_MANIFEST="$MPMAN" \
         sh -c 'PREFIX="$1"; BZ="$2"; OK(){ echo "[ok] $*"; }; WARN(){ echo "[warn] $*"; }; BAD(){ echo "[FAIL] $*"; }; NOTE(){ echo "  $*"; }; . "$3"' _ "$PFX" "$BZ" "$FX/drives-fakedev.sh" 2>&1)
 }
+MPMAN="$FX/bb64-patches"; echo "applied wine-mountpoint-dirs builtin" > "$MPMAN"
 DRM="$(drm_mp "")"
-has "$DRM" "Or turn on \"Datasets as folders\" for M:" "datasets: with the helper present and the setting off, the doctor offers it"
+has "$DRM" "Or turn on \"Datasets as folders\" for M:" "datasets: on the patched Wine with the setting off, the doctor offers it"
+mv "$MPMAN" "$MPMAN.off"
+DRM="$(drm_mp "")"
+has "$DRM" "Or use the latest-patched tag" "datasets: on WineHQ's Wine it points at latest-patched instead"
+grep -q "Or turn on" <<<"$DRM" && { echo "FAIL datasets: offered the setting on WineHQ's Wine"; FAILED=$((FAILED+1)); } || echo "PASS datasets: and does not offer the setting there"
+mv "$MPMAN.off" "$MPMAN"
 DRM="$(drm_mp m)"
 has "$DRM" "\[ok\] M: 2 folder(s) under .* are separate filesystems, included because mount points show as folders" "datasets: on for M:, the pool's datasets are reported as included"
 grep -q "\[FAIL\] M:" <<<"$DRM" && { echo "FAIL datasets: M: still fails with the setting on"; FAILED=$((FAILED+1)); } || echo "PASS datasets: and M: no longer fails"
