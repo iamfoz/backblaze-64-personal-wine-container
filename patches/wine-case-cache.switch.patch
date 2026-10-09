@@ -1,0 +1,66 @@
+ntdll: Put the per-device case-sensitivity cache behind WINE_CASE_CACHE.
+
+Fork-only companion to wine-case-cache.patch. With WINE_CASE_CACHE=1 the
+decision is cached per device as that patch describes. Without it each
+lookup opens the directory, tries the case-folding ioctl and, on FUSE, the
+fstatfs() and .ciopfs probe, as in upstream Wine.
+
+--- a/dlls/ntdll/unix/file.c
++++ b/dlls/ntdll/unix/file.c
+@@ -1276,6 +1276,20 @@ static int is_ciopfs_device( dev_t dev )
+     return ret;
+ }
+ 
++/* WINE_CASE_CACHE=1 turns the per-device cache on. Without it every lookup
++ * checks the directory itself, as in upstream Wine. */
++static BOOL case_cache_enabled(void)
++{
++    static int enabled = -1;
++
++    if (enabled == -1)
++    {
++        const char *str = getenv( "WINE_CASE_CACHE" );
++        enabled = str && str[0] == '1' && !str[1];
++    }
++    return enabled;
++}
++
+ /* how case sensitivity is decided on the device holding root_fd/dir */
+ static int linux_case_mode( int root_fd, const char *dir, dev_t dev )
+ {
+@@ -1381,6 +1395,7 @@ static BOOLEAN get_dir_case_sensitivity_stat( int root_fd, const char *dir )
+ 
+ #elif defined(__linux__)
+     BOOLEAN sens = TRUE;
++    struct statfs stfs;
+     struct stat st;
+     int fd, flags, mode;
+ 
+@@ -1390,15 +1405,23 @@ static BOOLEAN get_dir_case_sensitivity_stat( int root_fd, const char *dir )
+      * FUSE file system each fstatfs() is a round trip to the daemon, and
+      * Unraid's shfs takes about 21 ms over a share spread across disks; done
+      * on every failed lookup, that was half the wall time of a backup scan. */
+-    if (fstatat( root_fd, dir, &st, 0 ) == -1) return TRUE;
+-    mode = linux_case_mode( root_fd, dir, st.st_dev );
+-    if (mode == CASE_MODE_SENSITIVE) return TRUE;
+-    if (mode == CASE_MODE_INSENSITIVE) return FALSE;
++    if (case_cache_enabled())
++    {
++        if (fstatat( root_fd, dir, &st, 0 ) == -1) return TRUE;
++        mode = linux_case_mode( root_fd, dir, st.st_dev );
++        if (mode == CASE_MODE_SENSITIVE) return TRUE;
++        if (mode == CASE_MODE_INSENSITIVE) return FALSE;
++    }
+ 
+     if ((fd = openat( root_fd, dir, O_RDONLY | O_NONBLOCK )) == -1)
+         return TRUE;
+     if (ioctl( fd, EXT2_IOC_GETFLAGS, &flags ) != -1 && (flags & EXT4_CASEFOLD_FL))
+         sens = FALSE;
++    else if (!case_cache_enabled() &&
++             fstatfs( fd, &stfs ) == 0 &&                          /* CIOPFS is case insensitive.  Instead of */
++             stfs.f_type == 0x65735546 /* FUSE_SUPER_MAGIC */ &&   /* parsing mtab to discover if the FUSE FS */
++             fstatat( fd, ".ciopfs", &st, AT_NO_AUTOMOUNT ) == 0)  /* is CIOPFS, look for .ciopfs in the dir. */
++        sens = FALSE;
+     close( fd );
+     return sens;
+ #else

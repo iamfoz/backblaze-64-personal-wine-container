@@ -17,7 +17,7 @@ stood up on a development machine.
 
 Run:  python3 tests/test-beta.py
 """
-import calendar, contextlib, importlib.util, io, json, os, subprocess, sys, tempfile, threading, time
+import calendar, contextlib, importlib.util, io, json, os, shutil, subprocess, sys, tempfile, threading, time
 import urllib.error
 from importlib.machinery import SourceFileLoader
 
@@ -1152,8 +1152,11 @@ def _point(dirpath):
     bbdismiss.STORE = dirpath + "/dismissed.json"; bbdismiss._cache = None
 _src = os.path.join(FIX, "xfer-src"); _dst = os.path.join(FIX, "xfer-dst")
 os.makedirs(_src); os.makedirs(_dst)
-import bbrecover, bbdoctor, bbexclude, bbmounts
+import bbrecover, bbdoctor, bbexclude, bbmounts, bbwine
+bbwine.REGISTRY = os.path.join(HERE, "..", "rootfs", "usr", "local", "share", "bb64", "wine-switches.tsv")
 def _point_recover(dirpath):
+    bbwine.STORE = dirpath + "/wine-switches.json"; bbwine.MANIFEST = dirpath + "/bb64-patches"
+    bbwine.APPLIED = dirpath + "/ws-applied"; bbwine.CLIENT_VERSION = dirpath + "/bzserv_version.txt"
     bbrecover.STORE = dirpath + "/watchdog.json"; bbrecover.STATE = dirpath + "/wd-state"
     bbmounts.STORE = dirpath + "/mountpoints.json"; bbmounts.APPLIED = dirpath + "/mp-applied"
     bbmounts.DOSDEVICES = dirpath + "/dosdevices"
@@ -1263,6 +1266,65 @@ bbmounts.clear()
 ok(bbmounts.load() is None and bbmounts.effective() == ("mn", "variable"), "clearing hands the decision back to the variable")
 os.environ.pop("MOUNTPOINTS_AS_DIRS", None)
 bbmounts.save("m")
+
+# ---- Wine patch switches: the Settings store, the interlocks, what the page is shown ------
+_WS = ("WINE_SOCK_SEND_READY", "WINE_SOCK_FDWRITE_REARM", "WINE_SERVICE_TOKEN", "WINE_OFD_LOCKS", "WINE_CASE_CACHE")
+for _v in _WS + ("BACKBLAZE_VERSION",):
+    os.environ.pop(_v, None)
+ok(bbwine.state()["wine"] == "winehq", "with no manifest the page says the image runs WineHQ's Wine")
+try:
+    bbwine.save({"WINE_CASE_CACHE": True}); ok(False, "a switch cannot be saved for WineHQ's Wine")
+except ValueError as exc:
+    ok("no Case-sensitivity cache switch" in str(exc), "a switch cannot be saved for WineHQ's Wine: %s" % exc)
+with open(bbwine.MANIFEST, "w") as fh:
+    fh.write("wine_ref wine-11.19\n" + "".join("applied %s switch\n" % p for p in
+             ("wine-writability-fix", "wine-fdwrite-rearm", "wine-token-localsystem",
+              "wine-debug-privilege-bypass", "wine-ofd-locks", "wine-case-cache")) +
+             "applied wine-mountpoint-dirs builtin\n")
+for _v in _WS:
+    os.environ[_v] = "1"
+_ws = bbwine.state()
+ok(_ws["wine"] == "patched" and _ws["wine_ref"] == "wine-11.19", "the manifest names the Wine")
+ok([x["class"] for x in _ws["switches"]] == ["fix", "performance", "fix", "fix", "performance", "experimental"],
+   "every switch has its class for the lozenge: %r" % [x["class"] for x in _ws["switches"]])
+ok(all(x["value"] and x["source"] == "variable" for x in _ws["switches"] if not x["drives"]),
+   "with the beta's variables every switch is on, following the variables")
+ok([x for x in _ws["switches"] if x["drives"]][0].get("value") is None, "datasets as folders is listed but set per drive")
+try:
+    bbwine.save({"WINE_SOCK_SEND_READY": False, "WINE_SOCK_FDWRITE_REARM": True}); ok(False, "the re-arm without the fix is refused")
+except ValueError as exc:
+    ok("needs Upload writability fix" in str(exc), "the re-arm without the writability fix is refused: %s" % exc)
+os.environ["BACKBLAZE_VERSION"] = "10.0.3.1075"
+try:
+    bbwine.save({"WINE_SERVICE_TOKEN": False}); ok(False, "the token off under a pin that needs it is refused")
+except ValueError as exc:
+    ok("needs the service token" in str(exc), "the token off under a pin that needs it is refused: %s" % exc)
+os.environ["BACKBLAZE_VERSION"] = ""
+for _bad in ({"WINE_NOPE": True}, {"WINE_MOUNTPOINTS_AS_DIRS": True}, {"WINE_CASE_CACHE": "yes"}, ["x"]):
+    try:
+        bbwine.save(_bad); ok(False, "refused: %r" % (_bad,))
+    except ValueError:
+        ok(True, "refused: %r" % (_bad,))
+ok(bbwine.save({"WINE_SERVICE_TOKEN": False, "WINE_CASE_CACHE": False}) == {"WINE_CASE_CACHE": "0", "WINE_SERVICE_TOKEN": "0"},
+   "the token off with no pin is allowed")
+with open(bbwine.CLIENT_VERSION, "w") as fh:
+    fh.write("10.0.3.1075\n")
+_ws = bbwine.state()
+ok(_ws["stored"] and _ws["client"]["token_off_pins"] and _ws["client"]["installed"] == "10.0.3.1075",
+   "and the page is told the client will be pinned over the installed one")
+_tok = [x for x in _ws["switches"] if x["var"] == "WINE_SERVICE_TOKEN"][0]
+ok(_tok["value"] is False and _tok["source"] == "setting", "a stored switch wins over the variable")
+_ws_sh = subprocess.run(["sh", "-c", '. "$1"; bb_ws_resolve', "_", os.path.join(HERE, "..", "rootfs", "usr", "local", "lib", "bb-wine-switches.sh")],
+                        env=dict(os.environ, BB_WS_REGISTRY=bbwine.REGISTRY, BB_WS_MANIFEST=bbwine.MANIFEST, BB_WS_STORE=bbwine.STORE),
+                        capture_output=True, text=True).stdout.split("\n")
+ok("WINE_SERVICE_TOKEN 0 " in _ws_sh and "WINE_CASE_CACHE 0 " in _ws_sh and "WINE_OFD_LOCKS 1 " in _ws_sh,
+   "the shell helper startapp.sh uses reads the same store the same way: %r" % _ws_sh)
+with open(bbwine.APPLIED, "w") as fh:
+    fh.write("".join("%s=1\n" % v for v in _WS))
+ok(bbwine.state()["restart_needed"], "a choice that differs from what Wine was started with asks for a restart")
+bbwine.clear()
+ok(bbwine.load() == {} and not bbwine.state()["restart_needed"], "clearing hands the decision back to the variables")
+bbwine.save({"WINE_CASE_CACHE": False})
 ok(bbdoctor.load() == {"read_depth": 3, "read_until_found": False}, "bb-doctor settings default to three levels, stop there")
 bbdoctor.save({"read_depth": 7, "read_until_found": True})
 ok(bbdoctor.load() == {"read_depth": 7, "read_until_found": True}, "and store what the page sets")
@@ -1302,6 +1364,7 @@ ok(_sealed["sections"]["client"]["settings"] == {"num_backup_threads": "6", "net
 _point(_dst); _point_recover(_dst)
 with open(bbexclude.FILE, "w") as fh:
     fh.write(_CLIENT_XML)
+shutil.copy(_src + "/bb64-patches", bbwine.MANIFEST)    # the destination runs the same patched Wine
 _written = []
 _report = bbsettings.import_(json.loads(json.dumps(_sealed)), "hunter2",
                              write_client=lambda k, v: (_written.append((k, v)) or (True, "set")))
@@ -1325,6 +1388,8 @@ ok(_sealed["sections"]["recovery"] == {"watchdog": False} and bbrecover.load() =
 ok(bbdoctor.load() == {"read_depth": 7, "read_until_found": True}, "bb-doctor's settings travel and are restored")
 ok(_sealed["sections"]["mountpoints"] == {"drives": "m"} and bbmounts.load() == {"drives": "m"},
    "the datasets-as-folders choice travels and is restored")
+ok(_sealed["sections"]["wine"] == {"switches": {"WINE_CASE_CACHE": False}} and bbwine.load() == {"WINE_CASE_CACHE": "0"},
+   "the Wine switches travel and are restored")
 ok(_sealed["sections"]["exclusions"] == {"rules": [{"skipFirstCharThenStartsWith": ":\\Media\\", "contains_1": "*", "contains_2": "*",
                                                       "doesNotContain": "*", "endsWith": "*", "hasFileExtension": "iso"}]}
    and [r["hasFileExtension"] for r in bbexclude.load()["rules"]] == ["iso"]

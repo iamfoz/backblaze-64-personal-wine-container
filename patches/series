@@ -1,0 +1,15 @@
+# The fork's Wine patches, in the order build-wine.sh applies them. One name per
+# line, without .patch. A patch with a companion <name>.switch.patch beside it
+# is applied first and its switch after all of them, so every switch is written
+# against the whole stack. A patch the Wine source already contains is skipped
+# with its switch, so a patch accepted upstream drops out when WINE_REF moves
+# past it.
+#
+# Order matters: wine-fdwrite-rearm extends the block wine-writability-fix adds.
+wine-writability-fix
+wine-fdwrite-rearm
+wine-token-localsystem
+wine-debug-privilege-bypass
+wine-ofd-locks
+wine-case-cache
+wine-mountpoint-dirs

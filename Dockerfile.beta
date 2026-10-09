@@ -140,6 +140,15 @@ ENV FORCE_LATEST_UPDATE="true"
 # It is installed over a newer or older client in place, so the machine
 # identity in bzinstall.xml survives and no inherit is needed.
 ENV BACKBLAZE_VERSION=""
+# The Wine patch switches (see rootfs/usr/local/share/bb64/wine-switches.tsv).
+# Unset, the patched Wine behaves as upstream Wine, so these are what keep
+# the beta's fixes and performance patches on. The Settings tab overrides them.
+# The experimental one, datasets as folders, is off and set per drive.
+ENV WINE_SOCK_SEND_READY="1" \
+    WINE_SOCK_FDWRITE_REARM="1" \
+    WINE_SERVICE_TOKEN="1" \
+    WINE_OFD_LOCKS="1" \
+    WINE_CASE_CACHE="1"
 ENV DISABLE_AUTOUPDATE="false"
 ENV DISABLE_VIRTUAL_DESKTOP="false"
 ENV DISPLAY_WIDTH="900"

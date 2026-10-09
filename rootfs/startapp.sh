@@ -73,6 +73,35 @@ if [ -r /usr/local/lib/bb-mountpoints.sh ]; then
     printf '%s\n' "$_mp_value" > /tmp/.bb-mountpoints-applied 2>/dev/null || true
 fi
 
+# The fork's Wine (the beta and :latest-patched) has a runtime switch for each
+# of its patches; WineHQ's Wine has none and this does nothing. Wine reads each
+# switch when a process starts and wineserver when it starts, so they are
+# exported here, before the first Wine command below. A switch that needs
+# another one that is off is turned off with it. With the service token off,
+# a client from 10.0.3.1075 on completes no backup pass, so an unpinned client
+# is pinned to the last release that works without it.
+if [ -r /usr/local/lib/bb-wine-switches.sh ]; then
+    . /usr/local/lib/bb-wine-switches.sh
+    : > "$BB_WS_APPLIED" 2>/dev/null || true
+    bb_ws_resolve | while read -r _ws_var _ws_val _ws_note; do
+        printf '%s=%s\n' "$_ws_var" "$_ws_val" >> "$BB_WS_APPLIED" 2>/dev/null || true
+        [ -n "$_ws_note" ] && log_message "WINE: ${_ws_var} ${_ws_note}"
+    done
+    while IFS='=' read -r _ws_var _ws_val; do
+        [ -n "$_ws_var" ] || continue
+        export "${_ws_var}=${_ws_val}"
+    done < "$BB_WS_APPLIED"
+    log_message "WINE: switches $(tr '\n' ' ' < "$BB_WS_APPLIED" 2>/dev/null)"
+    if bb_ws_token_off; then
+        if [ -z "${BACKBLAZE_VERSION:-}" ]; then
+            export BACKBLAZE_VERSION="$BB_WS_SAFE_CLIENT"
+            log_message "WINE: service token is off, so the client is pinned to ${BB_WS_SAFE_CLIENT}"
+        elif bb_ws_client_needs_token "$BACKBLAZE_VERSION"; then
+            log_message "WINE: service token is off but BACKBLAZE_VERSION=${BACKBLAZE_VERSION} needs it; backup passes will not complete"
+        fi
+    fi
+fi
+
 # Force the reported Windows version to Windows 10 on EVERY start. We set both
 # Wine's version key (the one winecfg writes) and the raw NT
 # CurrentVersion keys, so the check passes no matter how Backblaze probes the OS.

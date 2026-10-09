@@ -1,0 +1,31 @@
+server: Put OFD locks behind WINE_OFD_LOCKS.
+
+Fork-only companion to wine-ofd-locks.patch. The first lock decides, as
+before, but without WINE_OFD_LOCKS=1 it settles on classic POSIX locks
+without probing, so closed fds are kept and released as in upstream Wine.
+
+--- a/server/fd.c
++++ b/server/fd.c
+@@ -271,6 +271,14 @@ static file_pos_t max_unix_offset = OFF_T_MAX;
+  * handle, so a closed fd can be closed at once. */
+ static int ofd_locks = -1;
+ 
++/* WINE_OFD_LOCKS=1 lets the server use OFD locks where the kernel has them.
++ * Without it locks stay classic POSIX locks, as in upstream Wine. */
++static int ofd_locks_wanted( void )
++{
++    const char *str = getenv( "WINE_OFD_LOCKS" );
++    return str && str[0] == '1' && !str[1];
++}
++
+ #define DUMP_LONG_LONG(val) do { \
+     if (sizeof(val) > sizeof(unsigned long) && (val) > ~0UL) \
+         fprintf( stderr, "%lx%08lx", (unsigned long)((unsigned long long)(val) >> 32), (unsigned long)(val) ); \
+@@ -1232,6 +1240,7 @@ static int set_unix_lock( struct fd *fd, file_pos_t start, file_pos_t end, int t
+ 
+     if (!fd->fs_locks) return 1;  /* no fs locks possible for this fd */
+ #ifdef F_OFD_SETLK
++    if (ofd_locks == -1 && !ofd_locks_wanted()) ofd_locks = 0;
+     if (ofd_locks == -1)
+     {
+         /* only EINVAL says the kernel has no OFD locks; any other error is
