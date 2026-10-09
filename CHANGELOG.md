@@ -17,7 +17,8 @@ the additions below. The `:beta` tag is mutable, so each published build has a s
   mount points, so `/mnt/cache` as one drive backed up nothing and users ran out of letters
   mapping one dataset each. A new Wine patch, `wine-mountpoint-dirs.patch`, reports them as plain
   folders under the drives named in `WINE_MOUNTPOINTS_AS_DIRS`, which the container sets at start.
-  Without it Wine behaves as before. Symlinked folders and real reparse points are untouched.
+  Without it Wine behaves as before, and with it symlinked folders and reparse points an
+  application created are still reported as they were.
   bb-doctor reports the datasets under an included drive as included, warns when another mapped
   drive sits inside one (its files would be backed up twice), and says when a change waits for a
   restart. A dataset already backed up under its own letter is uploaded again under the new path.

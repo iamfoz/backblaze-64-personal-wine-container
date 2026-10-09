@@ -1043,10 +1043,10 @@ SETTINGS_HTML = """<!doctype html>
   <p class="dim">Wine shows a folder that is a separate filesystem, such as each ZFS dataset on an Unraid
   pool or a ZFS-formatted array disk, as a mount point, and the client skips mount points. Turned on for
   a drive, those folders show as ordinary folders and the client backs up what is inside them, so one
-  drive letter can cover a whole pool. Two things to know first. A dataset you already back up under a
-  letter of its own is uploaded again under the new path, so unmap that letter once the new one has
-  caught up, or its files are kept twice. And a drive mapped inside another included drive is backed
-  up twice. Takes effect at the next container restart. This overrides the container's
+  drive letter can cover a whole pool. A dataset you already back up under a letter of its own is
+  uploaded again under the new path, so unmap that letter once the new one has caught up, or its files
+  are kept twice. A drive mapped inside another included drive is also backed up twice. A change takes
+  effect at the next container restart. This overrides the container's
   <code>MOUNTPOINTS_AS_DIRS</code> variable; "Follow the variable" hands the decision back to it.</p>
   <div id="mp-drives"></div>
   <div class="row"><span class="dim" id="mp-state"></span></div>
