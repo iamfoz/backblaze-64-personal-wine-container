@@ -1,13 +1,19 @@
 # WINE_FLAVOUR picks the Wine. "winehq" (the default, published as :latest)
 # installs winehq-stable from WineHQ's repository, unchanged. "patched"
 # (published as :latest-patched) builds the fork's Wine from source with
-# patches/build-wine.sh, the same recipe the beta uses, at a WINE_REF the beta
-# has run long enough to trust. Every fork patch has a runtime switch; this
-# flavour turns the fixes on and leaves the performance and experimental ones
-# off. Only the stages the chosen flavour needs are built (BuildKit), so the
-# default build never compiles Wine.
+# patches/build-wine.sh, the same recipe the beta uses. Every fork patch has a
+# runtime switch; this flavour turns the fixes on and leaves the performance
+# and experimental ones off. Only the stages the chosen flavour needs are built
+# (BuildKit), so the default build never compiles Wine.
+#
+# WINE_REF has no default here on purpose. The Wine and the patch set for
+# :latest-patched are pinned in patches/promoted and move only when the beta is
+# promoted at a stable release; CI reads that file and passes WINE_REF. A local
+# patched build passes it too:
+#   --build-arg WINE_FLAVOUR=patched \
+#   --build-arg WINE_REF="$(sed -n 's/^WINE_REF=//p' patches/promoted)"
 ARG WINE_FLAVOUR=winehq
-ARG WINE_REF=wine-11.19
+ARG WINE_REF
 
 FROM ubuntu:24.04 AS wine-builder
 ARG WINE_REF

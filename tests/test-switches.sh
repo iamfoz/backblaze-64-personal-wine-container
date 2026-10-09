@@ -45,6 +45,19 @@ for p in $(grep -v '^#' "$ROOT/patches/series" | grep -v '^$'); do
 done
 echo "PASS registry and series agree"
 
+# patches/promoted pins :latest-patched. CI reads it as data and checks each
+# value, so a malformed one fails the release; check it here first.
+PIN="$ROOT/patches/promoted"
+pref="$(sed -n 's/^WINE_REF=//p' "$PIN" | head -1)"; pfrom="$(sed -n 's/^PATCHES_FROM=//p' "$PIN" | head -1)"
+printf '%s' "$pref" | grep -Eq '^[A-Za-z0-9._/-]+$' && echo "PASS promoted: WINE_REF is set ($pref)" || { echo "FAIL promoted: bad WINE_REF '$pref'"; FAILED=$((FAILED+1)); }
+printf '%s' "$pfrom" | grep -Eq '^[A-Za-z0-9._/-]+$' && echo "PASS promoted: PATCHES_FROM is set ($pfrom)" || { echo "FAIL promoted: bad PATCHES_FROM '$pfrom'"; FAILED=$((FAILED+1)); }
+is "promoted: one WINE_REF and one PATCHES_FROM" "$(grep -c '^WINE_REF=' "$PIN") $(grep -c '^PATCHES_FROM=' "$PIN")" "1 1"
+if [ "$pfrom" != this ] && git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    git -C "$ROOT" rev-parse --verify --quiet "${pfrom}^{commit}" >/dev/null \
+        && echo "PASS promoted: PATCHES_FROM names a commit here" \
+        || { echo "FAIL promoted: PATCHES_FROM=$pfrom is not a tag or commit in this repository"; FAILED=$((FAILED+1)); }
+fi
+
 rm -f "$MAN" "$STORE"
 is "WineHQ's Wine (no manifest): nothing resolved" "$(resolve WINE_SOCK_SEND_READY=1)" ""
 

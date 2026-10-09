@@ -24,7 +24,10 @@ the additions below. The `:beta` tag is mutable, so each published build has a s
   the Wine source already contains. The choice travels in the settings export.
 - `latest-patched`: the stable image on this project's Wine instead of WineHQ's, built
   from the same script at a Wine version the beta has run, with the fixes on and the
-  performance and experimental patches off. `latest` is unchanged.
+  performance and experimental patches off. It is published on release tags only
+  (`latest-patched`, `<version>-patched`) and does not follow the beta: its Wine and
+  patch set are pinned in `patches/promoted` and move only when the beta is promoted at a
+  release. `latest` is unchanged.
 - bb-doctor warns when the prefix was last updated by a newer Wine than the one
   running, which happens on a move from the beta or `latest-patched` back to `latest`,
   and fails when the service token is off but the installed client needs it.

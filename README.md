@@ -119,7 +119,6 @@ last-result state briefly reads as unknown.
 | latest-patched | The stable image on this project's own Wine build instead of WineHQ's, with its fixes on. See [Patched Wine](#patched-wine) |
 | beta | Ubuntu 26.04 with this project's Wine build, every fix and performance patch on.  Not the supported path. See below |
 | vX.Y.Z | A specific release (Ubuntu 24.04), `vX.Y.Z-ubuntu26` for the 26.04 variant, or `vX.Y.Z-patched` on the patched Wine |
-| main-patched | Build of the `main` branch on the patched Wine (may be unstable) |
 
 **LTS policy.** The image tracks the **two most recent Ubuntu LTS releases** at a
 time. The **older** of the two is the default (`latest`), chosen for stability,
@@ -625,7 +624,10 @@ ghcr.io/iamfoz/backblaze-personal-wine:latest-patched
 
 `latest` runs WineHQ's own stable Wine, unchanged. `latest-patched` is the same
 container on this project's Wine build: Wine built from source with the fixes in
-[`patches/`](patches/), at a Wine version the beta has already run. Choose it by
+[`patches/`](patches/), at a Wine version the beta has already run. It does not follow
+the beta. Its Wine and patch set stay where they are from one stable release to the
+next, and move only when the beta has been tested and is promoted at a release
+([`patches/promoted`](patches/promoted) records which). Choose it by
 setting your container's Repository field to the tag above, and go back by setting it
 to `latest`. Copy your `/config` folder before you switch. Moving to a newer Wine
 upgrades the Wine prefix, and Wine does not promise that an older Wine can run it

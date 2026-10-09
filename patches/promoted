@@ -1,0 +1,17 @@
+# What :latest-patched is built from. The beta moves on its own (Dockerfile.beta's
+# WINE_REF and whatever is in patches/ on main); :latest-patched does not. It stays
+# on the Wine and the patch set recorded here until the beta has been tested and
+# is promoted at a stable release. CI's patched job reads this file; nothing else
+# does.
+#
+# WINE_REF      the Wine tag to build, the one the beta ran when it was tested.
+# PATCHES_FROM  where patches/ comes from: "this" for the commit being built, or a
+#               git tag or commit, whose patches/ is used instead (series, the
+#               patches, their switches and build-wine.sh, all from that point).
+#
+# Promoting the beta at a release:
+#   1. Set WINE_REF to the beta's and PATCHES_FROM to "this", and tag the release.
+#   2. Then set PATCHES_FROM to that release tag, so a later release that changes
+#      only the container keeps this Wine even after patches/ moves on for the beta.
+WINE_REF=wine-11.19
+PATCHES_FROM=this
