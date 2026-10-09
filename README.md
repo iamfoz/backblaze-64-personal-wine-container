@@ -35,6 +35,7 @@ It runs the Backblaze client and starts a virtual X server and a VNC server with
       * [Fixing Problems](#fixing-problems)
       * [Reporting a Problem](#reporting-a-problem)
       * [Beta Image](#beta-image)
+      * [Patched Wine](#patched-wine)
       * [Optional: Wine Upload-Speed Patch](#optional-wine-upload-speed-patch)
       * [Security](#security)
          * [SSVNC](#ssvnc)
@@ -104,8 +105,10 @@ Here are the main components of this image:
 | ubuntu24 | Ubuntu 24.04 LTS build (same image as `latest`) |
 | ubuntu26 | Ubuntu 26.04 LTS build, early-access, for hardening before it becomes the default |
 | main | Automatic build of the `main` branch (may be unstable) |
-| beta | Ubuntu 26.04 with the Wine upload-speed fix built in.  Not the supported path. See below |
-| vX.Y.Z | A specific release (Ubuntu 24.04), or `vX.Y.Z-ubuntu26` for the 26.04 variant |
+| latest-patched | The stable image on this project's own Wine build instead of WineHQ's, with its fixes on. See [Patched Wine](#patched-wine) |
+| beta | Ubuntu 26.04 with this project's Wine build, every fix and performance patch on.  Not the supported path. See below |
+| vX.Y.Z | A specific release (Ubuntu 24.04), `vX.Y.Z-ubuntu26` for the 26.04 variant, or `vX.Y.Z-patched` on the patched Wine |
+| main-patched | Build of the `main` branch on the patched Wine (may be unstable) |
 
 **LTS policy.** The image tracks the **two most recent Ubuntu LTS releases** at a
 time. The **older** of the two is the default (`latest`), chosen for stability,
@@ -147,6 +150,7 @@ Environment variables can be set by adding one or more arguments `-e "<VAR>=<VAL
 |`DISABLE_VIRTUAL_DESKTOP` | Disables Wine's Virtual Desktop Mode | false |
 |`ENABLE_WATCHDOG`| When `true`, the container recovers automatically from the known stall conditions: it deletes a stale four-hour lock left behind by an out-of-memory kill, and stops a pass stuck on a lost upload child so the service starts a fresh one. Every action is logged. Off by default because it deletes a file and kills processes. The beta's Settings tab has a switch that overrides this without a restart. See [Health and Auto-Recovery](#health-and-auto-recovery). | false |
 |`MOUNTPOINTS_AS_DIRS`| Beta only. Which drives show the separate filesystems inside them, such as ZFS datasets, as ordinary folders so the client backs them up: `all`, or drive letters such as `d,e`. Without it the client skips every dataset inside a drive, so `/mnt/cache` as one drive backs up nothing. A dataset already backed up under a letter of its own is uploaded again under the new path, and a drive mapped inside another included drive is backed up twice, so unmap the old letters once the new drive has caught up. The beta's Settings tab has a per-drive switch that overrides this. Takes effect at the next container restart. See [Volumes](#volumes). | (unset) |
+|`WINE_SOCK_SEND_READY`, `WINE_SOCK_FDWRITE_REARM`, `WINE_SERVICE_TOKEN`, `WINE_OFD_LOCKS`, `WINE_CASE_CACHE`| The switches for this project's Wine patches, on `latest-patched` and `beta` only: `1` on, `0` off. The Settings tab overrides them. See [Patched Wine](#patched-wine). | depends on the tag |
 |`DISABLE_AUTOUPDATE` | When set to true, skip the startup update check and just launch the installed client. When false (the default), the container checks Backblaze for a newer client on each start and updates if one is available. | false |
 |`FORCE_LATEST_UPDATE`| When `true` (the default), the updater downloads the newest Backblaze client from Backblaze's servers on each start. When `false`, the installed version is kept and the update check is skipped. | true |
 |`BACKBLAZE_VERSION` | Pin the client to one exact version, for example `10.0.1.1069`. On each start the container installs that version if a different one is installed, newer or older, and skips the update check. Empty leaves the choice to `FORCE_LATEST_UPDATE` and `DISABLE_AUTOUPDATE`. When set, it wins over both, and `DISABLE_AUTOUPDATE` then only stops the search for a newer client. Client 10.0.3.1075 loses its four-hour lock under Wine and completes no backup pass, so the stable image pins 10.0.1.1069. The beta's Wine carries the fix, so the beta leaves this empty and follows Backblaze's newest client. | `10.0.1.1069` (stable), empty (beta) |
@@ -581,10 +585,11 @@ carries over either way.
 
 It differs from the stable images in four ways:
 
-- The Wine in it is **built from source with a patch that WineHQ has not yet
-  reviewed**. The fix is filed as [WineHQ bug 59893](https://bugs.winehq.org/show_bug.cgi?id=59893)
-  and submitted upstream. Until it is accepted, this is a change no one else has
-  vetted.
+- The Wine in it is **built from source with patches that WineHQ has not yet
+  reviewed**. The upload fix is filed as [WineHQ bug 59893](https://bugs.winehq.org/show_bug.cgi?id=59893)
+  and submitted upstream. Until they are accepted, these are changes no one else has
+  vetted. Each has a switch, and the beta turns on every fix and performance patch
+  (see [Patched Wine](#patched-wine)).
 - It tracks **Ubuntu 26.04**, the newer LTS.
 - It is rebuilt on a schedule rather than pinned to a release, so it moves.
 - The web interface has Monitor, Status, Tools, API and Settings tabs beside the desktop,
@@ -609,6 +614,45 @@ Wine is licensed under the LGPL. This image contains a modified Wine built from 
 public source at [gitlab.winehq.org](https://gitlab.winehq.org/wine/wine) with the
 patch in [`patches/`](https://github.com/iamfoz/backblaze-64-personal-wine-container/tree/main/patches)
 applied. Both are available at those locations.
+
+## Patched Wine
+
+```
+ghcr.io/iamfoz/backblaze-personal-wine:latest-patched
+```
+
+`latest` runs WineHQ's own stable Wine, unchanged. `latest-patched` is the same
+container on this project's Wine build: Wine built from source with the fixes in
+[`patches/`](patches/), at a Wine version the beta has already run. Choose it by
+setting your container's Repository field to the tag above, and go back by setting it
+to `latest`. Copy your `/config` folder before you switch. Moving to a newer Wine
+upgrades the Wine prefix, and Wine does not promise that an older Wine can run it
+afterwards; bb-doctor warns when that has happened.
+
+Every patch has a switch, and with a switch off Wine behaves as WineHQ's Wine does.
+Set them on the Settings tab under Wine patches, or with the container variables below
+(`1` on, `0` off). A change takes effect at the next container restart. Each carries a
+label: Fix corrects behaviour that differs from Windows, Performance makes the backup
+faster, and Experimental makes Wine behave unlike Windows on purpose.
+
+| Switch | Label | `latest-patched` | `beta` | What it does |
+|--------|-------|------------------|--------|--------------|
+|`WINE_SOCK_SEND_READY`| Fix | on | on | Reports a socket writable when the kernel would accept a send, as Windows does. Without it one upload stream runs at about 140 KB/s. |
+|`WINE_SOCK_FDWRITE_REARM`| Performance | off | on | Lets a full socket report FD_WRITE again, about three times the total upload rate. Windows does not do this. Needs `WINE_SOCK_SEND_READY`. |
+|`WINE_SERVICE_TOKEN`| Fix | on | on | Gives services the LocalSystem token they have on Windows. Client 10.0.3.1075 and later needs it. |
+|`WINE_OFD_LOCKS`| Fix | on | on | Lets wineserver close files the client closed, so its database stops leaking descriptors (issue #13). |
+|`WINE_CASE_CACHE`| Performance | off | on | Decides case sensitivity once per device. On Unraid user shares the check it replaces took half of a scan's time. |
+|`MOUNTPOINTS_AS_DIRS`| Experimental | off | off | ZFS datasets inside a drive as plain folders. Per drive; see [Environment Variables](#environment-variables). |
+
+Two switches depend on others. The re-arm stays off unless the writability fix is on.
+With the service token off, a client from 10.0.3.1075 on loses its four-hour lock on
+every pass, so the container installs 10.0.1.1069 unless you have set
+`BACKBLAZE_VERSION` yourself, and the Settings tab refuses to turn the token off while
+`BACKBLAZE_VERSION` names a client that needs it. With the token on (the default),
+`latest-patched` follows Backblaze's newest client the way the beta does.
+
+When a patch is accepted into Wine and the Wine version moves past it, the build
+leaves it out and the Settings tab shows it as part of Wine itself.
 
 ## Optional: Wine Upload-Speed Patch
 

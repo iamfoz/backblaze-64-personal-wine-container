@@ -99,3 +99,18 @@ bb_ws_client_needs_token() {
     [ -n "$_ws_ver" ] || return 1
     printf '%s\n10.0.3.1075\n' "$_ws_ver" | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | head -1 | grep -qx "10.0.3.1075"
 }
+
+# The newest Wine that has run the prefix is kept beside it, so a move to an
+# older Wine (from the beta or :latest-patched back to :latest) can be named.
+# Wine upgrades a prefix it finds older than itself; going back down usually
+# works but is not something Wine promises.
+BB_WS_WINE_HIGH="${BB_WS_WINE_HIGH:-${WINEPREFIX:-/config/wine/}.bb64-wine-high}"
+BB_WS_WINE_NOW="${BB_WS_WINE_NOW:-/tmp/.bb-wine-version}"
+
+# Whether Wine version $1 is older than $2 ("wine-11.0", "wine-11.19", ...).
+bb_ws_wine_older() {
+    _ws_a="$(printf '%s' "$1" | sed 's/^wine-//; s/[ (].*//')"
+    _ws_b="$(printf '%s' "$2" | sed 's/^wine-//; s/[ (].*//')"
+    [ -n "$_ws_a" ] && [ -n "$_ws_b" ] && [ "$_ws_a" != "$_ws_b" ] || return 1
+    [ "$(printf '%s\n%s\n' "$_ws_a" "$_ws_b" | sort -t. -k1,1n -k2,2n -k3,3n | head -1)" = "$_ws_a" ]
+}

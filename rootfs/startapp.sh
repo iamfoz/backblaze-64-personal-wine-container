@@ -82,6 +82,19 @@ fi
 # is pinned to the last release that works without it.
 if [ -r /usr/local/lib/bb-wine-switches.sh ]; then
     . /usr/local/lib/bb-wine-switches.sh
+    # Which Wine this is, and the newest that has run the prefix. Moving to an
+    # older one (from the beta or :latest-patched back to :latest) is logged
+    # here and reported by bb-doctor; the record keeps the newer version.
+    _ws_now="$(wine --version 2>/dev/null | head -1)"
+    _ws_high="$(head -1 "$BB_WS_WINE_HIGH" 2>/dev/null)"
+    printf '%s\n' "$_ws_now" > "$BB_WS_WINE_NOW" 2>/dev/null || true
+    if [ -n "$_ws_now" ]; then
+        if [ -n "$_ws_high" ] && bb_ws_wine_older "$_ws_now" "$_ws_high"; then
+            log_message "WINE: this prefix was last updated by ${_ws_high}, newer than this ${_ws_now}"
+        else
+            printf '%s\n' "$_ws_now" > "$BB_WS_WINE_HIGH" 2>/dev/null || true
+        fi
+    fi
     : > "$BB_WS_APPLIED" 2>/dev/null || true
     bb_ws_resolve | while read -r _ws_var _ws_val _ws_note; do
         printf '%s=%s\n' "$_ws_var" "$_ws_val" >> "$BB_WS_APPLIED" 2>/dev/null || true

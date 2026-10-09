@@ -185,6 +185,25 @@ else
     BAD "no Wine prefix at ${PREFIX} - the container has not completed first start"
 fi
 
+# The Wine running now against the newest one that has run this prefix, both
+# recorded by startapp.sh. Wine upgrades an older prefix when it starts, but
+# going back to an older Wine (from the beta or :latest-patched to :latest) is
+# not something it promises to handle.
+BB_WS_LIB="${BB_WS_LIB:-/usr/local/lib/bb-wine-switches.sh}"
+if [ -r "$BB_WS_LIB" ]; then
+    BB_WS_WINE_HIGH="${BB_WS_WINE_HIGH:-${PREFIX}.bb64-wine-high}"
+    . "$BB_WS_LIB"
+    _wnow="$(head -1 "$BB_WS_WINE_NOW" 2>/dev/null)"
+    _whigh="$(head -1 "$BB_WS_WINE_HIGH" 2>/dev/null)"
+    if [ -n "$_wnow" ] && [ -n "$_whigh" ] && bb_ws_wine_older "$_wnow" "$_whigh"; then
+        WARN "this prefix was last updated by ${_whigh}, newer than the ${_wnow} running now"
+        NOTE "Wine does not promise to run a prefix a newer Wine has updated. If the client misbehaves,"
+        NOTE "go back to the image with ${_whigh}, or restore /config from a copy made before the switch."
+    elif [ -n "$_wnow" ]; then
+        OK "Wine ${_wnow}"
+    fi
+fi
+
 # supportedOS manifest: without it, self-updates fail the OS gate
 missing_manifest=""
 for d in system32 syswow64; do
@@ -215,6 +234,20 @@ if [ -f "${BBDIR}/bzserv.exe" ]; then
     OK "client installed"
     vf="${BZ}/bzreports/bzserv_version.txt"
     [ -r "$vf" ] && OK "version $(tr -d ' \r\n' < "$vf") (run bb-version to compare with what Backblaze is serving)"
+    # The fork's Wine has the service token as a switch. With it off, a client
+    # from 10.0.3.1075 on loses its four-hour lock every pass. What the running
+    # Wine was started with is in the file startapp.sh wrote.
+    if [ -r "$vf" ] && [ -r "$BB_WS_LIB" ]; then
+        _tok="$(grep '^WINE_SERVICE_TOKEN=' "$BB_WS_APPLIED" 2>/dev/null | cut -d= -f2)"
+        _cv="$(tr -d ' \r\n' < "$vf")"
+        if [ "$_tok" = 0 ] && bb_ws_client_needs_token "$_cv"; then
+            BAD "the service token is off and client ${_cv} needs it, so every pass loses its four-hour lock"
+            NOTE "turn it on (Settings, Wine patches, or WINE_SERVICE_TOKEN=1) and restart the container,"
+            NOTE "or set BACKBLAZE_VERSION=${BB_WS_SAFE_CLIENT} so the client that works without it is installed."
+        elif [ "$_tok" = 1 ]; then
+            OK "service token on, so clients from 10.0.3.1075 complete their passes"
+        fi
+    fi
     # The service that runs every pass. Wine's service manager starts it at
     # boot and startapp watches it every five minutes. This is the view on
     # demand and, under --fix, the same start by hand. Checked only once the

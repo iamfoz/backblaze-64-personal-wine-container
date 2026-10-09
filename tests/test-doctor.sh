@@ -397,5 +397,30 @@ rm -f "$MPAPPLIED"
 
 rm -rf "$FX/drive_m" "$FX/drive_n" "${PFX}dosdevices/m:" "${PFX}dosdevices/n:"
 
+# ---- the Wine checks: an older Wine than the prefix has seen, and the token -----
+# Both read files startapp.sh writes: the Wine running now and the newest that
+# has run the prefix, and the switch values the running Wine was started with.
+WSLIB="$HERE/../rootfs/usr/local/lib/bb-wine-switches.sh"
+mkdir -p "$PFX/drive_c/Program Files/Backblaze"; : > "$PFX/drive_c/Program Files/Backblaze/bzserv.exe"
+mkdir -p "$BZ/bzreports"; echo "10.0.3.1075" > "$BZ/bzreports/bzserv_version.txt"
+echo wine-11.0 > "$FX/wine-now"; echo wine-11.19 > "$FX/wine-high"
+wsrun(){ run_env=(BB_WS_LIB="$WSLIB" BB_WS_WINE_NOW="$FX/wine-now" BB_WS_WINE_HIGH="$FX/wine-high" BB_WS_APPLIED="$FX/ws-applied"); env "${run_env[@]}" WINEPREFIX="$PFX" PATH="$FX/bin:$PATH" "$FX/bb-doctor" 2>/dev/null; }
+echo "WINE_SERVICE_TOKEN=0" > "$FX/ws-applied"
+OUT="$(wsrun)"
+has "$OUT" "this prefix was last updated by wine-11.19, newer than the wine-11.0 running now" "wine: an older Wine than the prefix has seen is a warning"
+has "$OUT" "service token is off and client 10.0.3.1075 needs it" "token: off with a client that needs it is a problem"
+has "$OUT" "BACKBLAZE_VERSION=10.0.1.1069" "token: and names the pin that works without it"
+echo wine-11.19 > "$FX/wine-now"; echo "WINE_SERVICE_TOKEN=1" > "$FX/ws-applied"
+OUT="$(wsrun)"
+has "$OUT" "\\[ok\\] Wine wine-11.19\\|Wine wine-11.19" "wine: the same Wine is an ok line"
+has "$OUT" "service token on" "token: on is an ok line"
+echo "10.0.1.1069" > "$BZ/bzreports/bzserv_version.txt"; echo "WINE_SERVICE_TOKEN=0" > "$FX/ws-applied"
+OUT="$(wsrun)"
+grep -q "service token is off and client" <<<"$OUT" && { echo "FAIL token: flagged with 10.0.1.1069 installed"; FAILED=$((FAILED+1)); } || echo "PASS token: off with 10.0.1.1069 installed is not flagged"
+rm -f "$FX/ws-applied"
+OUT="$(wsrun)"
+grep -q "service token" <<<"$OUT" && { echo "FAIL token: mentioned with no switches applied (WineHQ's Wine)"; FAILED=$((FAILED+1)); } || echo "PASS token: not mentioned on WineHQ's Wine"
+rm -f "$BZ/bzreports/bzserv_version.txt" "$FX/wine-now" "$FX/wine-high"
+
 echo "$FAILED failures"
 exit $(( FAILED > 0 ? 1 : 0 ))

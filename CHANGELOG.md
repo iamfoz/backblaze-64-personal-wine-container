@@ -11,6 +11,23 @@ the additions below. The `:beta` tag is mutable, so each published build has a s
 
 ### Added
 
+- A switch for each of this project's Wine patches, with a Wine patches panel on the
+  Settings tab. With a switch off, Wine behaves as WineHQ's Wine. Each patch is labelled
+  Fix, Performance or Experimental, and the panel enforces the two dependencies: the
+  FD_WRITE re-arm needs the writability fix, and turning the service token off pins the
+  client to 10.0.1.1069 (it refuses while `BACKBLAZE_VERSION` names a client that needs
+  the token). The switches are also container variables (`WINE_SOCK_SEND_READY`,
+  `WINE_SOCK_FDWRITE_REARM`, `WINE_SERVICE_TOKEN`, `WINE_OFD_LOCKS`, `WINE_CASE_CACHE`),
+  and the beta turns every fix and performance patch on, so it behaves as before. The
+  patches themselves are unchanged; each switch is a companion `.switch.patch`, and
+  `patches/build-wine.sh` builds the Wine from `patches/series`, leaving out any patch
+  the Wine source already contains. The choice travels in the settings export.
+- `latest-patched`: the stable image on this project's Wine instead of WineHQ's, built
+  from the same script at a Wine version the beta has run, with the fixes on and the
+  performance and experimental patches off. `latest` is unchanged.
+- bb-doctor warns when the prefix was last updated by a newer Wine than the one
+  running, which happens on a move from the beta or `latest-patched` back to `latest`,
+  and fails when the service token is off but the installed client needs it.
 - Datasets as folders: a per-drive switch on the Settings tab, and the `MOUNTPOINTS_AS_DIRS`
   variable (`all` or drive letters), that lets the client back up the ZFS datasets inside a
   mapped drive. Wine reports a folder on another filesystem as a mount point, and the client skips

@@ -87,6 +87,14 @@ is "10.1.0.900 needs the token" "$(needs 10.1.0.900)" yes
 is "10.0.1.1069 does not" "$(needs 10.0.1.1069)" no
 is "10.0.3.1074 does not" "$(needs 10.0.3.1074)" no
 
+older(){ ws sh -c '. "$0"; bb_ws_wine_older "$1" "$2" && echo yes || echo no' "$LIB" "$1" "$2"; }
+is "wine-11.0 is older than wine-11.19" "$(older wine-11.0 wine-11.19)" yes
+is "wine-11.0.2 is older than wine-11.19" "$(older wine-11.0.2 wine-11.19)" yes
+is "wine-11.19 is not older than wine-11.0" "$(older wine-11.19 wine-11.0)" no
+is "the same version is not older" "$(older wine-11.19 wine-11.19)" no
+is "a suffix such as (Staging) is ignored" "$(older "wine-11.9 (Staging)" wine-11.19)" yes
+is "nothing recorded is not older" "$(older wine-11.0 "")" no
+
 # The startapp.sh block itself, cut out by its opening comment and run with
 # a stub log, then the environment it leaves.
 BLOCK="$FX/block.sh"
