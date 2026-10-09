@@ -25,9 +25,8 @@ the additions below. The `:beta` tag is mutable, so each published build has a s
 - `latest-patched`: the stable image on this project's Wine instead of WineHQ's, built
   from the same script at a Wine version the beta has run, with the fixes on and the
   performance and experimental patches off. It is published on release tags only
-  (`latest-patched`, `<version>-patched`) and does not follow the beta: its Wine and
-  patch set are pinned in `patches/promoted` and move only when the beta is promoted at a
-  release. `latest` is unchanged.
+  (`latest-patched`, `<version>-patched`) and keeps the Wine and patch set pinned in
+  `patches/promoted` until the beta is promoted at a release. `latest` is unchanged.
 - bb-doctor warns when the prefix was last updated by a newer Wine than the one
   running, which happens on a move from the beta or `latest-patched` back to `latest`,
   and fails when the service token is off but the installed client needs it.
@@ -287,8 +286,8 @@ the additions below. The `:beta` tag is mutable, so each published build has a s
   it: the web interface (Monitor, Status, Tools, API and Settings tabs) and the HTTP API,
   bb-doctor's drive, settings, pass, skipped-file and run-as-the-container-user checks,
   bb-health's FROZEN state and bb-report's settings capture. These were patched in at
-  build time and are now part of the scripts. One build step, `build/finish-image.sh`,
-  finishes every image, and the smoke test checks the Settings tab is served. On
+  build time and are now part of the scripts. Every image now ends with the same build
+  step, `build/finish-image.sh`, and the smoke test checks the Settings tab is served. On
   `latest`, which runs WineHQ's Wine, the Wine patches and Datasets as folders panels say
   so and name `latest-patched`.
 - Wine moved from 11.14 to 11.17. All four patches in `patches/` apply to it unchanged. 11.18 was

@@ -251,7 +251,7 @@ if [ -f "${BBDIR}/bzserv.exe" ]; then
             NOTE "turn it on (Settings, Wine patches, or WINE_SERVICE_TOKEN=1) and restart the container,"
             NOTE "or set BACKBLAZE_VERSION=${BB_WS_SAFE_CLIENT} so the client that works without it is installed."
         elif [ "$_tok" = 1 ]; then
-            OK "service token on, so clients from 10.0.3.1075 complete their passes"
+            OK "service token on, so clients from 10.0.3.1075 can complete their passes"
         fi
     fi
     # The service that runs every pass. Wine's service manager starts it at

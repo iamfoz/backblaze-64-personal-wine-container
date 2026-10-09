@@ -595,7 +595,7 @@ carries over either way.
 
 It differs from the stable images in three ways:
 
-- The Wine in it is **built from source with patches that WineHQ has not yet
+- The Wine in it is **built from source with patches that WineHQ has not
   reviewed**. The upload fix is filed as [WineHQ bug 59893](https://bugs.winehq.org/show_bug.cgi?id=59893)
   and submitted upstream. Until they are accepted, these are changes no one else has
   vetted. Each has a switch, and the beta turns on every fix and performance patch
@@ -624,9 +624,9 @@ ghcr.io/iamfoz/backblaze-personal-wine:latest-patched
 
 `latest` runs WineHQ's own stable Wine, unchanged. `latest-patched` is the same
 container on this project's Wine build: Wine built from source with the fixes in
-[`patches/`](patches/), at a Wine version the beta has already run. It does not follow
-the beta. Its Wine and patch set stay where they are from one stable release to the
-next, and move only when the beta has been tested and is promoted at a release
+[`patches/`](patches/), at a Wine version the beta has already run. Unlike the beta, it
+keeps the same Wine and patch set from one stable release to the next, and they move
+only when the beta has been tested and is promoted at a release
 ([`patches/promoted`](patches/promoted) records which). Choose it by
 setting your container's Repository field to the tag above, and go back by setting it
 to `latest`. Copy your `/config` folder before you switch. Moving to a newer Wine
@@ -642,7 +642,7 @@ faster, and Experimental makes Wine behave unlike Windows on purpose.
 | Switch | Label | `latest-patched` | `beta` | What it does |
 |--------|-------|------------------|--------|--------------|
 |`WINE_SOCK_SEND_READY`| Fix | on | on | Reports a socket writable when the kernel would accept a send, as Windows does. Without it one upload stream runs at about 140 KB/s. |
-|`WINE_SOCK_FDWRITE_REARM`| Performance | off | on | Lets a full socket report FD_WRITE again, about three times the total upload rate. Windows does not do this. Needs `WINE_SOCK_SEND_READY`. |
+|`WINE_SOCK_FDWRITE_REARM`| Performance | off | on | Lets a full socket report FD_WRITE again, which roughly tripled total upload speed on a live backup. Windows does not do this. Needs `WINE_SOCK_SEND_READY`. |
 |`WINE_SERVICE_TOKEN`| Fix | on | on | Gives services the LocalSystem token they have on Windows. Client 10.0.3.1075 and later needs it. |
 |`WINE_OFD_LOCKS`| Fix | on | on | Lets wineserver close files the client closed, so its database stops leaking descriptors (issue #13). |
 |`WINE_CASE_CACHE`| Performance | off | on | Decides case sensitivity once per device. On Unraid user shares the check it replaces took half of a scan's time. |

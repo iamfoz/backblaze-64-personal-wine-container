@@ -1050,12 +1050,12 @@ SETTINGS_HTML = """<!doctype html>
 
 <h2>Wine patches</h2>
 <div class="panel" id="winepatches">
-  <p class="dim">This image's Wine carries fixes that are not in upstream Wine yet. Each one has a switch,
-  and with a switch off Wine behaves as upstream Wine does. Fix patches correct behaviour that differs
-  from Windows. Performance patches make the backup faster. Experimental patches make Wine behave
-  unlike Windows on purpose. A change takes effect at the next container restart. These switches
-  override the container's variables of the same name; "Follow the variables" hands the decision back
-  to them.</p>
+  <p class="dim">This image's Wine carries patches that upstream Wine does not have. Each one has a
+  switch, and with a switch off Wine behaves as upstream Wine does. The label says what a patch is for:
+  a Fix corrects behaviour that differs from Windows, a Performance patch speeds up the backup, and an
+  Experimental one makes Wine behave unlike Windows on purpose. A change takes effect at the next
+  container restart. These switches override the container's variables of the same name; "Follow the
+  variables" hands the decision back to them.</p>
   <div id="wp-list"></div>
   <div class="row"><span class="dim" id="wp-state"></span></div>
   <div id="wp-client" class="err" hidden></div>
