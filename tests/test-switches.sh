@@ -26,7 +26,8 @@ applied wine-token-localsystem switch
 applied wine-debug-privilege-bypass switch
 applied wine-ofd-locks switch
 applied wine-case-cache switch
-applied wine-mountpoint-dirs builtin'
+applied wine-mountpoint-dirs builtin
+applied wine-heap-lfh-reuse switch'
 
 # Run the helper with a clean environment: only the variables given here.
 ws(){ env -i PATH="$PATH" BB_WS_REGISTRY="$REG" BB_WS_MANIFEST="$MAN" BB_WS_STORE="$STORE" BB_WS_APPLIED="$APPLIED" "$@"; }
@@ -62,18 +63,18 @@ rm -f "$MAN" "$STORE"
 is "WineHQ's Wine (no manifest): nothing resolved" "$(resolve WINE_SOCK_SEND_READY=1)" ""
 
 printf '%s\n' "$ALL_APPLIED" > "$MAN"
-BETA="WINE_SOCK_SEND_READY=1 WINE_SOCK_FDWRITE_REARM=1 WINE_SERVICE_TOKEN=1 WINE_OFD_LOCKS=1 WINE_CASE_CACHE=1"
-PATCHED="WINE_SOCK_SEND_READY=1 WINE_SOCK_FDWRITE_REARM=0 WINE_SERVICE_TOKEN=1 WINE_OFD_LOCKS=1 WINE_CASE_CACHE=0"
+BETA="WINE_SOCK_SEND_READY=1 WINE_SOCK_FDWRITE_REARM=1 WINE_SERVICE_TOKEN=1 WINE_OFD_LOCKS=1 WINE_CASE_CACHE=1 WINE_HEAP_LFH_REUSE=1"
+PATCHED="WINE_SOCK_SEND_READY=1 WINE_SOCK_FDWRITE_REARM=0 WINE_SERVICE_TOKEN=1 WINE_OFD_LOCKS=1 WINE_CASE_CACHE=0 WINE_HEAP_LFH_REUSE=1"
 is "beta defaults: everything on" "$(resolve $BETA)" \
-   "WINE_SOCK_SEND_READY 1 WINE_SOCK_FDWRITE_REARM 1 WINE_SERVICE_TOKEN 1 WINE_OFD_LOCKS 1 WINE_CASE_CACHE 1"
+   "WINE_SOCK_SEND_READY 1 WINE_SOCK_FDWRITE_REARM 1 WINE_SERVICE_TOKEN 1 WINE_OFD_LOCKS 1 WINE_CASE_CACHE 1 WINE_HEAP_LFH_REUSE 1"
 is ":latest-patched defaults: fixes on, performance off" "$(resolve $PATCHED)" \
-   "WINE_SOCK_SEND_READY 1 WINE_SOCK_FDWRITE_REARM 0 WINE_SERVICE_TOKEN 1 WINE_OFD_LOCKS 1 WINE_CASE_CACHE 0"
+   "WINE_SOCK_SEND_READY 1 WINE_SOCK_FDWRITE_REARM 0 WINE_SERVICE_TOKEN 1 WINE_OFD_LOCKS 1 WINE_CASE_CACHE 0 WINE_HEAP_LFH_REUSE 1"
 is "no variables: everything off, as upstream Wine" "$(resolve)" \
-   "WINE_SOCK_SEND_READY 0 WINE_SOCK_FDWRITE_REARM 0 WINE_SERVICE_TOKEN 0 WINE_OFD_LOCKS 0 WINE_CASE_CACHE 0"
+   "WINE_SOCK_SEND_READY 0 WINE_SOCK_FDWRITE_REARM 0 WINE_SERVICE_TOKEN 0 WINE_OFD_LOCKS 0 WINE_CASE_CACHE 0 WINE_HEAP_LFH_REUSE 0"
 
 echo '{"WINE_CASE_CACHE": "0", "WINE_OFD_LOCKS": "0"}' > "$STORE"
 is "the Settings store wins over the variable" "$(resolve $BETA)" \
-   "WINE_SOCK_SEND_READY 1 WINE_SOCK_FDWRITE_REARM 1 WINE_SERVICE_TOKEN 1 WINE_OFD_LOCKS 0 WINE_CASE_CACHE 0"
+   "WINE_SOCK_SEND_READY 1 WINE_SOCK_FDWRITE_REARM 1 WINE_SERVICE_TOKEN 1 WINE_OFD_LOCKS 0 WINE_CASE_CACHE 0 WINE_HEAP_LFH_REUSE 1"
 is "source: setting for a stored switch" "$(ws sh -c '. "$0"; bb_ws_source WINE_CASE_CACHE' "$LIB")" "setting"
 is "source: variable for the rest" "$(ws sh -c '. "$0"; bb_ws_source WINE_SOCK_SEND_READY' "$LIB")" "variable"
 rm -f "$STORE"
@@ -117,8 +118,8 @@ grep -q bb_ws_resolve "$BLOCK" || { echo "FAIL could not find the startapp block
 runblock(){ ws LOG="$FX/log" "$@" bash -c 'log_message(){ echo "$*" >> "$LOG"; }; . "$0"; env | grep -E "^(WINE_|BACKBLAZE_VERSION=)" | sort | tr "\n" " "' "$BLOCK"; }
 rm -f "$FX/log"
 is "startapp: beta defaults exported" "$(runblock $BETA BACKBLAZE_VERSION=)" \
-   "BACKBLAZE_VERSION= WINE_CASE_CACHE=1 WINE_OFD_LOCKS=1 WINE_SERVICE_TOKEN=1 WINE_SOCK_FDWRITE_REARM=1 WINE_SOCK_SEND_READY=1 "
-is "startapp: applied file records them for the restart notice" "$(grep -c '=' "$APPLIED")" "5"
+   "BACKBLAZE_VERSION= WINE_CASE_CACHE=1 WINE_HEAP_LFH_REUSE=1 WINE_OFD_LOCKS=1 WINE_SERVICE_TOKEN=1 WINE_SOCK_FDWRITE_REARM=1 WINE_SOCK_SEND_READY=1 "
+is "startapp: applied file records them for the restart notice" "$(grep -c '=' "$APPLIED")" "6"
 echo '{"WINE_SERVICE_TOKEN": "0"}' > "$STORE"
 is "startapp: token off with no pin pins the client" "$(runblock $BETA BACKBLAZE_VERSION= | tr ' ' '\n' | grep -E '^(BACKBLAZE_VERSION|WINE_SERVICE_TOKEN)=' | tr '\n' ' ')" \
    "BACKBLAZE_VERSION=10.0.1.1069 WINE_SERVICE_TOKEN=0 "

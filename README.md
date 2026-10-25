@@ -160,7 +160,7 @@ Environment variables can be set by adding one or more arguments `-e "<VAR>=<VAL
 |`DISABLE_VIRTUAL_DESKTOP` | Disables Wine's Virtual Desktop Mode | false |
 |`ENABLE_WATCHDOG`| When `true`, the container recovers automatically from the known stall conditions: it deletes a stale four-hour lock left behind by an out-of-memory kill, and stops a pass stuck on a lost upload child so the service starts a fresh one. Every action is logged. Off by default because it deletes a file and kills processes. The Settings tab has a switch that overrides this without a restart. See [Health and Auto-Recovery](#health-and-auto-recovery). | false |
 |`MOUNTPOINTS_AS_DIRS`| On `latest-patched` and `beta` only, since WineHQ's Wine has no such patch. Which drives show the separate filesystems inside them, such as ZFS datasets, as ordinary folders so the client backs them up: `all`, or drive letters such as `d,e`. Without it the client skips every dataset inside a drive, so `/mnt/cache` as one drive backs up nothing. A dataset already backed up under a letter of its own is uploaded again under the new path, and a drive mapped inside another included drive is backed up twice, so unmap the old letters once the new drive has caught up. The Settings tab has a per-drive switch that overrides this. Takes effect at the next container restart. See [Volumes](#volumes). | (unset) |
-|`WINE_SOCK_SEND_READY`, `WINE_SOCK_FDWRITE_REARM`, `WINE_SERVICE_TOKEN`, `WINE_OFD_LOCKS`, `WINE_CASE_CACHE`| The switches for this project's Wine patches, on `latest-patched` and `beta` only: `1` on, `0` off. The Settings tab overrides them. See [Patched Wine](#patched-wine). | depends on the tag |
+|`WINE_SOCK_SEND_READY`, `WINE_SOCK_FDWRITE_REARM`, `WINE_SERVICE_TOKEN`, `WINE_OFD_LOCKS`, `WINE_CASE_CACHE`, `WINE_HEAP_LFH_REUSE`| The switches for this project's Wine patches, on `latest-patched` and `beta` only: `1` on, `0` off. The Settings tab overrides them. See [Patched Wine](#patched-wine). | depends on the tag |
 |`DISABLE_AUTOUPDATE` | When set to true, skip the startup update check and just launch the installed client. When false (the default), the container checks Backblaze for a newer client on each start and updates if one is available. | false |
 |`FORCE_LATEST_UPDATE`| When `true` (the default), the updater downloads the newest Backblaze client from Backblaze's servers on each start. When `false`, the installed version is kept and the update check is skipped. | true |
 |`BACKBLAZE_VERSION` | Pin the client to one exact version, for example `10.0.1.1069`. On each start the container installs that version if a different one is installed, newer or older, and skips the update check. Empty leaves the choice to `FORCE_LATEST_UPDATE` and `DISABLE_AUTOUPDATE`. When set, it wins over both, and `DISABLE_AUTOUPDATE` then only stops the search for a newer client. Client 10.0.3.1075 loses its four-hour lock under Wine and completes no backup pass, so the stable image pins 10.0.1.1069. The beta's Wine carries the fix, so the beta leaves this empty and follows Backblaze's newest client. | `10.0.1.1069` (stable), empty (beta) |
@@ -266,6 +266,11 @@ Two things matter more than the raw numbers:
   and every following pass fails to start, so the backup stops making progress with no error.
   See [Health and Auto-Recovery](#health-and-auto-recovery). A modest swap file absorbs
   the peak and avoids this entirely.
+- **On `latest-patched` and `beta`, the heap fix cuts this.** WineHQ's Wine keeps most of
+  the memory `bztransmit` frees while it builds that index, so its memory stays near the
+  peak for the rest of the pass. With `WINE_HEAP_LFH_REUSE` on, a backup of 15.4 million
+  files went from 27 GB to 6.5 GB, peaking at 8 GB instead of 30 GB. The table above is
+  for WineHQ's Wine.
 - **Watch file count, not bytes.** A few large media files cost almost nothing. Hundreds
   of thousands of small ones, such as bundled downloads, package caches and generated
   thumbnails, are what pushes memory up. Excluding directories of regenerable junk is the simplest fix
@@ -646,6 +651,7 @@ faster, and Experimental makes Wine behave unlike Windows on purpose.
 |`WINE_SERVICE_TOKEN`| Fix | on | on | Gives services the LocalSystem token they have on Windows. Client 10.0.3.1075 and later needs it. |
 |`WINE_OFD_LOCKS`| Fix | on | on | Lets wineserver close files the client closed, so its database stops leaking descriptors (issue #13). |
 |`WINE_CASE_CACHE`| Performance | off | on | Decides case sensitivity once per device. On Unraid user shares the check it replaces took half of a scan's time. |
+|`WINE_HEAP_LFH_REUSE`| Fix | on | on | Lets Wine's heap reuse memory the client has freed, as Windows does. On a 15-million-file backup `bztransmit` went from 27 GB to 6.5 GB. |
 |`MOUNTPOINTS_AS_DIRS`| Experimental | off | off | ZFS datasets inside a drive as plain folders. Per drive; see [Environment Variables](#environment-variables). |
 
 Two switches depend on others. The re-arm stays off unless the writability fix is on.

@@ -1,0 +1,342 @@
+ntdll: Put LFH group reuse behind WINE_HEAP_LFH_REUSE.
+
+Fork-only companion to wine-heap-lfh-reuse.patch. With WINE_HEAP_LFH_REUSE=1
+the heap reuses partially freed groups, uses the smaller LFH size classes and
+releases large free blocks as that patch describes. Without it the LFH uses
+upstream's lock-free groups and per-thread affinity groups, every block takes
+at least 48 bytes and free blocks keep their pages, as in upstream Wine. The
+HeapSize correction for LFH blocks shrunk in place is not switched. The
+variable is read once, from the Unix environment through a new ntdll unix call,
+when the process heap is created: processes the client's service starts get a
+Windows environment without the container's variables.
+
+--- a/dlls/ntdll/heap.c
++++ b/dlls/ntdll/heap.c
+@@ -252,6 +252,22 @@ C_ASSERT( BIN_SIZE_STEP_7 + 3 * BLOCK_ALIGN <= FIELD_MAX( struct block, tail_siz
+ /* number of fully freed groups each bin keeps for reuse before releasing them */
+ #define BIN_MAX_EMPTY_GROUPS 2
+ 
++/* WINE_HEAP_LFH_REUSE=1 turns on partially freed LFH group reuse, the smaller LFH size
++ * classes and the release of large free blocks. Without it the heap behaves as in
++ * upstream Wine. Decided once, when the process heap is created, from the Unix
++ * environment: a process can be started with a Windows environment that lacks it. */
++static BOOL lfh_reuse;
++
++static BOOL heap_lfh_reuse_wanted(void)
++{
++    BOOL enabled = FALSE;
++    WINE_UNIX_CALL( unix_heap_lfh_reuse, &enabled );
++    return enabled;
++}
++
++static BYTE affinity_mapping[] = {20,6,31,15,14,29,27,4,18,24,26,13,0,9,2,30,17,7,23,25,10,19,12,3,22,21,5,16,1,28,11,8};
++static LONG next_thread_affinity;
++
+ /* a bin, tracking heap blocks of a certain size */
+ struct bin
+ {
+@@ -273,8 +289,23 @@ struct bin
+      * reused instead of being kept until all their blocks are freed.
+      */
+     struct list groups;
++
++    /* without lfh_reuse: lock-free list of groups with free blocks */
++    SLIST_HEADER stock_groups;
++
++    /* without lfh_reuse: array of affinity reserved groups, interleaved with other bins
++     * to keep all pointers of the same affinity and different bin grouped together,
++     * and pointers of the same bin and different affinity away from each other,
++     * hopefully in separate cache lines.
++     */
++    struct group **affinity_group_base;
+ };
+ 
++static inline struct group **bin_get_affinity_group( struct bin *bin, BYTE affinity )
++{
++    return bin->affinity_group_base + affinity * BLOCK_SIZE_BIN_COUNT;
++}
++
+ struct heap
+ {                                  /* win32/win64 */
+     DWORD_PTR        unknown1[2];   /* 0000/0000 */
+@@ -984,7 +1015,7 @@ static NTSTATUS heap_free_block( struct heap *heap, ULONG flags, struct block *b
+ 
+     /* keep room for a full committed block as hysteresis */
+     if (!next) subheap_decommit( heap, subheap, (char *)((struct entry *)block + 1) + REGION_ALIGN );
+-    else if (block_size >= HEAP_RESET_FREE_SIZE)
++    else if (lfh_reuse && block_size >= HEAP_RESET_FREE_SIZE)
+     {
+         /* merged free blocks which were large enough had their pages reset already */
+         const char *range = prev_size >= HEAP_RESET_FREE_SIZE ? freed : (char *)block;
+@@ -1552,6 +1583,8 @@ HANDLE WINAPI RtlCreateHeap( ULONG flags, void *addr, SIZE_T total_size, SIZE_T
+     TRACE( "flags %#lx, addr %p, total_size %#Ix, commit_size %#Ix, lock %p, params %p\n",
+            flags, addr, total_size, commit_size, lock, params );
+ 
++    if (!process_heap) lfh_reuse = heap_lfh_reuse_wanted();
++
+     flags &= ~(HEAP_TAIL_CHECKING_ENABLED|HEAP_FREE_CHECKING_ENABLED);
+     if (process_heap) flags |= HEAP_PRIVATE;
+     if (!process_heap || !total_size || (flags & HEAP_SHARED)) flags |= HEAP_GROWABLE;
+@@ -1615,13 +1648,16 @@ HANDLE WINAPI RtlCreateHeap( ULONG flags, void *addr, SIZE_T total_size, SIZE_T
+ 
+     if (heap->flags & HEAP_GROWABLE)
+     {
+-        SIZE_T size = sizeof(struct bin) * BLOCK_SIZE_BIN_COUNT;
++        SIZE_T size = (sizeof(struct bin) + sizeof(struct group *) * ARRAY_SIZE(affinity_mapping)) * BLOCK_SIZE_BIN_COUNT;
+         NtAllocateVirtualMemory( NtCurrentProcess(), (void *)&heap->bins,
+                                  0, &size, MEM_COMMIT, PAGE_READWRITE );
+ 
+         for (i = 0; heap->bins && i < BLOCK_SIZE_BIN_COUNT; ++i)
+         {
+             list_init( &heap->bins[i].groups );
++            RtlInitializeSListHead( &heap->bins[i].stock_groups );
++            /* offset affinity_group_base to interleave the bin affinity group pointers */
++            heap->bins[i].affinity_group_base = (struct group **)(heap->bins + BLOCK_SIZE_BIN_COUNT) + i;
+         }
+     }
+ 
+@@ -1740,6 +1776,7 @@ static SIZE_T heap_get_block_size( const struct heap *heap, ULONG flags, SIZE_T
+     block_size = ROUND_SIZE( size + overhead, BLOCK_ALIGN - 1 );
+ 
+     if (block_size < size) return ~0U;  /* overflow */
++    if (!lfh_reuse && block_size < HEAP_MIN_BLOCK_SIZE) block_size = HEAP_MIN_BLOCK_SIZE;
+     return block_size;
+ }
+ 
+@@ -1785,11 +1822,16 @@ static NTSTATUS heap_allocate_block( struct heap *heap, ULONG flags, SIZE_T bloc
+ /* header for every LFH block group */
+ struct DECLSPEC_ALIGN(BLOCK_ALIGN) group
+ {
+-    /* entry in the bin groups list, when GROUP_FLAG_FREE is set */
+-    struct list entry;
++    union
++    {
++        /* entry in the bin groups list, when GROUP_FLAG_FREE is set */
++        struct list entry;
++        /* without lfh_reuse: entry in the bin lock-free groups list */
++        SLIST_ENTRY stock_entry;
++    };
+     /* one bit for each free block and the highest bit for GROUP_FLAG_FREE */
+     LONG free_bits;
+-    /* unused, kept for layout compatibility */
++    /* without lfh_reuse: affinity of the thread which last allocated from this group */
+     LONG affinity;
+     /* first block of a group, required for alignment */
+     struct block first_block;
+@@ -1938,6 +1980,95 @@ static struct block *find_free_bin_block( struct heap *heap, ULONG flags, SIZE_T
+     return group_get_block( group, block_size, i );
+ }
+ 
++/* without lfh_reuse: upstream's lock-free group management, a fully used group is only
++ * reused once all its blocks are freed */
++
++/* lookup a free block using the group free_bits, the current thread must own the group */
++static inline struct block *group_find_free_block( struct group *group, SIZE_T block_size )
++{
++    ULONG i, free_bits = ReadNoFence( &group->free_bits );
++    /* free_bits will never be 0 as the group is unlinked when it's fully used */
++    BitScanForward( &i, free_bits );
++    InterlockedAnd( &group->free_bits, ~(1 << i) );
++    return group_get_block( group, block_size, i );
++}
++
++static inline ULONG heap_current_thread_affinity(void)
++{
++    ULONG affinity;
++
++    if (!(affinity = NtCurrentTeb()->HeapVirtualAffinity))
++    {
++        affinity = InterlockedIncrement( &next_thread_affinity );
++        affinity = affinity_mapping[affinity % ARRAY_SIZE(affinity_mapping)];
++        NtCurrentTeb()->HeapVirtualAffinity = affinity;
++    }
++
++    return affinity;
++}
++
++/* acquire a group from the bin, thread takes ownership of a shared group or allocates a new one */
++static struct group *heap_acquire_bin_group( struct heap *heap, ULONG flags, SIZE_T block_size, struct bin *bin )
++{
++    ULONG affinity = NtCurrentTeb()->HeapVirtualAffinity;
++    struct group *group;
++    SLIST_ENTRY *entry;
++
++    if ((group = InterlockedExchangePointer( (void *)bin_get_affinity_group( bin, affinity ), NULL )))
++        return group;
++
++    if ((entry = RtlInterlockedPopEntrySList( &bin->stock_groups )))
++        return CONTAINING_RECORD( entry, struct group, stock_entry );
++
++    return group_allocate( heap, flags, block_size );
++}
++
++/* release a thread owned and fully freed group to the bin shared group, or free its memory */
++static NTSTATUS heap_release_bin_group( struct heap *heap, ULONG flags, struct bin *bin, struct group *group )
++{
++    ULONG affinity = group->affinity;
++
++    /* using InterlockedExchangePointer here would possibly return a group that has used blocks,
++     * we prefer keeping our fully freed group instead for reduced memory consumption.
++     */
++    if (!InterlockedCompareExchangePointer( (void *)bin_get_affinity_group( bin, affinity ), group, NULL ))
++        return STATUS_SUCCESS;
++
++    /* try re-using the block group instead of releasing it */
++    if (RtlQueryDepthSList( &bin->stock_groups ) <= ARRAY_SIZE(affinity_mapping))
++    {
++        RtlInterlockedPushEntrySList( &bin->stock_groups, &group->stock_entry );
++        return STATUS_SUCCESS;
++    }
++
++    return group_release( heap, flags, bin, group );
++}
++
++static struct block *find_free_bin_block_stock( struct heap *heap, ULONG flags, SIZE_T block_size, struct bin *bin )
++{
++    ULONG affinity = heap_current_thread_affinity();
++    struct block *block;
++    struct group *group;
++
++    /* acquire a group, the thread will own it and no other thread can clear free bits.
++     * some other thread might still set the free bits if they are freeing blocks.
++     */
++    if (!(group = heap_acquire_bin_group( heap, flags, block_size, bin ))) return NULL;
++    group->affinity = affinity;
++
++    block = group_find_free_block( group, block_size );
++
++    /* serialize with heap_free_block_lfh: atomically set GROUP_FLAG_FREE when the free bits are all 0. */
++    if (ReadNoFence( &group->free_bits ) || InterlockedCompareExchange( &group->free_bits, GROUP_FLAG_FREE, 0 ))
++    {
++        /* if GROUP_FLAG_FREE isn't set, thread is responsible for putting it back into group list. */
++        if ((group = InterlockedExchangePointer( (void *)bin_get_affinity_group( bin, affinity ), group )))
++            RtlInterlockedPushEntrySList( &bin->stock_groups, &group->stock_entry );
++    }
++
++    return block;
++}
++
+ static NTSTATUS heap_allocate_block_lfh( struct heap *heap, ULONG flags, SIZE_T block_size,
+                                          SIZE_T size, void **ret )
+ {
+@@ -1952,7 +2083,10 @@ static NTSTATUS heap_allocate_block_lfh( struct heap *heap, ULONG flags, SIZE_T
+ 
+     block_size = BLOCK_BIN_SIZE( BLOCK_SIZE_BIN( block_size ) );
+ 
+-    if ((block = find_free_bin_block( heap, flags, block_size, bin )))
++    if (lfh_reuse) block = find_free_bin_block( heap, flags, block_size, bin );
++    else block = find_free_bin_block_stock( heap, flags, block_size, bin );
++
++    if (block)
+     {
+         block_set_type( block, BLOCK_TYPE_USED );
+         block_set_flags( block, (BYTE)~BLOCK_FLAG_LFH, BLOCK_USER_FLAGS( flags ) );
+@@ -1983,6 +2117,18 @@ static NTSTATUS heap_free_block_lfh( struct heap *heap, ULONG flags, struct bloc
+     block_set_flags( block, (BYTE)~BLOCK_FLAG_LFH, BLOCK_FLAG_FREE );
+     mark_block_free( block + 1, (char *)block + block_size - (char *)(block + 1), flags );
+ 
++    if (!lfh_reuse)
++    {
++        /* if this was the last used block in a group and GROUP_FLAG_FREE was set */
++        if (InterlockedOr( &group->free_bits, 1 << i ) == ~(1 << i))
++        {
++            /* thread now owns the group, and can release it to its bin */
++            group->free_bits = ~GROUP_FLAG_FREE;
++            return heap_release_bin_group( heap, flags, bin, group );
++        }
++        return STATUS_SUCCESS;
++    }
++
+     bin_lock( bin );
+ 
+     free_bits = group->free_bits | (1u << i);
+@@ -2042,9 +2188,36 @@ static void bin_try_enable( struct heap *heap, struct bin *bin )
+     WriteRelease( &bin->enabled, TRUE );
+ }
+ 
++static void heap_thread_detach_bin_groups( struct heap *heap )
++{
++    ULONG i, affinity = NtCurrentTeb()->HeapVirtualAffinity;
++
++    if (!heap->bins) return;
++
++    for (i = 0; i < BLOCK_SIZE_BIN_COUNT; ++i)
++    {
++        struct bin *bin = heap->bins + i;
++        struct group *group;
++        if (!(group = InterlockedExchangePointer( (void *)bin_get_affinity_group( bin, affinity ), NULL ))) continue;
++        RtlInterlockedPushEntrySList( &bin->stock_groups, &group->stock_entry );
++    }
++}
++
+ void heap_thread_detach(void)
+ {
+-    /* LFH groups are shared by all threads, there is nothing to release */
++    struct heap *heap;
++
++    /* with lfh_reuse LFH groups are shared by all threads, there is nothing to release */
++    if (lfh_reuse) return;
++
++    RtlEnterCriticalSection( &process_heap->cs );
++
++    LIST_FOR_EACH_ENTRY( heap, &process_heap->entry, struct heap, entry )
++        heap_thread_detach_bin_groups( heap );
++
++    heap_thread_detach_bin_groups( process_heap );
++
++    RtlLeaveCriticalSection( &process_heap->cs );
+ }
+ 
+ /***********************************************************************
+@@ -2073,7 +2246,7 @@ void *WINAPI DECLSPEC_HOTPATCH RtlAllocateHeap( HANDLE handle, ULONG flags, SIZE
+ 
+         if (!status && heap->bins)
+         {
+-            SIZE_T bin = BLOCK_SIZE_BIN( block_size );
++            SIZE_T bin = BLOCK_SIZE_BIN( lfh_reuse ? block_size : block_get_size( (struct block *)ptr - 1 ) );
+             InterlockedIncrement( &heap->bins[bin].count_alloc );
+             if (!ReadNoFence( &heap->bins[bin].enabled )) bin_try_enable( heap, &heap->bins[bin] );
+         }
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -1005,6 +1005,14 @@ static NTSTATUS unwind_builtin_dll( void *args )
+ #endif /* SO_DLLS_SUPPORTED */
+ 
+ 
++/* WINE_HEAP_LFH_REUSE=1 turns on the heap's LFH group reuse, see heap.c */
++static NTSTATUS heap_lfh_reuse( void *args )
++{
++    const char *str = getenv( "WINE_HEAP_LFH_REUSE" );
++    *(BOOL *)args = str && str[0] == '1' && !str[1];
++    return STATUS_SUCCESS;
++}
++
+ static const unixlib_entry_t unix_call_funcs[] =
+ {
+     load_so_dll,
+@@ -1015,6 +1023,7 @@ static const unixlib_entry_t unix_call_funcs[] =
+     unixcall_wine_server_handle_to_fd,
+     unixcall_wine_spawnvp,
+     system_time_precise,
++    heap_lfh_reuse,
+ };
+ 
+ 
+@@ -1033,6 +1042,7 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
+     wow64_wine_server_handle_to_fd,
+     wow64_wine_spawnvp,
+     system_time_precise,
++    heap_lfh_reuse,
+ };
+ 
+ #endif  /* _WIN64 */
+--- a/dlls/ntdll/unixlib.h
++++ b/dlls/ntdll/unixlib.h
+@@ -76,6 +76,7 @@ enum ntdll_unix_funcs
+     unix_wine_server_handle_to_fd,
+     unix_wine_spawnvp,
+     unix_system_time_precise,
++    unix_heap_lfh_reuse,
+ };
+ 
+ extern unixlib_handle_t __wine_unixlib_handle;
