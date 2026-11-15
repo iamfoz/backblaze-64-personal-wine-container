@@ -3212,8 +3212,12 @@ INDEX_HTML = """<!doctype html>
   /* min-width:0 because a flex item defaults to min-width:auto and so refuses
      to shrink below its content, which let one long path widen the page. */
   .file-row .meta > span{min-width:0;overflow-wrap:anywhere;}
-  /* Compact multi-part view: one row per file, the bar split into a cell per part. */
-  .file-row.cells .track{display:flex;gap:1px;background:transparent;border:0;height:14px;}
+  /* Compact multi-part view: one row per file, the bar split into a cell per part,
+     or per run of parts when there are more parts than the bar has room for.
+     A cell is 2px at least and the gap 1px, so partCells() allows 3px a cell.
+     overflow:hidden is the backstop if the width changes between polls. */
+  .file-row.cells .track{display:flex;gap:1px;background:transparent;border:0;height:14px;
+       overflow:hidden;}
   .file-row.cells .cell{flex:1 1 0;min-width:2px;background:var(--track-bg);
        border:1px solid var(--track-border);}
   .file-row.cells .cell.on{background:var(--good);border-color:var(--good);}
@@ -3571,6 +3575,26 @@ function sparklineSvg(values, w, h){
   return '<svg class="spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none">' +
          '<polyline points="'+pts+'" /></svg>';
 }
+// The cells of a part bar: one per part while they fit, otherwise one per run
+// of consecutive parts, as many runs as the bar has room for. A 6,835-part file
+// drew 6,835 cells at their 2px minimum and ran off the page. state(a, b) gives
+// the class for parts a to b-1; noun names a part in the tooltip.
+function partCells(total, state, noun){
+  // The bar shares its row with the text and is at most 260px (.file-row
+  // .track), narrower on a small screen. A bar from the last poll gives its real
+  // width; the 260px cap stops a bar the cells forced wide from feeding back.
+  var box = document.getElementById('uploading');
+  var bar = box && box.querySelector('.file-row.cells .track');
+  var w = Math.min(260, (bar && bar.clientWidth) || 260, (box && box.clientWidth) || 260);
+  var room = Math.max(10, Math.floor((w + 1) / 3));
+  var n = Math.min(total, room), out = '';
+  for(var k=0;k<n;k++){
+    var a = Math.floor(k * total / n), b = Math.floor((k + 1) * total / n);
+    var tip = b - a > 1 ? noun+'s '+(a+1)+' to '+b : noun+' '+(a+1);
+    out += '<span class="cell'+state(a, b)+'" title="'+tip+'"></span>';
+  }
+  return out;
+}
 function chunkStrip(cm){
   // Real chunk positions: each cell is a numbered chunk of the file currently
   // being split, lit where that chunk has been seen to finish and highlighted
@@ -3578,11 +3602,17 @@ function chunkStrip(cm){
   // a chunk that completed before the page was opened cannot be distinguished
   // from one still queued.
   if(!cm || !cm.total) return '';
-  var sent = new Set(cm.sent||[]), busy = new Set(cm.inflight||[]), cells = '';
-  for(var i=0;i<cm.total;i++){
-    var c = busy.has(i) ? ' busy' : (sent.has(i) ? ' on' : '');
-    cells += '<span class="cell'+c+'" title="chunk '+i+'"></span>';
-  }
+  var sent = new Set(cm.sent||[]), busy = new Set(cm.inflight||[]);
+  var cells = partCells(cm.total, function(a, b){
+    // A run is busy while a thread carries any chunk in it, and lit only once
+    // every chunk in it has been seen to finish.
+    var all = true;
+    for(var i=a;i<b;i++){
+      if(busy.has(i)) return ' busy';
+      if(!sent.has(i)) all = false;
+    }
+    return all ? ' on' : '';
+  }, 'chunk');
   return '<div class="file-row cells chunkstrip"><div class="track">'+cells+'</div>' +
          '<div class="meta"><span>'+sent.size+'/'+cm.total+' chunks</span>' +
          '<span>'+esc(cm.file)+'</span></div></div>';
@@ -4046,10 +4076,12 @@ async function tick(){
           if(seenCompact[f.name]) return '';
           seenCompact[f.name] = 1;
           if(d.chunkmap && d.chunkmap.file === f.name) return '';
-          var cells = '';
-          for(var i=0;i<f.parts.total;i++){
-            cells += '<span class="cell'+(i < f.parts.done ? ' on' : '')+'"></span>';
-          }
+          // Parts finish in order as far as this count can tell, so a run is lit
+          // once the count has passed it and in progress while the count is in it.
+          var done = f.parts.done;
+          var cells = partCells(f.parts.total, function(a, b){
+            return done >= b ? ' on' : (done > a ? ' busy' : '');
+          }, 'part');
           return '<div class="file-row cells"><div class="track">'+cells+'</div>' +
                  '<div class="meta"><span>'+f.parts.done+'/'+f.parts.total+'</span>' +
                  '<span>'+esc(f.size_str)+'</span><span>'+esc(f.name)+'</span></div></div>';

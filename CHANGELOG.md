@@ -154,6 +154,12 @@ the additions below. The `:beta` tag is mutable, so each published build has a s
 
 ### Fixed
 
+- The part bars in the compact multi-part view stay within their row. Each part had a cell of
+  at least 2px, so a 6,835-part file drew a bar several screens wide and pushed the page
+  sideways. When a file has more parts than the bar has room for, each cell now stands for a
+  run of consecutive parts: empty until the run has started, yellow while a thread carries a
+  part in it (or, on a file row, while the count is inside it), and green once every part in
+  it has finished. The tooltip names the parts a cell covers.
 - The service watch died the first time it had something to say. The build of 28 September
   that put its events on the recovery log wrapped its logging function in a function of the
   same name, which called itself until bash crashed, so a bzserv that stopped after that build
