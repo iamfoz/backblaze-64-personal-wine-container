@@ -4,11 +4,12 @@ Fork-only companion to wine-heap-lfh-reuse.patch. With WINE_HEAP_LFH_REUSE=1
 the heap reuses partially freed groups, uses the smaller LFH size classes and
 releases large free blocks as that patch describes. Without it the LFH uses
 upstream's lock-free groups and per-thread affinity groups, every block takes
-at least 48 bytes and free blocks keep their pages, as in upstream Wine. The
-HeapSize correction for LFH blocks shrunk in place is not switched. The
-variable is read once, from the Unix environment through a new ntdll unix call,
-when the process heap is created: processes the client's service starts get a
-Windows environment without the container's variables.
+at least 48 bytes, free blocks keep their pages and an LFH block shrunk in
+place takes the size class of its new size, as in upstream Wine, so HeapSize
+reports what upstream reports. The variable is read once, from the Unix
+environment through a new ntdll unix call, when the process heap is created:
+processes the client's service starts get a Windows environment without the
+container's variables.
 
 --- a/dlls/ntdll/heap.c
 +++ b/dlls/ntdll/heap.c
@@ -297,9 +298,20 @@ Windows environment without the container's variables.
              InterlockedIncrement( &heap->bins[bin].count_alloc );
              if (!ReadNoFence( &heap->bins[bin].enabled )) bin_try_enable( heap, &heap->bins[bin] );
          }
+@@ -2195,7 +2368,9 @@ static NTSTATUS heap_resize_block_lfh( struct block *block, ULONG flags, SIZE_T
+     if (ROUND_SIZE( *old_size, BLOCK_ALIGN - 1) != ROUND_SIZE( size, BLOCK_ALIGN - 1)) return STATUS_NO_MEMORY;
+     if (size >= *old_size) return STATUS_NO_MEMORY;
+ 
+-    block_size = block_get_size( block );
++    /* without lfh_reuse: upstream's size, the size class of the new size */
++    if (lfh_reuse) block_size = block_get_size( block );
++    else block_size = BLOCK_BIN_SIZE( BLOCK_SIZE_BIN( block_size ) );
+     block_set_flags( block, BLOCK_FLAG_USER_MASK & ~BLOCK_FLAG_USER_INFO, BLOCK_USER_FLAGS( flags ) );
+     block->tail_size = block_size - sizeof(*block) - size;
+     initialize_block( block, *old_size, size, flags );
 --- a/dlls/ntdll/unix/loader.c
 +++ b/dlls/ntdll/unix/loader.c
-@@ -1005,6 +1005,14 @@ static NTSTATUS unwind_builtin_dll( void *args )
+@@ -981,6 +981,14 @@ static NTSTATUS unwind_builtin_dll( void *args )
  #endif /* SO_DLLS_SUPPORTED */
  
  
@@ -314,7 +326,7 @@ Windows environment without the container's variables.
  static const unixlib_entry_t unix_call_funcs[] =
  {
      load_so_dll,
-@@ -1015,6 +1023,7 @@ static const unixlib_entry_t unix_call_funcs[] =
+@@ -991,6 +999,7 @@ static const unixlib_entry_t unix_call_funcs[] =
      unixcall_wine_server_handle_to_fd,
      unixcall_wine_spawnvp,
      system_time_precise,
@@ -322,7 +334,7 @@ Windows environment without the container's variables.
  };
  
  
-@@ -1033,6 +1042,7 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
+@@ -1009,6 +1018,7 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
      wow64_wine_server_handle_to_fd,
      wow64_wine_spawnvp,
      system_time_precise,
