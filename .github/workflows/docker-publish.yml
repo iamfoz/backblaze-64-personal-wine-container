@@ -44,6 +44,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # Full history: test-switches.sh checks that patches/promoted's
+          # PATCHES_FROM names a commit, which may be an older one.
+          fetch-depth: 0
 
       # The suites need the same Python as the image (3.12) and, for the parse
       # gate's node --check, a node on PATH. ubuntu-latest carries both. This step
