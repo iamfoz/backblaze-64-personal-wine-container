@@ -320,7 +320,10 @@ jobs:
             set -eu
             grep -q "^applied wine-writability-fix switch" /opt/wine/share/bb64-patches
             grep -aq WINE_SOCK_SEND_READY /opt/wine/bin/wineserver
-            for v in WINE_SOCK_SEND_READY WINE_SOCK_FDWRITE_REARM WINE_SERVICE_TOKEN WINE_OFD_LOCKS WINE_CASE_CACHE; do
+            # The heap switch is read by the PE ntdll.dll, as a UTF-16 string.
+            grep -q "^applied wine-heap-lfh-reuse switch" /opt/wine/share/bb64-patches
+            python3 -c "import sys; sys.exit(\"WINE_HEAP_LFH_REUSE=\".encode(\"utf-16-le\") not in open(\"/opt/wine/lib/wine/x86_64-windows/ntdll.dll\", \"rb\").read())"
+            for v in WINE_SOCK_SEND_READY WINE_SOCK_FDWRITE_REARM WINE_SERVICE_TOKEN WINE_OFD_LOCKS WINE_CASE_CACHE WINE_HEAP_LFH_REUSE; do
               eval "test \"\${$v:-}\" = 1" || { echo "beta default $v is not 1" >&2; exit 1; }
             done
           '
@@ -506,6 +509,7 @@ jobs:
             grep -aq WINE_SOCK_SEND_READY /opt/wine/bin/wineserver
             test "$(readlink -f "$(command -v wineserver)")" = /opt/wine/bin/wineserver
             test "$WINE_SOCK_SEND_READY" = 1 && test "$WINE_SERVICE_TOKEN" = 1 && test "$WINE_OFD_LOCKS" = 1
+            test "$WINE_HEAP_LFH_REUSE" = 1
             test "$WINE_SOCK_FDWRITE_REARM" = 0 && test "$WINE_CASE_CACHE" = 0
             test -z "$BACKBLAZE_VERSION"
           '

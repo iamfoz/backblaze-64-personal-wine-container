@@ -13,3 +13,4 @@ wine-debug-privilege-bypass
 wine-ofd-locks
 wine-case-cache
 wine-mountpoint-dirs
+wine-heap-lfh-reuse

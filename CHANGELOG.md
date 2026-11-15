@@ -11,6 +11,10 @@ the additions below. The `:beta` tag is mutable, so each published build has a s
 
 ### Added
 
+- `wine-heap-lfh-reuse.patch` and its switch, `WINE_HEAP_LFH_REUSE` (Fix): Wine's heap now reuses
+  block groups as soon as a block in them is freed, sizes small blocks as Windows does and returns
+  large free regions to the system. On a 15.4-million-file backup `bztransmit` went from 27 GB to
+  6.5 GB. Also corrects `HeapSize` after an in-place shrink.
 - A switch for each of this project's Wine patches, with a Wine patches panel on the
   Settings tab. With a switch off, Wine behaves as WineHQ's Wine. Each patch is labelled
   Fix, Performance or Experimental, and the panel enforces the two dependencies: the
