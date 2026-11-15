@@ -266,11 +266,11 @@ Two things matter more than the raw numbers:
   and every following pass fails to start, so the backup stops making progress with no error.
   See [Health and Auto-Recovery](#health-and-auto-recovery). A modest swap file absorbs
   the peak and avoids this entirely.
-- **On `latest-patched` and `beta`, the heap fix cuts this.** WineHQ's Wine keeps most of
-  the memory `bztransmit` frees while it builds that index, so its memory stays near the
-  peak for the rest of the pass. With `WINE_HEAP_LFH_REUSE` on, a backup of 15.4 million
-  files went from 27 GB to 6.5 GB, peaking at 8 GB instead of 30 GB. The table above is
-  for WineHQ's Wine.
+- **On `beta`, the heap fix cuts this.** WineHQ's Wine keeps most of the memory
+  `bztransmit` frees while it builds that index, so its memory stays near the peak for the
+  rest of the pass. With `WINE_HEAP_LFH_REUSE` on, a backup of 15.4 million files went from
+  27 GB to 6.5 GB, peaking at 8 GB instead of 30 GB. `latest-patched` takes it when the beta
+  is next promoted. The table above is for WineHQ's Wine.
 - **Watch file count, not bytes.** A few large media files cost almost nothing. Hundreds
   of thousands of small ones, such as bundled downloads, package caches and generated
   thumbnails, are what pushes memory up. Excluding directories of regenerable junk is the simplest fix
