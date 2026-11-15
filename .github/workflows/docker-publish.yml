@@ -306,7 +306,8 @@ jobs:
 
       - name: Check the beta carries the patched Wine
         run: |
-          set -eu
+          # -x names each check in the log, so a silent grep -q failure is traceable.
+          set -eux
           # The stable images install winehq-stable into /usr. Only the beta builds
           # Wine into /opt/wine. If that is missing, the patch is not in the image.
           docker run --rm --entrypoint /opt/wine/bin/wine bb-beta-test:local --version
@@ -321,7 +322,7 @@ jobs:
           # Unset, the patched Wine behaves as upstream, so a beta that lost
           # these defaults would quietly lose its fixes.
           docker run --rm --entrypoint sh bb-beta-test:local -c '
-            set -eu
+            set -eux
             grep -q "^applied wine-writability-fix switch" /opt/wine/share/bb64-patches
             grep -aq WINE_SOCK_SEND_READY /opt/wine/bin/wineserver
             # The heap switch is read from the Unix environment by ntdll's Unix
@@ -345,7 +346,7 @@ jobs:
           # build if any is missing. The five below are the same five, by name, so
           # this stays an independent re-check of the image that ships.
           docker run --rm --entrypoint sh bb-beta-test:local -c '
-            set -eu
+            set -eux
             command -v setpriv >/dev/null
             sh -n /usr/local/bin/bb-doctor
             for part in asuser skipped drives config passes; do
@@ -358,6 +359,16 @@ jobs:
             bash -n /startapp.sh
             grep -q BACKBLAZE_VERSION /startapp.sh
           '
+
+      - name: Show what the beta image holds, when its check fails
+        if: failure()
+        run: |
+          docker run --rm --entrypoint sh bb-beta-test:local -c '
+            cat /etc/bb-build; ls -la /opt/wine /opt/wine/share
+            cat /opt/wine/share/bb64-patches
+            ls -la /opt/wine/bin/wineserver /opt/wine/lib/wine/x86_64-unix/ntdll.so
+            grep -ac sock_stream_send_ready /opt/wine/bin/wineserver
+          ' || true
 
       - name: Push the beta image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
