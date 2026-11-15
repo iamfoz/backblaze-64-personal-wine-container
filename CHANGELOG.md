@@ -288,6 +288,13 @@ the additions below. The `:beta` tag is mutable, so each published build has a s
 
 ### Changed
 
+- The beta moves from Wine 11.19 to 11.22. Six of the seven patches apply unchanged. The
+  service token patch and its switch were regenerated, because 11.22 passes a token's owner
+  and primary group to `create_token()` directly instead of as an index into its groups;
+  the LocalSystem group is still appended last and left out with the switch off.
+  `:latest-patched` stays on 11.19 with the patch set as it was (`patches/promoted` now names
+  that commit) until the beta is promoted. The Wine builder stages are on the Ubuntu 24.04
+  and 26.04 images of 12 November.
 - The beta overlay is merged into the shared image, so the next stable release carries
   it: the web interface (Monitor, Status, Tools, API and Settings tabs) and the HTTP API,
   bb-doctor's drive, settings, pass, skipped-file and run-as-the-container-user checks,

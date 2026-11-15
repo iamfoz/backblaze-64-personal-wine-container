@@ -35,12 +35,12 @@
 # opening non-filesystem names. Before trusting 11.19 for stable, confirm a long
 # pass shows no "failed to create main module" in docker logs.
 # ============================================================================
-ARG WINE_REF=wine-11.19
+ARG WINE_REF=wine-11.22
 
 # Pinned by digest, as the runtime base is, so a rebuild uses the same image.
 # Bump the digest with the tag. CI fetches it through mirror.gcr.io (see the
 # buildx setup in the workflow), not straight from Docker Hub.
-FROM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7 AS wine-builder
+FROM ubuntu:26.04@sha256:065aa8626841f16057b78b027b464cd59c4fac36c204c72dcbf48d66f5fa8a96 AS wine-builder
 ARG WINE_REF
 ARG MAKE_JOBS
 ENV DEBIAN_FRONTEND=noninteractive

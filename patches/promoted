@@ -14,4 +14,4 @@
 #   2. Then set PATCHES_FROM to that release tag, so a later release that changes
 #      only the container keeps this Wine even after patches/ moves on for the beta.
 WINE_REF=wine-11.19
-PATCHES_FROM=this
+PATCHES_FROM=b5387357f1cdadf3f682e28e78715ef27ca1510f
