@@ -225,7 +225,11 @@
   function title(){
     fetch('/monitor/manage/status', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(j){
       var mark = '';
-      if(j.health && j.health.length) mark = '! ';
+      // Only warnings still on show: the feed also carries the ones dismissed
+      // or switched off in Settings, which the pages leave out, so counting
+      // them kept a "!" on the tab while every page looked clear.
+      var showing = (j.health || []).filter(function(h){ return !h.dismissed && !h.hidden; });
+      if(showing.length) mark = '! ';
       else if(j.paused) mark = '\u275A\u275A ';
       else if(j.state === 'Transmitting' || j.state === 'Uploading') mark = '\u25CF ';
       document.title = mark + 'Backblaze 64';
