@@ -235,6 +235,8 @@
       // Busy but not sending: a scan, the client's "Producing file lists", or
       // a pass getting ready. The Monitor's favicon is yellow for the same states.
       else if(/^(Scanning|Producing|Preparing)/.test(j.state || '')) mark = '\u25D0 ';
+      // Anything else the client reports is waiting for its next pass.
+      else if(j.state) mark = '\u25CB ';
       document.title = mark + 'Backblaze 64';
     }).catch(function(){});
   }

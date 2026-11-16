@@ -3756,8 +3756,11 @@ function updateFavicon(state){
   if(state === 'Transmitting') color = cs.getPropertyValue('--good').trim() || '#3ddc6b';
   // "Producing file lists" is the client's own phrase for a scan.
   else if(/^(Scanning|Producing|Preparing)/.test(state || '')) color = cs.getPropertyValue('--warn').trim() || '#ffd23d';
-  var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
-            '<circle cx="16" cy="16" r="13" fill="'+color+'" stroke="rgba(0,0,0,0.4)" stroke-width="2"/></svg>';
+  // Idle is an unfilled ring, as the tab title's \u25CB is.
+  var circle = color === '#888888'
+    ? '<circle cx="16" cy="16" r="12" fill="none" stroke="'+color+'" stroke-width="4"/>'
+    : '<circle cx="16" cy="16" r="13" fill="'+color+'" stroke="rgba(0,0,0,0.4)" stroke-width="2"/>';
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' + circle + '</svg>';
   var link = document.getElementById('favicon');
   if(link) link.href = 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
