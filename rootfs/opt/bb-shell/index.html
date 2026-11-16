@@ -232,6 +232,9 @@
       if(showing.length) mark = '! ';
       else if(j.paused) mark = '\u275A\u275A ';
       else if(j.state === 'Transmitting' || j.state === 'Uploading') mark = '\u25CF ';
+      // Busy but not sending: a scan, the client's "Producing file lists", or
+      // a pass getting ready. The Monitor's favicon is yellow for the same states.
+      else if(/^(Scanning|Producing|Preparing)/.test(j.state || '')) mark = '\u25D0 ';
       document.title = mark + 'Backblaze 64';
     }).catch(function(){});
   }

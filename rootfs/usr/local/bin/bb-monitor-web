@@ -3754,7 +3754,8 @@ function updateFavicon(state){
   var cs = getComputedStyle(document.documentElement);
   var color = '#888888';
   if(state === 'Transmitting') color = cs.getPropertyValue('--good').trim() || '#3ddc6b';
-  else if(state === 'Scanning' || state === 'Preparing') color = cs.getPropertyValue('--warn').trim() || '#ffd23d';
+  // "Producing file lists" is the client's own phrase for a scan.
+  else if(/^(Scanning|Producing|Preparing)/.test(state || '')) color = cs.getPropertyValue('--warn').trim() || '#ffd23d';
   var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
             '<circle cx="16" cy="16" r="13" fill="'+color+'" stroke="rgba(0,0,0,0.4)" stroke-width="2"/></svg>';
   var link = document.getElementById('favicon');
