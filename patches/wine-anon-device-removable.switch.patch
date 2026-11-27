@@ -1,0 +1,40 @@
+server: Put the anonymous-device fstatfs() skip behind WINE_SKIP_ANON_STATFS.
+
+Fork-only companion to wine-anon-device-removable.patch. With
+WINE_SKIP_ANON_STATFS=1 a device with major number 0 is reported as not
+removable without an fstatfs(). Without it every new device object is
+checked with fstatfs(), as in upstream Wine.
+
+--- a/server/fd.c
++++ b/server/fd.c
+@@ -956,6 +956,21 @@
+ 
+ static struct list device_hash[DEVICE_HASH_SIZE];
+ 
++/* WINE_SKIP_ANON_STATFS=1 answers "not removable" for anonymous devices
++ * without asking the file system. Without it every new device object is
++ * checked with fstatfs(), as in upstream Wine. */
++static int skip_anon_statfs( void )
++{
++    static int enabled = -1;
++
++    if (enabled == -1)
++    {
++        const char *str = getenv( "WINE_SKIP_ANON_STATFS" );
++        enabled = str && str[0] == '1' && !str[1];
++    }
++    return enabled;
++}
++
+ static int is_device_removable( dev_t dev, int unix_fd )
+ {
+ #if defined(linux) && defined(HAVE_FSTATFS)
+@@ -970,7 +985,7 @@
+      * for every file opened on a device with nothing else open, and on FUSE
+      * each fstatfs() is a round trip to the daemon: on Unraid's shfs with a
+      * ZFS cache pool it starts a shell and a zfs process every time. */
+-    if (!major(dev)) return 0;
++    if (!major(dev) && skip_anon_statfs()) return 0;
+ 
+     if (fstatfs( unix_fd, &stfs ) == -1) return 0;
+     return (stfs.f_type == 0x9660 ||    /* iso9660 */

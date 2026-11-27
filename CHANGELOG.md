@@ -11,6 +11,11 @@ the additions below. The `:beta` tag is mutable, so each published build has a s
 
 ### Added
 
+- `wine-anon-device-removable.patch` and its switch, `WINE_SKIP_ANON_STATFS` (Performance):
+  wineserver no longer calls `fstatfs()` to look for a CD on anonymous devices (FUSE, ZFS, NFS,
+  tmpfs, overlayfs), which can never be one. On Unraid user shares with a ZFS cache pool, shfs
+  answers each `fstatfs()` by running `zfs get`, so a scanning client cost the host about 120
+  `zfs` processes a second, close to a CPU core.
 - `wine-heap-lfh-reuse.patch` and its switch, `WINE_HEAP_LFH_REUSE` (Fix): Wine's heap now reuses
   block groups as soon as a block in them is freed, sizes small blocks as Windows does and returns
   large free regions to the system. On a 15.4-million-file backup `bztransmit` went from 27 GB to

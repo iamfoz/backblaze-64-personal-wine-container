@@ -14,3 +14,4 @@ wine-ofd-locks
 wine-case-cache
 wine-mountpoint-dirs
 wine-heap-lfh-reuse
+wine-anon-device-removable

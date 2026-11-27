@@ -1270,7 +1270,7 @@ bbmounts.save("m")
 
 # ---- Wine patch switches: the Settings store, the interlocks, what the page is shown ------
 _WS = ("WINE_SOCK_SEND_READY", "WINE_SOCK_FDWRITE_REARM", "WINE_SERVICE_TOKEN", "WINE_OFD_LOCKS", "WINE_CASE_CACHE",
-       "WINE_HEAP_LFH_REUSE")
+       "WINE_HEAP_LFH_REUSE", "WINE_SKIP_ANON_STATFS")
 for _v in _WS + ("BACKBLAZE_VERSION",):
     os.environ.pop(_v, None)
 ok(bbwine.state()["wine"] == "winehq", "with no manifest the page says the image runs WineHQ's Wine")
@@ -1282,13 +1282,15 @@ with open(bbwine.MANIFEST, "w") as fh:
     fh.write("wine_ref wine-11.19\n" + "".join("applied %s switch\n" % p for p in
              ("wine-writability-fix", "wine-fdwrite-rearm", "wine-token-localsystem",
               "wine-debug-privilege-bypass", "wine-ofd-locks", "wine-case-cache")) +
-             "applied wine-mountpoint-dirs builtin\n" + "applied wine-heap-lfh-reuse switch\n")
+             "applied wine-mountpoint-dirs builtin\n" + "applied wine-heap-lfh-reuse switch\n" +
+             "applied wine-anon-device-removable switch\n")
 ok(bbmounts.available(), "a Wine whose manifest has the patch offers datasets as folders")
 for _v in _WS:
     os.environ[_v] = "1"
 _ws = bbwine.state()
 ok(_ws["wine"] == "patched" and _ws["wine_ref"] == "wine-11.19", "the manifest names the Wine")
-ok([x["class"] for x in _ws["switches"]] == ["fix", "performance", "fix", "fix", "performance", "fix", "experimental"],
+ok([x["class"] for x in _ws["switches"]] == ["fix", "performance", "fix", "fix", "performance", "fix", "performance",
+                                         "experimental"],
    "every switch has its class for the lozenge: %r" % [x["class"] for x in _ws["switches"]])
 ok(all(x["value"] and x["source"] == "variable" for x in _ws["switches"] if not x["drives"]),
    "with the beta's variables every switch is on, following the variables")
