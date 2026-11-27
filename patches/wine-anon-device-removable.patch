@@ -1,0 +1,35 @@
+server: Skip the removable-media fstatfs() on anonymous devices.
+
+get_device() keeps a device object only while a file on that device is
+open, so a client that opens files one at a time, as Backblaze does while
+it scans, creates the device again for every file, and each time
+is_device_removable() calls fstatfs() to look for a CD (iso9660, udf).
+Those file systems need a block device. One on an anonymous device
+(major 0: FUSE, ZFS, NFS, tmpfs, overlayfs, btrfs subvolumes) can never
+be removable by this test, so the answer is the same without asking.
+(The third type, supermount, was an out-of-tree wrapper for 2.4 and 2.6
+kernels; no current kernel has it.)
+
+On Unraid's user shares (shfs, FUSE) each fstatfs() is a round trip to
+the daemon, and on a share with a ZFS cache pool shfs answers it by
+running "sh -c 'zfs get available,used <pool>'". A scanning client made
+wineserver call fstatfs() about 120 times a second, which cost the host
+about 0.9 CPU cores of fork, exec and ZFS ioctl work.
+
+--- a/server/fd.c
++++ b/server/fd.c
+@@ -964,6 +964,14 @@
+     /* check for floppy disk */
+     if (major(dev) == FLOPPY_MAJOR) return 1;
+ 
++    /* iso9660 and udf need a block device. A file system on an anonymous
++     * device (major 0: FUSE, ZFS, NFS, tmpfs, overlayfs, btrfs subvolumes)
++     * is never one of them, so skip the fstatfs(). get_device() runs again
++     * for every file opened on a device with nothing else open, and on FUSE
++     * each fstatfs() is a round trip to the daemon: on Unraid's shfs with a
++     * ZFS cache pool it starts a shell and a zfs process every time. */
++    if (!major(dev)) return 0;
++
+     if (fstatfs( unix_fd, &stfs ) == -1) return 0;
+     return (stfs.f_type == 0x9660 ||    /* iso9660 */
+             stfs.f_type == 0x9fa1 ||    /* supermount */

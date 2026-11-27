@@ -330,7 +330,11 @@ jobs:
             grep -q "^applied wine-heap-lfh-reuse switch" /opt/wine/share/bb64-patches
             grep -aq WINE_HEAP_LFH_REUSE /opt/wine/lib/wine/x86_64-unix/ntdll.so \
               || { echo "WINE_HEAP_LFH_REUSE is not in ntdll.so" >&2; exit 1; }
-            for v in WINE_SOCK_SEND_READY WINE_SOCK_FDWRITE_REARM WINE_SERVICE_TOKEN WINE_OFD_LOCKS WINE_CASE_CACHE WINE_HEAP_LFH_REUSE; do
+            # The anonymous-device switch is read by wineserver itself.
+            grep -q "^applied wine-anon-device-removable switch" /opt/wine/share/bb64-patches
+            grep -aq WINE_SKIP_ANON_STATFS /opt/wine/bin/wineserver \
+              || { echo "WINE_SKIP_ANON_STATFS is not in wineserver" >&2; exit 1; }
+            for v in WINE_SOCK_SEND_READY WINE_SOCK_FDWRITE_REARM WINE_SERVICE_TOKEN WINE_OFD_LOCKS WINE_CASE_CACHE WINE_HEAP_LFH_REUSE WINE_SKIP_ANON_STATFS; do
               eval "test \"\${$v:-}\" = 1" || { echo "beta default $v is not 1" >&2; exit 1; }
             done
           '
@@ -528,6 +532,7 @@ jobs:
             test "$WINE_SOCK_SEND_READY" = 1 && test "$WINE_SERVICE_TOKEN" = 1 && test "$WINE_OFD_LOCKS" = 1
             test "$WINE_HEAP_LFH_REUSE" = 1
             test "$WINE_SOCK_FDWRITE_REARM" = 0 && test "$WINE_CASE_CACHE" = 0
+            test "$WINE_SKIP_ANON_STATFS" = 0
             test -z "$BACKBLAZE_VERSION"
           '
 
